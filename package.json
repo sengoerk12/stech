@@ -1,0 +1,20 @@
+{
+  "name": "stech",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @stech/api",
+    "dev:mobile": "npm run start -w @stech/mobile",
+    "web": "npm run web -w @stech/mobile",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test -w @stech/api",
+    "build:api": "npm run build -w @stech/api"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

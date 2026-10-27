@@ -1,0 +1,26 @@
+export const theme = {
+  colors: {
+    background: "#090C12",
+    surface: "#131923",
+    elevated: "#1B2330",
+    primary: "#FFAA16",
+    accent: "#48B9FF",
+    gold: "#FFD17D",
+    text: "#F5F7FC",
+    muted: "#9BA8BB",
+    faint: "#69788E",
+    border: "#263142",
+    success: "#63D8A0",
+    error: "#FF8692",
+    orangeTint: "#302416",
+    blueTint: "#122B40",
+  },
+  radius: { small: 8, control: 12, card: 20, modal: 28 },
+  space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 },
+  font: {
+    regular: "Inter_400Regular",
+    medium: "Inter_500Medium",
+    bold: "Inter_700Bold",
+    display: "Rajdhani_700Bold",
+  },
+} as const;
