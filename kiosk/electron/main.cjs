@@ -9,6 +9,7 @@ const { KioskSession } = require('./session.cjs');
 
 let window, kiosk, config, exitAllowed = false, adminAttempts = [];
 const windowed = process.argv.includes('--windowed');
+if (!app.isPackaged && process.env.STECH_KIOSK_DATA_DIR) app.setPath('userData', process.env.STECH_KIOSK_DATA_DIR);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
 else {
@@ -19,7 +20,6 @@ else {
   });
 }
 async function boot() {
-  if (!app.isPackaged && process.env.STECH_KIOSK_DATA_DIR) app.setPath('userData', process.env.STECH_KIOSK_DATA_DIR);
   const file = process.env.STECH_KIOSK_CONFIG || path.join(app.getPath('userData'), 'kiosk.config.json');
   try { config = JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; config = { mode: 'demo', idleSeconds: 90, station: 'S TECH · Merkez' }; }
@@ -28,7 +28,7 @@ async function boot() {
   const demo = new DemoStore(path.join(app.getPath('userData'), 'demo-wallets.json'));
   if (config.mode === 'demo') await demo.initialize();
   kiosk = new KioskSession({ demo, gateway: config.mode === 'connected' ? new ApiGateway(config) : null,
-    mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)),
+    mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)), completionSeconds: config.completionSeconds,
     onLock: () => window?.webContents.send('kiosk:locked') });
   const uiFile = path.join(__dirname, '../ui/index.html');
   window = new BrowserWindow({ width: 1440, height: 900, minWidth: 1024, minHeight: 720,

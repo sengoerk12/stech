@@ -1,13 +1,17 @@
 const { normalizeCard, quote } = require('./core.cjs');
 
 class KioskSession {
-  constructor({ demo, gateway, mode, idleSeconds = 90, onLock = () => {} }) {
+  constructor({ demo, gateway, mode, idleSeconds = 90, completionSeconds = 20, onLock = () => {} }) {
     this.demo = demo; this.gateway = gateway; this.mode = mode; this.idleMs = idleSeconds * 1000; this.onLock = onLock;
     this.generation = 0; this.session = null; this.busy = false;
+    this.completionMs = Math.max(5, Math.min(60, Number(completionSeconds) || 20)) * 1000;
   }
   touch(now = Date.now()) { if (this.session) this.session.activity = now; }
   remaining(now = Date.now()) {
-    return this.session ? Math.max(0, Math.ceil(Math.min(this.session.activity + this.idleMs, this.session.started + 300000) - now) / 1000) : 0;
+    return this.session ? Math.max(0, Math.ceil((Math.min(
+      this.session.completionDeadline ?? this.session.activity + this.idleMs,
+      this.session.started + 300000,
+    ) - now) / 1000)) : 0;
   }
   tick(now = Date.now()) { if (this.session && this.remaining(now) <= 0) this.lock(); }
   lock() {
@@ -45,12 +49,21 @@ class KioskSession {
       features: { ...data.features, topup: this.mode === 'demo' }, kioskMode: this.mode };
   }
   async run(action, payload = {}) {
+    this.tick();
     if (action === 'scan') return this.scan(payload.uid);
     if (action === 'logout') { this.lock(); return { ok: true }; }
     if (action === 'activity') { this.touch(); return { remaining: this.remaining() }; }
     this.tick();
     const session = this.session, epoch = this.generation;
     if (!session) throw new Error('Kartını okutarak tekrar giriş yap.');
+    if (action === 'continueSession') {
+      if (!session.completionDeadline) throw new Error('Tamamlanmış işlem bulunamadı.');
+      delete session.completionDeadline;
+      this.touch();
+      return { remaining: this.remaining() };
+    }
+    if (session.completionDeadline && !['dashboard', 'payment', 'settle'].includes(action))
+      throw new Error('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.');
     let result;
     if (action === 'dashboard') result = this.publicDashboard(this.mode === 'demo' ? await this.demo.dashboard(session.card) : await this.gateway.dashboard(session.token));
     else if (action === 'transactions') result = this.mode === 'demo' ? await this.demo.transactions(session.card, payload.cursor) : await this.gateway.transactions(session.token, payload.cursor);
@@ -67,6 +80,13 @@ class KioskSession {
     } else throw new Error('Geçersiz işlem.');
     this.tick();
     if (epoch !== this.generation) throw new Error('Oturum kapandı. Kartını tekrar okut.');
+    if (['settle', 'payment'].includes(action) && result.status === 'completed') {
+      if (session.completionPaymentId !== result.id) {
+        session.completionPaymentId = result.id;
+        session.completionDeadline = Date.now() + this.completionMs;
+      }
+      if (session.completionDeadline) return { ...result, completionSeconds: this.remaining() };
+    }
     return result;
   }
 }

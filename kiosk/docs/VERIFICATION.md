@@ -3,8 +3,8 @@
 Bu çalışma macOS / Apple Silicon ortamında yapıldı.
 
 - API: 40 test geçti. Kiosk cihaz anahtarı, kart eşleştirme, PanCafe soyadı lookup adaptörü, beş dakikalık yenilenemeyen oturum ve çıkış iptali dahil.
-- Kiosk: 12 test geçti. İki müşteri ayrımı, hareketsizlik/azami süre, geç gelen yanıt, tekrar onayda tek bakiye artışı, red, disk yazma hatası, kalıcı demo verisi ve gerçek modda simülasyon engeli dahil.
-- Gerçek Electron penceresinde otomatik UI akışı geçti: klavye protokolüyle NFC girişi, 200 TL + 20 TL bonus, red, geçmiş, kampanya koşulları, profil, çıkış/başka müşteri ve 1024px yatay taşma kontrolü. Ekran görüntüleri `screenshots/` içinde.
+- Kiosk: 16 test geçti. İki müşteri ayrımı, hareketsizlik/azami süre, geç gelen yanıt, tekrar onayda tek bakiye artışı, red, disk yazma hatası, kalıcı demo verisi ve gerçek modda simülasyon engeli dahil.
+- Gerçek Electron penceresinde otomatik UI akışı geçti: klavye protokolüyle NFC girişi, 200 TL + 20 TL bonus, red, geçmiş, kampanya koşulları, profil, çıkış/başka müşteri ve 1024px yatay taşma kontrolü. Başarılı yükleme sonrası başka işlem seçimi, doğrudan bitirme ve 20 saniye seçim yapılmadığında otomatik kart bekleme ekranına dönüş gerçek Electron penceresinde doğrulandı; rastgele dokunmanın süreyi uzatmadığı kontrol edildi. Ekran görüntüleri `screenshots/` içinde.
 - API ve mobil TypeScript kontrolleri, API derlemesi ve mevcut mobil lint geçti.
 - Kiosk JavaScript sözdizimi ve `git diff --check` geçti.
 - Windows x64 uygulama klasörü çapraz derlendi. Tek dosya taşınabilir EXE için NSIS 1.2.1 araç seti kullanıldı; eski varsayılan araç seti Apple Silicon üzerinde çalışmadığı için proje ayarında yeni araç seti seçildi.

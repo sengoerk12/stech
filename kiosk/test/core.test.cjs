@@ -96,3 +96,54 @@ test('only the current card suffix is hidden; real surnames remain intact', asyn
   assert.equal((await kiosk.run('dashboard')).member.name, 'Deniz Dede');
   kiosk.lock();
 });
+
+test('completed topup starts a fixed 20s deadline; touches and repeated approval cannot extend it', async t => {
+  const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
+  await kiosk.scan('DEMO0001');
+  const payment = await kiosk.run('create', { amount:20000, key:'completion-test-unique' });
+  const result = await kiosk.run('settle', { id:payment.id, outcome:'approved' });
+  assert.equal(result.completionSeconds, 20);
+  const deadline = kiosk.session.completionDeadline;
+  kiosk.touch(deadline - 1000);
+  await kiosk.run('settle', { id:payment.id, outcome:'approved' });
+  assert.equal(kiosk.session.completionDeadline, deadline);
+  assert.equal(kiosk.remaining(deadline - 1000), 1);
+  kiosk.tick(deadline); assert.equal(kiosk.session, null);
+  await assert.rejects(() => kiosk.run('continueSession'));
+  assert.equal((await kiosk.scan('DEMO0002')).member.name, 'Deniz');
+});
+test('only explicit continue restores normal navigation and a later topup starts a new countdown', async t => {
+  const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
+  await kiosk.scan('DEMO0001');
+  const p = await kiosk.run('create', { amount:20000, key:'continue-test-first' });
+  await kiosk.run('settle', { id:p.id, outcome:'approved' });
+  await assert.rejects(() => kiosk.run('transactions'), /Başka bir işlem yap/);
+  await kiosk.run('continueSession');
+  assert.equal(kiosk.session.completionDeadline, undefined);
+  assert.equal(kiosk.session.card, 'DEMO0001');
+  await kiosk.run('transactions');
+  const next = await kiosk.run('create', { amount:5000, key:'continue-test-second' });
+  await kiosk.run('settle', { id:next.id, outcome:'approved' });
+  assert.equal(kiosk.session.completionPaymentId, next.id);
+  assert.equal(kiosk.remaining(), 20);
+});
+test('finish immediately clears session, while declined payments do not start a completion countdown', async t => {
+  const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
+  await kiosk.scan('DEMO0001');
+  const p = await kiosk.run('create', { amount:20000, key:'finish-test-unique' });
+  await kiosk.run('settle', { id:p.id, outcome:'declined' });
+  assert.equal(kiosk.session.completionDeadline, undefined);
+  const next = await kiosk.run('create', { amount:5000, key:'finish-test-second' });
+  await kiosk.run('settle', { id:next.id, outcome:'approved' });
+  await kiosk.run('logout'); assert.equal(kiosk.session, null);
+  await assert.rejects(() => kiosk.run('dashboard'));
+});
+test('completion deadline is configurable and hard session expiry remains authoritative', async t => {
+  const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo', completionSeconds:10 });
+  await kiosk.scan('DEMO0001');
+  const p = await kiosk.run('create', { amount:5000, key:'config-test-unique' });
+  const done = await kiosk.run('settle', { id:p.id, outcome:'approved' });
+  assert.equal(done.completionSeconds, 10);
+  kiosk.session.started = kiosk.session.completionDeadline - 311000;
+  kiosk.tick(); assert.equal(kiosk.session, null);
+});

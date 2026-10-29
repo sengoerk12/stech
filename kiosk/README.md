@@ -39,6 +39,7 @@ Varsayılan dosya `%APPDATA%/kiosk/kiosk.config.json`. `STECH_KIOSK_CONFIG` orta
   "mode": "connected",
   "station": "S TECH · Merkez",
   "idleSeconds": 90,
+  "completionSeconds": 20,
   "apiBaseUrl": "http://127.0.0.1:3001/api/v1",
   "deviceKey": "SUNUCUDAKI_AYNI_UZUN_CIHAZ_ANAHTARI",
   "adminPinHash": "URETILEN_128_KARAKTER_HEX_HASH"
@@ -65,6 +66,7 @@ Opsiyonel mock API kart eşlemesi için `KIOSK_CARD_MAP_FILE` mutlak JSON yolu k
 
 ## Ortak bilgisayar davranışı
 
+- Başarılı yüklemeden sonra ATM akışı: **Başka bir işlem yap** ana ekrana döner; **İşlemleri bitir** ek onay sormadan kart bekleme ekranını açar. Seçim yapılmazsa varsayılan 20 saniyede oturum kapanır. `completionSeconds` ile 5–60 saniye ayarlanabilir. Ekrana rastgele dokunmak veya tekrar gelen ödeme onayı bu süreyi uzatmaz. Bu aşamada genel hareketsizlik uyarısı açılmaz.
 - Varsayılan 90 saniye hareketsizlik; son 15 saniye uyarı. Yapılandırılabilir sınır 30–120 saniye. En fazla 5 dakika sonra yeniden kart okutulur.
 - Oturum anahtarı yalnızca Electron ana sürecinin belleğinde tutulur; sayfaya ve diske verilmez. Kiosk anahtarı renderer'a aktarılmaz.
 - Çıkışta önce ekran/veriler temizlenir, sunucu oturumu iptal edilir. Geç gelen önceki müşteri yanıtları gösterilmez. API kiosk anahtarları yenilenemez ve 5 dakikada biter.
