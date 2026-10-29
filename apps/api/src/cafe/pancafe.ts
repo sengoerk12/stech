@@ -47,7 +47,7 @@ export class PanCafeBridgeClient {
         "PanCafe bağlantısı hazır değil. Bağlantı aracını kontrol edip tekrar dene.",
       );
     }
-    if (response.status === 401 && path === "/authenticate") return null;
+    if (response.status === 401 && ["/authenticate", "/card-member"].includes(path)) return null;
     if (response.status === 409)
       throw new ConflictException(
         "Bu kullanıcı adı PanCafe'de kullanılıyor. Mevcut şifrenle giriş yapabilirsin.",
@@ -163,6 +163,10 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
       identifier: identifier.trim(),
       password,
     });
+    return rows ? this.ensureIdentity(rows[0]) : null;
+  }
+  async authenticateCard(cardUid: string): Promise<Member | null> {
+    const rows = await this.client.request("/card-member", { cardUid });
     return rows ? this.ensureIdentity(rows[0]) : null;
   }
   async register(input: RegistrationInput): Promise<Member> {

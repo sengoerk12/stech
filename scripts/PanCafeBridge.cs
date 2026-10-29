@@ -73,6 +73,15 @@ public static class PanCafeBridge
                 if(rows.Count!=1 || password.Length>32 || !EqualSecret(rows[0]["PASSWORD"],password) || rows[0]["ACCSTATUS"]!="1") {Reply(response,401,new {error="invalid_credentials"});return;}
                 rows[0].Remove("PASSWORD");Reply(response,200,rows);return;
             }
+            if(request.HttpMethod=="POST" && route=="/card-member") {
+                var body=ReadBody(request);string uid=Field(body,"cardUid").Trim().ToUpperInvariant();
+                if(!Regex.IsMatch(uid,@"\A[A-Z0-9_-]{4,64}\z")) {Reply(response,400,new {error="invalid_card"});return;}
+                // This installation stores reader IDs in LASTNAME. Preserve leading zeroes.
+                // Read two rows before checking active status so duplicate IDs fail closed.
+                var rows=Query("SELECT FIRST 2 "+projection+" FROM MEMBERS WHERE UPPER(TRIM(LASTNAME))='"+uid+"'");
+                if(rows.Count!=1 || rows[0]["ACCSTATUS"]!="1") {Reply(response,401,new {error="unknown_or_ambiguous_card"});return;}
+                Reply(response,200,rows);return;
+            }
             if(request.HttpMethod=="POST" && route=="/register") {
                 if(!Convert.ToBoolean(config["allowRegistration"])) {Reply(response,503,new {error="registration_pending_verification"});return;}
                 var body=ReadBody(request);string username=Field(body,"username").Trim().ToLowerInvariant(),password=Field(body,"password"),name=Field(body,"name").Trim(),phone=Field(body,"phone").Trim(),email=Field(body,"email").Trim();

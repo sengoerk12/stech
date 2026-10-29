@@ -1,0 +1,28 @@
+name: Windows Kiosk
+on:
+  workflow_dispatch:
+  push:
+    paths: ['kiosk/**', '.github/workflows/kiosk.yml']
+  pull_request:
+    paths: ['kiosk/**', '.github/workflows/kiosk.yml']
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: kiosk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: kiosk/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stech-kiosk-windows
+          path: kiosk/dist/kiosk.exe

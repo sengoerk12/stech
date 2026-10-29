@@ -240,6 +240,10 @@ class TestBridge extends PanCafeBridgeClient {
     super(config);
   }
   override async request(path: string, body?: any) {
+    if (path === "/card-member") {
+      const matches = this.rows.filter(row => row.LASTNAME?.trim().toUpperCase() === body.cardUid);
+      return matches.length === 1 && matches[0].ACCSTATUS === "1" ? matches : null;
+    }
     if (path === "/credit") {
       const previous = this.credits.get(body.operationId);
       if (previous) {
@@ -380,4 +384,22 @@ test("PanCafe bridge rejects credential leakage and keeps access key off the URL
   assert.throws(
     () => new PanCafeBridgeClient(config, "http://192.168.1.1:3002"),
   );
+});
+
+test('PanCafe kiosk resolves LASTNAME card IDs, rejects duplicate/inactive cards and creates no password', async () => {
+  const db = await openDatabase();
+  try {
+    const bridge = new TestBridge(); bridge.rows[1].LASTNAME = '00123456';
+    const cafe = new PanCafeSystemAdapter(db, bridge, config);
+    const member = await cafe.authenticateCard('00123456'); assert(member);
+    assert.equal(member.username, 'kaan2');
+    assert.equal((await cafe.getBalance(member.id)).balance, 20000);
+    assert.equal((await cafe.getUser(member.id)).id, member.id);
+    assert.equal((await cafe.authenticateCard('00123456'))?.id, member.id);
+    assert.equal(await cafe.authenticateCard('123456'), null);
+    bridge.rows[0].LASTNAME = '00123456'; assert.equal(await cafe.authenticateCard('00123456'), null);
+    bridge.rows[0].LASTNAME = ''; bridge.rows[1].ACCSTATUS = '0'; assert.equal(await cafe.authenticateCard('00123456'), null);
+    assert.equal((await db.query('SELECT * FROM demo_members')).rows.length, 0);
+    assert.equal((await db.query('SELECT * FROM demo_wallets')).rows.length, 0);
+  } finally { await db.close(); }
 });

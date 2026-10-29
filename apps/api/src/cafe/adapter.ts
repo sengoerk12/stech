@@ -3,6 +3,7 @@ import type { CafeSessionHistoryPage } from "@stech/contracts";
 
 /** The cafe remains authoritative. A retry MUST reuse operationId. */
 export interface CafeSystemAdapter {
+  authenticateCard?(cardUid: string): Promise<Member | null>;
   authenticate(identifier: string, password: string): Promise<Member | null>;
   getUser(userId: string): Promise<Member>;
   getBalance(userId: string): Promise<Wallet>;
