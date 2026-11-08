@@ -47,3 +47,7 @@ npm run lint -w @stech/mobile
 
 Giriş ekranındaki “Kayıt ol” bağlantısı kayıt formunu açar. Yeni hesaplar geliştirme adaptöründe kalıcı olarak saklanır; bakiye 0 TL, işlem geçmişi boştur. Telefon ve e-posta isteğe bağlıdır; girilmeyen alanlara örnek bilgi eklenmez. İletişim bilgileri henüz SMS/e-posta ile doğrulanmaz. Kayıt sonrası otomatik giriş yapılır; oturum cihazda kalıcı olarak hatırlanmaz. Gerçek kafe sisteminde hesap açma entegrasyonu sonraya bırakılmıştır. Ek veritabanı şeması: `database/002_registration.sql`.
 
+
+## Windows müşteri kiosku
+
+Ortak bilgisayarda tam ekran çalışan sürüm `kiosk/` klasöründedir. Ana ekran, NFC kart girişi, bakiye yükleme, kampanyalar, işlem geçmişi ve profil içerir. PanCafe kart kimlikleri mevcut `MEMBERS.LASTNAME` alanından doğrulanır. PAX 910S / İş Bankası USB ödeme entegrasyonu için alt bağlantı ünitesi ve üretici sürücüsü/SDK'sı bekleniyor; gerçek POS tahsilatı henüz etkin değildir. Geliştirme ve kurulum: [Kiosk README](kiosk/README.md).

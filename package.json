@@ -10,6 +10,8 @@
     "dev:api": "npm run dev -w @stech/api",
     "dev:mobile": "npm run start -w @stech/mobile",
     "web": "npm run web -w @stech/mobile",
+    "dev:kiosk": "npm run dev --prefix kiosk",
+    "build:kiosk": "npm run build:win --prefix kiosk",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test -w @stech/api",
     "build:api": "npm run build -w @stech/api"

@@ -22,6 +22,19 @@ export class PersistentAuthService {
       throw new UnauthorizedException("Kullanıcı adı veya şifre hatalı.");
     return this.db.transaction((tx) => this.issue(tx, member.id, randomUUID()));
   }
+  /** Kiosk sessions have no refresh token and expire after five minutes. */
+  async kioskAccess(userId: string) {
+    return this.db.transaction(async tx => {
+      const family = randomUUID();
+      const accessToken = randomBytes(32).toString("base64url");
+      await tx.query("INSERT INTO auth_families(id,user_id) VALUES($1,$2)", [family, userId]);
+      await tx.query(
+        "INSERT INTO auth_sessions(token_hash,user_id,family_id,kind,expires_at) VALUES($1,$2,$3,'access',$4)",
+        [hash(accessToken), userId, family, new Date(Date.now() + 300000)],
+      );
+      return { accessToken, expiresIn: 300 };
+    });
+  }
   private async issue(
     tx: SqlExecutor,
     userId: string,

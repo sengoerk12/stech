@@ -7,6 +7,10 @@ node_modules.incomplete/
 .env.*
 !.env.example
 connection.json
+kiosk.config.json
+kiosk-cards.json
+test-results/
+playwright-report/
 *.dat
 *.DAT
 *.pem

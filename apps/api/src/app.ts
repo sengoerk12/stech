@@ -44,6 +44,7 @@ import type { CafeSystemAdapter } from "./cafe/adapter";
 import { MockPaymentProvider } from "./payments/provider";
 import { PersistentPaymentService } from "./payments/persistent-service";
 import { PersistentAuthService } from "./auth/persistent-service";
+import { KioskCardAuth, type KioskCardMap } from "./auth/kiosk";
 import { openDatabase } from "./database/database";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -59,6 +60,9 @@ import {
 class LoginDto {
   @IsString() @MaxLength(120) identifier!: string;
   @IsString() @MinLength(1) @MaxLength(256) password!: string;
+}
+class KioskCardDto {
+  @IsString() @MinLength(4) @MaxLength(64) cardUid!: string;
 }
 class RegistrationDto {
   @IsString() @Matches(/^[a-zA-Z0-9_.]{3,32}$/) username!: string;
@@ -150,6 +154,11 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const admin = new AdminService(db, bridgeConfig ? new PanCafeBridgeClient(bridgeConfig) : null, payments, env);
   const AdminController = createAdminController(admin);
   const auth = new PersistentAuthService(db, cafe);
+  const kioskAuth = env.KIOSK_DEVICE_KEY
+    ? new KioskCardAuth(env.KIOSK_DEVICE_KEY,
+        env.KIOSK_CARD_MAP_FILE ? JSON.parse(await readFile(env.KIOSK_CARD_MAP_FILE, "utf8")) as KioskCardMap : { cards: [] },
+        cafe, auth)
+    : null;
   async function requirePayments() {
     if (!(await admin.topupEnabled())) throw new ServiceUnavailableException("Bakiye yükleme geçici olarak kapalı. Lütfen daha sonra tekrar dene.");
     if (panCafe && !simulation)
@@ -171,6 +180,13 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   }
   @Controller()
   class ApiController {
+    @Post("kiosk/card-login") async kioskLogin(
+      @Headers("x-kiosk-key") key: string | undefined,
+      @Body() body: unknown,
+    ) {
+      if (!kioskAuth) throw new ServiceUnavailableException("Kiosk kart bağlantısı yapılandırılmadı.");
+      return kioskAuth.login(key, parse(KioskCardDto, body).cardUid);
+    }
     @Get("health") health() {
       return {
         status: "ok",
@@ -375,7 +391,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     const now = Date.now();
     for (const [key, value] of buckets)
       if (value.expires < now) buckets.delete(key);
-    const authRoute = req.path.includes("/auth/");
+    const authRoute = req.path.includes("/auth/") || req.path.includes("/kiosk/card-login");
     const key = `${req.ip}:${authRoute ? "auth" : "api"}`;
     const bucket = buckets.get(key) ?? { count: 0, expires: now + 60000 };
     bucket.count++;
