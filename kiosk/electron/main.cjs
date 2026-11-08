@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, session: electronSession } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, session: electronSession } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
@@ -8,7 +8,8 @@ const { ApiGateway } = require('./gateway.cjs');
 const { KioskSession } = require('./session.cjs');
 
 let window, kiosk, config, exitAllowed = false, adminAttempts = [];
-const windowed = process.argv.includes('--windowed');
+const portraitPreview = process.argv.includes('--portrait-preview');
+const windowed = process.argv.includes('--windowed') || portraitPreview;
 if (!app.isPackaged && process.env.STECH_KIOSK_DATA_DIR) app.setPath('userData', process.env.STECH_KIOSK_DATA_DIR);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
@@ -31,9 +32,14 @@ async function boot() {
     mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)), completionSeconds: config.completionSeconds,
     onLock: () => window?.webContents.send('kiosk:locked') });
   const uiFile = path.join(__dirname, '../ui/index.html');
-  window = new BrowserWindow({ width: 1440, height: 900, minWidth: 1024, minHeight: 720,
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const previewScale = Math.min(1, (workArea.height - 80) / 1920, (workArea.width - 80) / 1080);
+  window = new BrowserWindow({ width: portraitPreview ? Math.round(1080 * previewScale) : 1080,
+    height: portraitPreview ? Math.round(1920 * previewScale) : 1920,
+    minWidth: portraitPreview ? 320 : 600, minHeight: portraitPreview ? 480 : 720, useContentSize: true,
+    resizable: !portraitPreview,
     fullscreen: !windowed, kiosk: !windowed, autoHideMenuBar: true, backgroundColor: '#090C12',
-    title: 'S TECH', show: false,
+    title: 'S TECH', show: false, icon: path.join(__dirname, '../ui/assets/brand-emblem.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: !app.isPackaged } });
   window.setMenu(null);
   electronSession.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -77,6 +83,7 @@ async function boot() {
     if (kiosk.session) window?.webContents.send('kiosk:countdown', kiosk.remaining());
   }, 1000).unref();
   await window.loadFile(uiFile);
+  if (portraitPreview) window.webContents.setZoomFactor(previewScale);
   window.show();
 }
 app.on('window-all-closed', () => app.quit());

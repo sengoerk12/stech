@@ -53,8 +53,9 @@ export default function Login() {
     <Screen>
       <View style={{ alignItems: "center", marginTop: 20, gap: 12 }}>
         <Image
-          source={require("../../assets/brand-logo.png")}
-          style={{ width: 112, height: 124, resizeMode: "contain" }}
+          source={require("../../assets/brand-emblem.png")}
+          style={{ width: 144, height: 144, resizeMode: "contain" }}
+          accessibilityLabel="S TECH E-SPOR 1999"
         />
         <Label
           style={{

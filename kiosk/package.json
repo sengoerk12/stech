@@ -7,6 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --windowed",
+    "preview:portrait": "electron . --portrait-preview",
+    "test:portrait": "node scripts/portrait-smoke.cjs",
     "test": "node --test test/*.test.cjs",
     "check": "node scripts/check.cjs",
     "test:ui": "node scripts/ui-smoke.cjs",

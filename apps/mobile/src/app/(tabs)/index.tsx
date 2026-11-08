@@ -31,12 +31,11 @@ export default function Home() {
       <View style={styles.header}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 11 }}>
           <Image
-            source={require("../../../assets/brand-logo.png")}
+            source={require("../../../assets/brand-emblem.png")}
             style={{
               width: 48,
               height: 54,
               resizeMode: "contain",
-              borderRadius: 24,
             }}
           />
           <View>

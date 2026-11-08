@@ -51,8 +51,9 @@ export default function Onboarding() {
         }}
       >
         <Image
-          source={require("../../assets/brand-logo.png")}
-          style={{ width: 55, height: 62, resizeMode: "contain" }}
+          source={require("../../assets/brand-wordmark.png")}
+          style={{ width: 155, height: 56, resizeMode: "contain" }}
+          accessibilityLabel="S TECH E-SPOR"
         />
         <Pressable
           accessibilityRole="button"

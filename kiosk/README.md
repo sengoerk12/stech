@@ -1,6 +1,14 @@
 # S TECH Kiosk
 
-Windows müşteri noktası. `kiosk.exe` açılınca tam ekran başlar. NFC kart girişi, ana ekran, bakiye yükleme, kampanya koşulları, sayfalı işlem/PC oturum geçmişi ve profil ekranları içerir. Mobil uygulamanın koyu tema, turuncu/mavi vurgu ve marka logosu korunmuştur. Minimum önerilen ekran 1024×768, yatay yön.
+Windows müşteri noktası. `kiosk.exe` açılınca tam ekran başlar. NFC kart girişi, ana ekran, bakiye yükleme, kampanya koşulları, sayfalı işlem/PC oturum geçmişi ve profil ekranları içerir. Mobil uygulamanın koyu tema, turuncu/mavi vurgu ve marka logosu korunmuştur. Ana hedef 1080×1920 dikey dokunmatik ekrandır; 720×1280 dikey ve önceki 1024×768 / 1440×900 yatay yerleşimler de desteklenir.
+
+## Dikey ekran
+
+Dikey yerleşimde menü alt kenardadır; ana bakiye ve kampanya kartları tek sütunda görünür. 1080×1920'de tuş takımı, yükleme özeti ve ödeme düğmesi kaydırma gerektirmeden görünür. Ödeme sonrası devam/bitir seçenekleri alt menünün üzerinde kalır. İçeriği uzun işlem ve kampanya listeleri kendi alanlarında kaydırılabilir.
+
+Windows ekran yönü dikey ve çözünürlüğü 1080×1920 olduğunda uygulama bu alanı tam ekran kullanır. Uygulama Windows ekran ayarlarını değiştirmez. Yatay bilgisayarda tasarımı incelemek için `kiosk.exe --portrait-preview` veya `npm run preview:portrait` kullanılabilir: 1080×1920 içerik, monitöre sığan ölçekli bir pencereye yerleşir.
+
+`npm run test:portrait` gerçek kiosk oturum/deneme ödeme koduyla tarayıcıda 1080×1920 ekranlarını, alt menü erişimini, ödeme düğmesinin görünürlüğünü ve küçük/yatay ekranlara uyumu doğrular. Testler ayrı geçici deneme verisi kullanır. Ekran görüntüleri `docs/screenshots/portrait/` altında üretilir.
 
 ## Şu an ne çalışır?
 
