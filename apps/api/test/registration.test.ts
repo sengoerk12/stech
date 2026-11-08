@@ -76,6 +76,7 @@ test("HTTP registration validates inputs, rejects balance injection and logs int
     });
   const input = {
     username: "http_member",
+    phone: '05321234567',
     name: "Test Üye",
     password: "TestPassword123!",
   };
@@ -85,6 +86,7 @@ test("HTTP registration validates inputs, rejects balance injection and logs int
       { ...input, password: "123" },
       { ...input, name: "   " },
       { ...input, email: "bad" },
+      { ...input, phone: undefined },
     ])
       assert.equal((await register(invalid)).status, 400);
     const response = await register(input);

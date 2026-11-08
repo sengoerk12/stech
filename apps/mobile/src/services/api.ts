@@ -9,6 +9,8 @@ import type {
   Payment,
   Quote,
   NotificationPreferences,
+  MemberProfile,
+  ProfileUpdateInput,
 } from "@stech/contracts";
 const baseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
@@ -104,6 +106,9 @@ const post = <T>(
   headers?: Record<string, string>,
 ) => request<T>(path, { method: "POST", body: JSON.stringify(body), headers });
 export const api = {
+  profile: () => request<MemberProfile>('/me/profile'),
+  updateProfile: (input:ProfileUpdateInput) => request<{ok:boolean;passwordChanged:boolean}>('/me/profile',{method:'PUT',body:JSON.stringify(input)}),
+  profileHistory: () => request<{id:string;changed_fields:string[];password_changed:boolean;created_at:string;status:string}[]>('/me/profile/history'),
   publicSettings: () => request<{supportText: string}>("/settings/public"),
   health: () =>
     request<{ cafe: "mock" | "pancafe"; payments: string }>("/health"),

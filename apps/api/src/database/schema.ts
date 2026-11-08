@@ -55,4 +55,11 @@ export const schema = [
   `ALTER TABLE app_promotions ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true`,
   `ALTER TABLE app_promotions ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1`,
   `INSERT INTO schema_migrations(version) VALUES(6) ON CONFLICT DO NOTHING`,
+  `CREATE TABLE IF NOT EXISTS member_profile_changes (id uuid PRIMARY KEY, user_id text NOT NULL REFERENCES app_users(id), request_hash text NOT NULL, encrypted_before text NOT NULL, encrypted_after text NOT NULL, changed_fields jsonb NOT NULL, status text NOT NULL CHECK(status IN ('pending','completed','rejected')), password_changed boolean NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz)`,
+  `CREATE INDEX IF NOT EXISTS member_profile_changes_user ON member_profile_changes(user_id,created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS demo_profile_details (user_id text PRIMARY KEY REFERENCES app_users(id), address text NOT NULL DEFAULT '')`,
+  `ALTER TABLE demo_profile_details ADD COLUMN IF NOT EXISTS first_name text`,
+  `ALTER TABLE demo_profile_details ADD COLUMN IF NOT EXISTS last_name text`,
+  `CREATE TABLE IF NOT EXISTS demo_profile_receipts (id uuid PRIMARY KEY, user_id text NOT NULL, request_hash text NOT NULL)`,
+  `INSERT INTO schema_migrations(version) VALUES(7) ON CONFLICT DO NOTHING`,
 ];

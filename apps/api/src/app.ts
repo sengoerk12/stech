@@ -33,6 +33,7 @@ import {
   Matches,
   IsOptional,
   IsEmail,
+  IsUUID,
   validateSync,
 } from "class-validator";
 import { plainToInstance } from "class-transformer";
@@ -51,6 +52,7 @@ import { resolve } from "node:path";
 import { static as serveStatic } from "express";
 import { AdminService } from "./admin/service";
 import { createAdminController } from "./admin/controller";
+import { MemberProfileService, normalizePhone } from './profile/service';
 import {
   PanCafeSystemAdapter,
   PanCafeBridgeClient,
@@ -67,9 +69,23 @@ class KioskCardDto {
 class RegistrationDto {
   @IsString() @Matches(/^[a-zA-Z0-9_.]{3,32}$/) username!: string;
   @IsString() @MinLength(2) @MaxLength(80) @Matches(/\S.*\S/u) name!: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(32) firstName?:string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(32) lastName?:string;
   @IsString() @MinLength(8) @MaxLength(128) @Matches(/\S/) password!: string;
-  @IsOptional() @IsString() @Matches(/^\+?[0-9 ()-]{10,20}$/) phone?: string;
+  @IsString() @Matches(/^\+?[0-9 ()-]{10,20}$/) phone!: string;
   @IsOptional() @IsEmail() @MaxLength(254) email?: string;
+}
+class ProfileUpdateDto {
+  @IsUUID() operationId!:string;
+  @IsString() @Matches(/^[a-f0-9]{64}$/) revision!:string;
+  @IsString() @MinLength(1) @MaxLength(32) firstName!:string;
+  @IsString() @MinLength(1) @MaxLength(32) lastName!:string;
+  @IsString() @MaxLength(20) phone!:string;
+  @IsString() @MaxLength(11) nationalId!:string;
+  @IsString() @MaxLength(1024) address!:string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(32) currentPassword?:string;
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{4,64}$/) cardUid?:string;
+  @IsOptional() @IsString() @MinLength(8) @MaxLength(32) newPassword?:string;
 }
 class RefreshDto {
   @IsString() @MinLength(32) @MaxLength(200) refreshToken!: string;
@@ -154,6 +170,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const admin = new AdminService(db, bridgeConfig ? new PanCafeBridgeClient(bridgeConfig) : null, payments, env);
   const AdminController = createAdminController(admin);
   const auth = new PersistentAuthService(db, cafe);
+  const profiles=new MemberProfileService(db,cafe,env.PROFILE_ENCRYPTION_KEY);
   const kioskAuth = env.KIOSK_DEVICE_KEY
     ? new KioskCardAuth(env.KIOSK_DEVICE_KEY,
         env.KIOSK_CARD_MAP_FILE ? JSON.parse(await readFile(env.KIOSK_CARD_MAP_FILE, "utf8")) as KioskCardMap : { cards: [] },
@@ -203,6 +220,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     @Get("settings/public") publicSettings() { return admin.publicSettings(); }
     @Post("auth/register") async register(@Body() body: unknown) {
       const dto = parse(RegistrationDto, body);
+      dto.phone=normalizePhone(dto.phone);
       const member = await cafe.register(dto);
       return auth.login(member.username, dto.password);
     }
@@ -241,6 +259,9 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
           : {}),
       };
     }
+    @Get('me/profile') async getProfile(@Req() req:Request) { return profiles.get(await user(req)); }
+    @Put('me/profile') async updateProfile(@Req() req:Request,@Body() body:unknown) { return profiles.update(await user(req),parse(ProfileUpdateDto,body)); }
+    @Get('me/profile/history') async profileHistory(@Req() req:Request) { return profiles.history(await user(req)); }
     @Get("me/transactions") async transactions(
       @Req() req: Request,
       @Query("cursor") cursor?: string,

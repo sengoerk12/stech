@@ -1,5 +1,11 @@
 # Verification notes
 
+## Member profile delivery — 2026-11-09
+- 47 backend tests passed with `node --import tsx --test --test-concurrency=1 test/*.test.ts`. API/mobile types, API build, mobile lint and kiosk syntax checks passed. One earlier parallel test worker exited without an assertion diagnostic while browser/API checks were running; the full serial run passed.
+- Required mobile phone registration, separate first/last name fields and editable profile/password UI verified at 390px using an isolated API; no live account was edited by the browser test.
+- Real Firebird copy verified member number, native names/phone/address/password updates, idempotent password retry, preserved NFC mapping, invalid credentials, stale profile and rollback. Live updated bridge read verified native member no 2 with a source revision and no password in the response.
+- National ID and profile before/after snapshots use AES-256-GCM in backend storage. Password values are excluded from snapshots and audit records. See PROFILE.md for source ownership and secret-key handling.
+
 ## Admin delivery — 2026-10-28
 - 39 backend tests passed, API/mobile type checks and API build passed. Mobile lint passed.
 - Native admin writer passed on a database copy: deposit, debit, bonus credit/debit, duplicate receipt, conflict, stale balance, wrong member, overdraft and history-failure rollback.

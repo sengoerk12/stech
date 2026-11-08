@@ -3,6 +3,9 @@ export type PaymentStatus = "pending" | "transferring" | "completed" | "failed";
 export type TransactionKind = "topup" | "bonus" | "usage" | "adjustment";
 export interface Member {
   id: string;
+  memberNumber?: string;
+  firstName?: string;
+  lastName?: string;
   username: string;
   name: string;
   phone: string;
@@ -108,7 +111,31 @@ export const formatMoney = (amount: Money) =>
 export interface RegistrationInput {
   username: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   password: string;
   phone?: string;
   email?: string;
+}
+export interface MemberProfile {
+  memberNumber: string;
+  username: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  address: string;
+  nationalId: string;
+  revision: string;
+}
+export interface ProfileUpdateInput {
+  operationId: string;
+  revision: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  address: string;
+  nationalId: string;
+  currentPassword?: string;
+  cardUid?: string;
+  newPassword?: string;
 }

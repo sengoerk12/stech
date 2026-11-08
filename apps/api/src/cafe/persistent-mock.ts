@@ -1,6 +1,16 @@
-import { randomUUID, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import {
+  randomUUID,
+  randomBytes,
+  scrypt,
+  timingSafeEqual,
+  createHash,
+} from "node:crypto";
 import { promisify } from "node:util";
-import { ConflictException } from "@nestjs/common";
+import {
+  ConflictException,
+  BadRequestException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import type {
   Wallet,
   Transaction,
@@ -35,6 +45,113 @@ function memberFromRow(row: MemberRow): Member {
 
 /** Persistent simulation of the EXTERNAL cafe. Never enabled in production. */
 export class PersistentMockCafeAdapter extends MockCafeSystemAdapter {
+  async getProfile(
+    userId: string,
+  ): Promise<import("@stech/contracts").MemberProfile> {
+    const member = await this.getUser(userId);
+    const details = (
+      await this.db.query<{
+        address: string;
+        first_name: string | null;
+        last_name: string | null;
+      }>(
+        "SELECT address,first_name,last_name FROM demo_profile_details WHERE user_id=$1",
+        [userId],
+      )
+    ).rows[0];
+    const address = details?.address ?? "";
+    const [firstName, ...last] = member.name.split(" ");
+    const profile = {
+      memberNumber: "",
+      username: member.username,
+      firstName: details?.first_name ?? firstName,
+      lastName: details?.last_name ?? last.join(" "),
+      phone: member.phone,
+      address,
+      nationalId: "",
+      revision: "",
+    };
+    profile.revision = createHash("sha256")
+      .update(
+        JSON.stringify([
+          profile.firstName,
+          profile.lastName,
+          profile.phone,
+          address,
+        ]),
+      )
+      .digest("hex");
+    return profile;
+  }
+  async updateProfile(
+    userId: string,
+    input: import("@stech/contracts").ProfileUpdateInput,
+    requestHash: string,
+  ) {
+    const receipt = (
+      await this.db.query<{ user_id: string; request_hash: string }>(
+        "SELECT user_id,request_hash FROM demo_profile_receipts WHERE id=$1",
+        [input.operationId],
+      )
+    ).rows[0];
+    if (receipt) {
+      if (receipt.user_id !== userId || receipt.request_hash !== requestHash)
+        throw new ConflictException(
+          "İşlem kimliği farklı bilgilerle kullanıldı.",
+        );
+      return;
+    }
+    const row = (
+      await this.db.query<MemberRow>(
+        "SELECT * FROM demo_members WHERE user_id=$1",
+        [userId],
+      )
+    ).rows[0];
+    if (!row)
+      throw new ServiceUnavailableException(
+        "Hazır demo hesabı yerine yeni bir test hesabı kullan.",
+      );
+    if(input.cardUid)throw new BadRequestException('Kart doğrulaması için PanCafe bağlantısı gerekli.');
+    const candidate = (await derive(
+      input.currentPassword??'',
+      row.salt,
+      64,
+    )) as Buffer;
+    if (!timingSafeEqual(candidate, Buffer.from(row.password_hash, "hex")))
+      throw new BadRequestException("Mevcut şifren yanlış.");
+    const profile = await this.getProfile(userId);
+    if (profile.revision !== input.revision)
+      throw new ConflictException("Üye bilgilerin değişti. Sayfayı yenile.");
+    const salt = input.newPassword ? randomBytes(32).toString("hex") : row.salt;
+    const encoded = input.newPassword
+      ? ((await derive(input.newPassword, salt, 64)) as Buffer).toString("hex")
+      : row.password_hash;
+    await this.db.transaction(async (tx) => {
+      const changed = await tx.query(
+        "UPDATE demo_members SET name=$2,phone=$3,password_hash=$4,salt=$5 WHERE user_id=$1 AND password_hash=$6 AND name=$7 AND phone=$8 RETURNING user_id",
+        [
+          userId,
+          `${input.firstName} ${input.lastName}`,
+          input.phone,
+          encoded,
+          salt,
+          row.password_hash,
+          row.name,
+          row.phone,
+        ],
+      );
+      if (!changed.rows.length)
+        throw new ConflictException("Üye bilgilerin değişti.");
+      await tx.query(
+        "INSERT INTO demo_profile_details(user_id,address,first_name,last_name) VALUES($1,$2,$3,$4) ON CONFLICT(user_id) DO UPDATE SET address=$2,first_name=$3,last_name=$4",
+        [userId, input.address, input.firstName, input.lastName],
+      );
+      await tx.query(
+        "INSERT INTO demo_profile_receipts(id,user_id,request_hash) VALUES($1,$2,$3)",
+        [input.operationId, userId, requestHash],
+      );
+    });
+  }
   async register(input: RegistrationInput): Promise<Member> {
     const username = input.username.trim().toLowerCase();
     if (username === "demo")
@@ -48,7 +165,10 @@ export class PersistentMockCafeAdapter extends MockCafeSystemAdapter {
     try {
       return await this.db.transaction(async (tx) => {
         const id = randomUUID();
-        await tx.query("INSERT INTO app_users(id,cafe_member_id) VALUES($1,$1)", [id]);
+        await tx.query(
+          "INSERT INTO app_users(id,cafe_member_id) VALUES($1,$1)",
+          [id],
+        );
         const { rows } = await tx.query<MemberRow>(
           "INSERT INTO demo_members(user_id,username,name,phone,email,password_hash,salt) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
           [

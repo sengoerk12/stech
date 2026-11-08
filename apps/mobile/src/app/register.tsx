@@ -16,7 +16,8 @@ import { theme } from "../theme";
 
 export default function Register() {
   const { signedIn, signUp } = useAuth();
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -28,26 +29,29 @@ export default function Register() {
   async function submit() {
     if (busy) return;
     setError("");
-    if (name.trim().length < 2) return setError("Adını ve soyadını gir.");
+    if (!firstName.trim() || !lastName.trim())
+      return setError("Adını ve soyadını gir.");
     if (!/^[a-zA-Z0-9_.]{3,32}$/.test(username.trim()))
       return setError(
         "Kullanıcı adın 3–32 karakter olmalı. İngilizce harf, rakam, nokta ve alt çizgi kullanabilirsin.",
       );
-    if (password.length < 8 || !password.trim())
+    if (password.length < 8 || password.length > 32 || !password.trim())
       return setError("Şifren en az 8 karakter olmalı.");
     if (password !== confirmation)
       return setError("Şifreler eşleşmiyor. Tekrar kontrol et.");
     if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
       return setError("Geçerli bir e-posta adresi gir.");
-    if (phone.trim() && !/^\+?[0-9 ()-]{10,20}$/.test(phone.trim()))
+    if (!/^\+?(?:90)?0?5[0-9 ()-]{9,16}$/.test(phone.trim()))
       return setError("Telefon numaranı kontrol et.");
     setBusy(true);
     try {
       await signUp({
-        name: name.trim(),
+        name: `${firstName.trim()} ${lastName.trim()}`,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         username: username.trim(),
         password,
-        ...(phone.trim() ? { phone: phone.trim() } : {}),
+        phone: phone.trim(),
         ...(email.trim() ? { email: email.trim() } : {}),
       });
     } catch (e) {
@@ -85,12 +89,21 @@ export default function Register() {
       </Card>
       <View style={{ gap: 18 }}>
         <Field
-          label="Ad soyad"
-          placeholder="Adını ve soyadını gir"
-          value={name}
-          onChangeText={setName}
-          maxLength={80}
-          autoComplete="name"
+          label="Ad"
+          placeholder="Adını gir"
+          value={firstName}
+          onChangeText={setFirstName}
+          maxLength={32}
+          autoComplete="given-name"
+          editable={!busy}
+        />
+        <Field
+          label="Soyad"
+          placeholder="Soyadını gir"
+          value={lastName}
+          onChangeText={setLastName}
+          maxLength={32}
+          autoComplete="family-name"
           editable={!busy}
         />
         <Field
@@ -108,7 +121,7 @@ export default function Register() {
           3–32 karakter; İngilizce harf, rakam, nokta veya alt çizgi.
         </Label>
         <Field
-          label="Telefon (isteğe bağlı)"
+          label="Telefon"
           placeholder="05xx xxx xx xx"
           value={phone}
           onChangeText={setPhone}
@@ -136,7 +149,7 @@ export default function Register() {
           onChangeText={setPassword}
           secureTextEntry
           autoComplete="new-password"
-          maxLength={128}
+          maxLength={32}
           editable={!busy}
         />
         <Field
@@ -162,7 +175,12 @@ export default function Register() {
           icon="arrow-right"
           busy={busy}
           disabled={
-            !name.trim() || !username.trim() || !password || !confirmation
+            !firstName.trim() ||
+            !lastName.trim() ||
+            !username.trim() ||
+            !phone.trim() ||
+            !password ||
+            !confirmation
           }
           onPress={() => {
             void submit();

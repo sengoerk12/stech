@@ -52,6 +52,7 @@ export default function Profile() {
                 <View style={{ flex: 1, gap: 8 }}>
                   <Label style={s.name}>{data.member.name}</Label>
                   <Label muted>@{data.member.username}</Label>
+                  <Label muted>Üye no: {data.member.memberNumber || '—'}</Label>
                   {!!data.member.level && (
                     <Badge blue>{data.member.level}</Badge>
                   )}
@@ -79,6 +80,7 @@ export default function Profile() {
                 {showDetails && (
                   <View style={s.details}>
                     {[
+                      ["Üye no", data.member.memberNumber],
                       ["Ad soyad", data.member.name],
                       ["Kullanıcı adı", data.member.username],
                       ["Telefon", data.member.phone],
@@ -101,6 +103,12 @@ export default function Profile() {
                       ))}
                   </View>
                 )}
+                <MenuRow
+                  title="Bilgilerimi ve şifremi düzenle"
+                  subtitle="Ad, soyad, telefon, kimlik ve adres"
+                  icon="edit-2"
+                  onPress={() => router.push('/profile-edit')}
+                />
                 <MenuRow
                   title="Bildirim tercihlerim"
                   subtitle="Kampanya ve işlem bildirimleri"

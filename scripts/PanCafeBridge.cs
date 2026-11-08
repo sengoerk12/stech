@@ -44,6 +44,14 @@ public static class PanCafeBridge
         try {
             if(!EqualSecret(request.Headers["Authorization"],"Bearer "+apiKey)) {Reply(response,401,new {error="unauthorized"});return;}
             string route=request.Url.AbsolutePath;
+            if(request.HttpMethod=="GET" && route=="/profile") {
+                int id;if(!Int32.TryParse(request.QueryString["id"],out id)){Reply(response,400,new {error="invalid_member"});return;}
+                Reply(response,200,PanCafeProfileWriter.Read(database,clientDirectory,id,request.QueryString["username"],apiKey));return;
+            }
+            if(request.HttpMethod=="POST" && route=="/profile/update") {
+                var body=ReadBody(request);int id;if(!Int32.TryParse(Field(body,"memberId"),out id)){Reply(response,400,new {error="invalid_member"});return;}
+                Reply(response,200,PanCafeProfileWriter.Update(database,clientDirectory,id,Field(body,"username"),Field(body,"firstName").Trim(),Field(body,"lastName").Trim(),Field(body,"phone"),Field(body,"address"),Field(body,"currentPassword"),Field(body,"newPassword"),Field(body,"revision"),Field(body,"operationId"),Field(body,"requestHash"),apiKey,Field(body,"cardUid").Trim().ToUpperInvariant()));return;
+            }
             if(request.HttpMethod=="GET" && route=="/capabilities") {
                 Reply(response,200,new[]{new Dictionary<string,string>{{"ADMIN_ADJUSTMENTS",config.ContainsKey("allowAdminAdjustments") && Convert.ToBoolean(config["allowAdminAdjustments"])?"true":"false"},{"MEMBER_LIST","true"}}});return;
             }
@@ -92,7 +100,7 @@ public static class PanCafeBridge
                 if(!Regex.IsMatch(uid,@"\A[A-Z0-9_-]{4,64}\z")) {Reply(response,400,new {error="invalid_card"});return;}
                 // This installation stores reader IDs in LASTNAME. Preserve leading zeroes.
                 // Read two rows before checking active status so duplicate IDs fail closed.
-                var rows=Query("SELECT FIRST 2 "+projection+" FROM MEMBERS WHERE UPPER(TRIM(LASTNAME))='"+uid+"'");
+                var rows=Query("SELECT FIRST 2 "+projection+" FROM MEMBERS M WHERE UPPER(TRIM(LASTNAME))='"+uid+"' OR EXISTS(SELECT 1 FROM STECH_MEMBER_CARDS C WHERE C.MEMBERID=M.ID AND C.USERNAME=M.USERNAME AND C.CARDUID='"+uid+"')");
                 if(rows.Count!=1 || rows[0]["ACCSTATUS"]!="1") {Reply(response,401,new {error="unknown_or_ambiguous_card"});return;}
                 Reply(response,200,rows);return;
             }
@@ -101,6 +109,7 @@ public static class PanCafeBridge
                 var body=ReadBody(request);string username=Field(body,"username").Trim().ToLowerInvariant(),password=Field(body,"password"),name=Field(body,"name").Trim(),phone=Field(body,"phone").Trim(),email=Field(body,"email").Trim();
                 string[] names=name.Split(new char[]{' '},2,StringSplitOptions.RemoveEmptyEntries);
                 string first=names.Length>0?names[0]:"",last=names.Length>1?names[1]:"";
+                if(body.ContainsKey("firstName") && body.ContainsKey("lastName")){first=Field(body,"firstName").Trim();last=Field(body,"lastName").Trim();}
                 if(!AllowedUser(username)||username.Length<3||password.Length<8||password.Length>32||first.Length==0||first.Length>32||last.Length>32||phone.Length>20||email.Length>50) {Reply(response,400,new {error="invalid_registration"});return;}
                 if(MemberByName(username,false).Count!=0) {Reply(response,409,new {error="username_taken"});return;}
                 PanCafeMemberWriter.Create(database,clientDirectory,new string[]{username,password,first,last,phone,email});
@@ -129,6 +138,7 @@ public static class PanCafeBridge
             if(port!=3002 && port!=3003 && port!=3004) throw new InvalidOperationException("Invalid loopback port");
             if(config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"])) PanCafeBalanceWriter.Initialize(database,clientDirectory);
             if(config.ContainsKey("allowAdminAdjustments") && Convert.ToBoolean(config["allowAdminAdjustments"])) PanCafeAdminWriter.Initialize(database,clientDirectory);
+            PanCafeProfileWriter.Initialize(database,clientDirectory);
             listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:"+port+"/");listener.Start();Status(true);
             ThreadPool.QueueUserWorkItem(delegate{Serve();});
             Application.EnableVisualStyles();

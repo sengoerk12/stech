@@ -110,6 +110,9 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
       );
     return {
       id: userId,
+      memberNumber: row.ID!,
+      firstName: row.NAME || '',
+      lastName: row.LASTNAME || '',
       username: row.USERNAME!,
       name:
         [row.NAME, row.LASTNAME].filter(Boolean).join(" ").trim() ||
@@ -201,6 +204,20 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   }
   async getUser(userId: string) {
     return this.member(await this.row(userId), userId);
+  }
+  async getProfile(userId:string): Promise<import('@stech/contracts').MemberProfile> {
+    const member=await this.row(userId);
+    const rows=await this.client.request(`/profile?id=${member.ID}&username=${encodeURIComponent(member.USERNAME!)}`);
+    const row=rows?.[0];
+    if(!row || row.ID!==member.ID || row.USERNAME!==member.USERNAME || !/^[a-f0-9]{64}$/.test(row.PROFILE_REVISION??'')) throw new ServiceUnavailableException('Profil bilgileri doğrulanamadı.');
+    return {memberNumber:row.ID!,username:row.USERNAME!,firstName:row.NAME??'',lastName:row.LASTNAME??'',phone:row.GSM||row.PHONE||'',address:row.ADDRESS??'',nationalId:'',revision:row.PROFILE_REVISION!};
+  }
+  async updateProfile(userId:string,input:import('@stech/contracts').ProfileUpdateInput,requestHash:string) {
+    const member=await this.row(userId);
+    const rows=await this.client.request('/profile/update',{memberId:Number(member.ID),username:member.USERNAME,firstName:input.firstName,lastName:input.lastName,phone:input.phone,address:input.address,currentPassword:input.currentPassword??'',cardUid:input.cardUid??'',newPassword:input.newPassword??'',revision:input.revision,operationId:input.operationId,requestHash});
+    if(rows?.[0]?.RESULT_CODE==='credentials') throw new BadRequestException(input.cardUid?'Kart bu hesaba ait değil veya kart eşleşmesi geçersiz.':'Mevcut şifren yanlış.');
+    if(rows?.[0]?.RESULT_CODE==='stale') throw new ConflictException('Üye bilgilerin değişti. Sayfayı yenileyip tekrar dene.');
+    if(rows?.[0]?.RESULT_CODE!=='ok') throw new ConflictException('Profil değişikliği doğrulanamadı. Aynı işlemi tekrar kontrol et.');
   }
   async getBalance(userId: string): Promise<Wallet> {
     return {
