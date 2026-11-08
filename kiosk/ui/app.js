@@ -45,7 +45,7 @@ function welcome() {
   return `<div class="welcome"><header>${logo}<div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header>
     <main class="welcome-main"><div class="welcome-copy"><img class="hero-emblem" src="assets/brand-emblem.png" alt="S TECH E-SPOR 1999 aslan amblemi"><span class="eyebrow"><span class="tiny-line"></span> OYUN BURADA BAŞLAR</span><h1>Hazırsan,<br><span>oyuna devam.</span></h1><p>Bakiyen, avantajların ve hesabın.<br>Hepsi tek dokunuş uzağında.</p><div class="welcome-benefits"><span>${icon('topup')}Hızlı yükleme</span><span>${icon('campaigns')}Sana özel fırsatlar</span></div></div>
     <section class="tap-panel"><div class="panel-top"><span>01 / KARTINLA GİRİŞ YAP</span>${icon('shield')}</div><div class="tap-orbit"><div class="tap-ring"></div><div class="tap-ring second"></div><div class="member-card"><div class="member-card-head">S TECH ${icon('nfc')}</div><div class="card-chip"></div><div class="member-card-bottom">PLAYER CARD<span>•••• •••• ••••</span></div></div><span class="tap-symbol">${icon('nfc')}</span></div><h2>${state.loading ? 'Hesabın açılıyor…' : 'Üye kartını okut'}</h2><p>Kartını bilgisayarın yanındaki<br>NFC okuyucuya yaklaştır.</p><div class="reader-status"><i class="${state.loading ? 'pulse' : ''}"></i>${state.loading ? 'Bilgilerin kontrol ediliyor' : 'Kart okutmanı bekliyoruz'}</div>
-    ${state.info?.mode === 'demo' ? `<div class="demo-entry"><span>Keşfetmek için bir deneme hesabı seç</span>${button('Kaan olarak dene ' + icon('arrow'), 'demo1', 'primary', state.loading)}${button('Deniz olarak dene', 'demo2', 'quiet', state.loading)}</div>` : '<div class="secure-note">' + icon('shield') + ' Oturumun işlem sonunda güvenle kapanır.</div>'}</section></main>
+    ${state.info?.mode === 'demo' ? `<div class="demo-entry"><span>Keşfetmek için bir deneme hesabı seç</span>${button('Kaan olarak dene ' + icon('arrow'), 'demo1', 'primary', state.loading)}${button('Deniz olarak dene', 'demo2', 'quiet', state.loading)}</div>` : `<div class="password-entry"><span>Kartın yanında değil mi?</span>${button(icon('profile') + ' Kullanıcı adıyla giriş', 'open-password-login', 'secondary wide', state.loading)}</div><div class="secure-note">${icon('shield')} Oturumun işlem sonunda güvenle kapanır.</div>`}</section></main>
     <footer><span>${e(state.info?.station || 'S TECH')} <span class="footer-separator">/</span> MÜŞTERİ NOKTASI</span><span>İyi oyunlar. <span class="orange">İyi ki buradasın.</span></span></footer></div>`;
 }
 const nav = [{ id: 'home', label: 'Ana ekran', icon: 'home' }, { id: 'topup', label: 'Bakiye yükle', icon: 'topup' }, { id: 'campaigns', label: 'Kampanyalar', icon: 'campaigns' }, { id: 'history', label: 'İşlem geçmişi', icon: 'history' }, { id: 'profile', label: 'Profilim', icon: 'profile' }];
@@ -96,13 +96,35 @@ function history() {
 }
 function profile() {
   const m = state.data.member;
-  return `<div class="page-heading"><div><span class="eyebrow">S TECH HESABIN</span><h1>Seni tanımak güzel.</h1><p>Üyelik bilgilerin ve hesabınla ilgili her şey.</p></div></div><div class="profile-grid"><section class="panel profile-card"><div class="avatar large">${e(m.name.charAt(0))}</div><h2>${e(m.name)}</h2><span class="muted">@${e(m.username)}</span><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span><div class="profile-balance"><span>Kullanılabilir bakiye</span><strong>${cash(state.data.wallet.balance)}</strong></div></section><section class="panel profile-details"><h2>Hesap bilgilerim</h2>${[['Ad soyad',m.name],['Kullanıcı adı',m.username],['Telefon',m.phone || 'Belirtilmemiş'],['E-posta',m.email || 'Belirtilmemiş'],['Üyelik tarihi',new Date(m.joinedAt).toLocaleDateString('tr-TR')]].map(([label,value]) => `<div class="summary-row"><span>${label}</span><strong>${e(value)}</strong></div>`).join('')}<div class="notice neutral">${icon('info')} Bilgilerini güncellemek veya kartınla ilgili destek almak için S TECH yetkilisine başvurabilirsin.</div></section></div><section class="privacy-strip">${icon('shield')}<div><strong>Hesabın sana özel.</strong><p>İşin bittiğinde oturumunu kapat. Bir sonraki müşteri bilgilerini göremez.</p></div>${button('Oturumu bitir ' + icon('logout'), 'logout', 'secondary')}</section>`;
+  return `<div class="page-heading"><div><span class="eyebrow">S TECH HESABIN</span><h1>Seni tanımak güzel.</h1><p>Üyelik bilgilerin ve hesabınla ilgili her şey.</p></div></div><div class="profile-grid"><section class="panel profile-card"><div class="avatar large">${e(m.name.charAt(0))}</div><h2>${e(m.name)}</h2><span class="muted">@${e(m.username)}</span><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span><div class="profile-balance"><span>Kullanılabilir bakiye</span><strong>${cash(state.data.wallet.balance)}</strong></div></section><section class="panel profile-details"><h2>Hesap bilgilerim</h2>${[['Üye no',m.memberNumber || '—'],['Ad soyad',m.name],['Kullanıcı adı',m.username],['Telefon',m.phone || 'Belirtilmemiş'],['E-posta',m.email || 'Belirtilmemiş'],['Üyelik tarihi',new Date(m.joinedAt).toLocaleDateString('tr-TR')]].map(([label,value]) => `<div class="summary-row"><span>${label}</span><strong>${e(value)}</strong></div>`).join('')}<div class="notice neutral">${icon('info')} Bilgilerini güncellemek veya kartınla ilgili destek almak için S TECH yetkilisine başvurabilirsin.</div></section></div><section class="privacy-strip">${icon('shield')}<div><strong>Hesabın sana özel.</strong><p>İşin bittiğinde oturumunu kapat. Bir sonraki müşteri bilgilerini göremez.</p></div>${button('Oturumu bitir ' + icon('logout'), 'logout', 'secondary')}</section>`;
+}
+let loginFormTimer;
+function resetLoginFormTimer() {
+  clearTimeout(loginFormTimer);
+  loginFormTimer = setTimeout(() => {
+    if (state.modal === 'password-login' && !state.loading) void action('close-modal');
+  }, 90000);
 }
 function renderModal() {
   const host = $('#modal-root');
+  clearTimeout(loginFormTimer);
+  root.inert = state.modal === 'password-login';
   if (!state.modal) { host.innerHTML = ''; return; }
   let content;
-  if (state.modal === 'idle') content = `<div class="modal-symbol">${icon('history')}</div><h2>Hâlâ burada mısın?</h2><p>Gizliliğin için oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak.</p>${button('Buradayım, devam et', 'continue', 'primary wide')}${button('Oturumu bitir', 'logout', 'quiet wide')}`;
+  if (state.modal === 'password-login') {
+    content = `<div class="modal-symbol">${icon('profile')}</div><h2 id="password-login-title">Kullanıcı adıyla giriş</h2>
+      <p>PanCafe hesabının kullanıcı adını ve şifresini gir.</p>
+      <form id="password-login-form" class="password-login-form" autocomplete="off">
+        <fieldset>
+          <label>Kullanıcı adı<input name="username" maxlength="120" autocapitalize="none" spellcheck="false" required></label>
+          <label>Şifre<input name="password" type="password" maxlength="256" required></label>
+          <p class="login-error" role="alert" hidden></p>
+          <button type="submit" class="button primary wide">Giriş yap ${icon('arrow')}</button>
+          <button type="button" class="button quiet wide" data-action="close-modal">Kartla girişe dön</button>
+        </fieldset>
+      </form>`;
+    resetLoginFormTimer();
+  } else if (state.modal === 'idle') content = `<div class="modal-symbol">${icon('history')}</div><h2>Hâlâ burada mısın?</h2><p>Gizliliğin için oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak.</p>${button('Buradayım, devam et', 'continue', 'primary wide')}${button('Oturumu bitir', 'logout', 'quiet wide')}`;
   else if (state.modal === 'logout') content = `<div class="modal-symbol">${icon('logout')}</div><h2>İşlemlerin tamam mı?</h2><p>Oturumun kapanacak ve ekran yeni müşteri için hazırlanacak.</p>${button('Evet, oturumu bitir', 'confirm-logout', 'primary wide')}${button('Hesabıma dön', 'close-modal', 'secondary wide')}`;
   else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   else {
@@ -110,7 +132,9 @@ function renderModal() {
     if (!p) { state.modal = null; host.innerHTML = ''; return; }
     content = `<span class="eyebrow">KAMPANYA DETAYI</span><h2>${e(p.title)}</h2><p>${e(p.description)}</p><div class="campaign-terms"><strong>Kampanya koşulları</strong><p>${e(p.terms)}</p><span>Son gün: ${new Date(p.endsAt).toLocaleDateString('tr-TR')}</span></div>${button('Bakiye yükle ' + icon('arrow'), 'modal-topup', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   }
-  host.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${state.modal === 'admin' ? 'Yetkili erişimi' : 'Bilgilendirme'}">${content}</section></div>`;
+  const label = state.modal === 'password-login' ? 'aria-labelledby="password-login-title"'
+    : state.modal === 'admin' ? 'aria-label="Yetkili erişimi"' : 'aria-label="Bilgilendirme"';
+  host.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" ${label}>${content}</section></div>`;
   host.querySelector('input, button')?.focus();
 }
 async function scan(uid) {
@@ -119,6 +143,42 @@ async function scan(uid) {
   try { const data = await call('scan', { uid }); if (epoch !== state.epoch) return; state.data = data; state.seconds = 90; state.page = 'home'; render(); }
   catch (error) { if (epoch === state.epoch) toast(error.message); }
   finally { if (epoch === state.epoch) { state.loading = false; render(); } }
+}
+async function submitPasswordLogin(form) {
+  if (state.loading || state.data || state.modal !== 'password-login') return;
+  const username = form.elements.username;
+  const password = form.elements.password;
+  if (!username.value.trim()) { username.focus(); return; }
+  const epoch = state.epoch;
+  const fields = form.querySelector('fieldset');
+  const submit = form.querySelector('[type="submit"]');
+  const errorMessage = form.querySelector('.login-error');
+  state.loading = true;
+  fields.disabled = true;
+  submit.textContent = 'Hesabın açılıyor…';
+  errorMessage.hidden = true;
+  const request = call('passwordLogin', { username: username.value, password: password.value });
+  password.value = '';
+  try {
+    const data = await request;
+    if (epoch !== state.epoch) return;
+    state.data = data;
+    state.seconds = 90;
+    state.page = 'home';
+    state.modal = null;
+    renderModal();
+    render();
+  } catch (error) {
+    if (epoch !== state.epoch) return;
+    fields.disabled = false;
+    submit.textContent = 'Giriş yap';
+    errorMessage.hidden = false;
+    errorMessage.textContent = error.message;
+    password.focus();
+    resetLoginFormTimer();
+  } finally {
+    if (epoch === state.epoch) state.loading = false;
+  }
 }
 async function refresh() {
   const epoch = state.epoch;
@@ -159,6 +219,13 @@ async function go(page) {
 }
 async function action(value) {
   const [name, arg] = value.split(':');
+  if (name === 'open-password-login') {
+    if (state.data || state.loading || state.info?.mode !== 'connected') return;
+    cardBuffer = '';
+    state.modal = 'password-login';
+    renderModal();
+    return;
+  }
   if (name === 'demo1' || name === 'demo2') return scan(name === 'demo1' ? 'DEMO0001' : 'DEMO0002');
   if (name === 'finish-session' || (name === 'logout' && state.payment?.status === 'completed')) { reset(); await call('logout'); return; }
   if (name === 'another-transaction') {
@@ -175,7 +242,15 @@ async function action(value) {
   if (name === 'confirm-logout') { reset(); await call('logout'); return; }
   if (name === 'continue' && state.payment?.status === 'completed') return;
   if (name === 'continue') { await call('activity'); state.modal = null; renderModal(); return; }
-  if (name === 'close-modal') { state.modal = null; state.pin = ''; renderModal(); return; }
+  if (name === 'close-modal') {
+    const wasLogin = state.modal === 'password-login';
+    if (wasLogin && state.loading) return;
+    state.modal = null;
+    state.pin = '';
+    renderModal();
+    if (wasLogin) $('[data-action="open-password-login"]')?.focus();
+    return;
+  }
   if (name === 'campaign') { state.modal = arg; renderModal(); return; }
   if (name === 'modal-topup') return go('topup');
   if (name.startsWith('go-')) return go(name.slice(3));
@@ -214,15 +289,22 @@ document.addEventListener('click', event => {
   Promise.resolve(task).catch(error => { if (epoch === state.epoch) toast(error.message); });
 });
 document.addEventListener('input', event => { if (event.target.matches('.pin-input')) state.pin = event.target.value; });
+document.addEventListener('submit', event => {
+  if (event.target.id !== 'password-login-form') return;
+  event.preventDefault();
+  void submitPasswordLogin(event.target);
+});
 let lastActivity = 0;
 for (const event of ['pointerdown','keydown']) document.addEventListener(event, () => {
+  if (state.modal === 'password-login' && !state.loading) resetLoginFormTimer();
   if (state.data && Date.now() - lastActivity > 1000) { lastActivity = Date.now(); void call('activity').catch(() => {}); }
 });
 let cardBuffer = '', lastKey = 0;
 document.addEventListener('keydown', event => {
   if (state.modal) {
+    if (event.key === 'Escape' && state.modal === 'password-login') void action('close-modal');
     if (event.key === 'Tab') {
-      const focusable = [...$('#modal-root').querySelectorAll('button, input')].filter(el => !el.disabled);
+      const focusable = [...$('#modal-root').querySelectorAll('button:not(:disabled), input:not(:disabled)')];
       const first = focusable[0], last = focusable.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -233,12 +315,19 @@ document.addEventListener('keydown', event => {
   const now = performance.now();
   if (now - lastKey > 180) cardBuffer = '';
   lastKey = now;
-  if (event.key === 'Enter') { event.preventDefault(); const uid = cardBuffer; cardBuffer = ''; if (uid.length >= 4) void scan(uid); }
+  if (event.key === 'Enter') {
+    const uid = cardBuffer;
+    cardBuffer = '';
+    if (uid.length >= 4) { event.preventDefault(); void scan(uid); }
+  }
   else if (/^[a-zA-Z0-9_-]$/.test(event.key)) { event.preventDefault(); cardBuffer = (cardBuffer + event.key).slice(0,64); }
 });
 if (window.stech) {
   window.stech.on('locked', reset);
-  window.stech.on('admin', () => { state.modal = 'admin'; state.pin = ''; renderModal(); });
+  window.stech.on('admin', () => {
+    if (state.modal === 'password-login' && state.loading) return;
+    state.modal = 'admin'; state.pin = ''; renderModal();
+  });
   window.stech.on('countdown', seconds => {
     state.seconds = seconds;
     if ($('#seconds')) $('#seconds').textContent = Math.ceil(seconds);

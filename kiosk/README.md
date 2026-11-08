@@ -40,7 +40,7 @@ npm run build:win
 
 ## Yapılandırma
 
-Varsayılan dosya `%APPDATA%/kiosk/kiosk.config.json`. `STECH_KIOSK_CONFIG` ortam değişkeniyle başka bir mutlak dosya yolu seçilebilir. Dosya yoksa açıkça etiketlenen demo açılır. `kiosk.config.example.json` başlangıç örneğidir. Bağlı moddaki hatada demo hesaba otomatik geçiş yapılmaz.
+Varsayılan dosya `%APPDATA%\@stech\kiosk\kiosk.config.json`. `STECH_KIOSK_CONFIG` ortam değişkeniyle başka bir mutlak dosya yolu seçilebilir. Dosya yoksa açıkça etiketlenen demo açılır. `kiosk.config.example.json` başlangıç örneğidir. Bağlı moddaki hatada demo hesaba otomatik geçiş yapılmaz.
 
 ```json
 {

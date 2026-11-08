@@ -20,23 +20,31 @@ class KioskSession {
     this.onLock();
   }
   async scan(value) {
+    const card = normalizeCard(value);
+    return this.startSession(card, () => this.gateway.login(card));
+  }
+  async loginWithPassword(payload) {
+    if (this.mode !== 'connected') throw new Error('Kullanıcı adıyla giriş için PanCafe bağlantısı gerekli.');
+    const { username, password } = payload ?? {};
+    if (typeof username !== 'string' || !username.trim() || username.length > 120 ||
+        typeof password !== 'string' || !password || password.length > 256)
+      throw new Error('Kullanıcı adını ve şifreni gir.');
+    return this.startSession(undefined, () => this.gateway.loginWithPassword(username.trim(), password));
+  }
+  async startSession(card, authenticate) {
     if (this.session || this.busy) throw new Error('Önce mevcut oturumu bitir.');
     this.busy = true;
     const epoch = this.generation;
     const started = Date.now();
     let token;
     try {
-      const card = normalizeCard(value);
-      if (this.mode === 'connected') token = (await this.gateway.login(card)).accessToken;
+      if (this.mode === 'connected') token = (await authenticate()).accessToken;
       const data = this.mode === 'demo' ? await this.demo.dashboard(card) : await this.gateway.dashboard(token);
-      if (epoch !== this.generation) {
-        if (token) void this.gateway.logout(token).catch(() => {});
-        throw new Error('Oturum kapandı. Kartını tekrar okut.');
-      }
+      if (epoch !== this.generation) throw new Error('Oturum kapandı. Tekrar giriş yap.');
       this.session = { card, token, started, activity: Date.now() };
       return this.publicDashboard(data);
     } catch (error) {
-      if (token && !this.session) void this.gateway.logout(token).catch(() => {});
+      if (token && this.session?.token !== token) void this.gateway.logout(token).catch(() => {});
       throw error;
     } finally { if (epoch === this.generation) this.busy = false; }
   }
@@ -51,11 +59,12 @@ class KioskSession {
   async run(action, payload = {}) {
     this.tick();
     if (action === 'scan') return this.scan(payload.uid);
+    if (action === 'passwordLogin') return this.loginWithPassword(payload);
     if (action === 'logout') { this.lock(); return { ok: true }; }
     if (action === 'activity') { this.touch(); return { remaining: this.remaining() }; }
     this.tick();
     const session = this.session, epoch = this.generation;
-    if (!session) throw new Error('Kartını okutarak tekrar giriş yap.');
+    if (!session) throw new Error('Devam etmek için tekrar giriş yap.');
     if (action === 'continueSession') {
       if (!session.completionDeadline) throw new Error('Tamamlanmış işlem bulunamadı.');
       delete session.completionDeadline;
@@ -79,7 +88,7 @@ class KioskSession {
       if (action === 'settle') result = await this.demo.settle(session.card, payload.id, payload.outcome);
     } else throw new Error('Geçersiz işlem.');
     this.tick();
-    if (epoch !== this.generation) throw new Error('Oturum kapandı. Kartını tekrar okut.');
+    if (epoch !== this.generation) throw new Error('Oturum kapandı. Tekrar giriş yap.');
     if (['settle', 'payment'].includes(action) && result.status === 'completed') {
       if (session.completionPaymentId !== result.id) {
         session.completionPaymentId = result.id;

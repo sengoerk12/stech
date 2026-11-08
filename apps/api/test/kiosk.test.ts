@@ -52,7 +52,7 @@ test('HTTP configured kiosk issues a usable session only to its device key', asy
   const dir = await mkdtemp(join(tmpdir(), 'stech-kiosk-http-'));
   const file = join(dir, 'cards.json');
   await writeFile(file, JSON.stringify({ cards:[{ cardHash:hash('001234'), userId:'demo-member' }] }));
-  const app = await createApp({ ENVIRONMENT:'test', KIOSK_DEVICE_KEY:key, KIOSK_CARD_MAP_FILE:file });
+  const app = await createApp({ ENVIRONMENT:'test', KIOSK_DEVICE_KEY:key, KIOSK_CARD_MAP_FILE:file, DEMO_PASSWORD:'test-member-password' });
   try {
     await app.listen(0, '127.0.0.1'); const base = await app.getUrl() + '/api/v1';
     const login = (body:unknown, deviceKey = key) => fetch(base + '/kiosk/card-login', { method:'POST', headers:{ 'Content-Type':'application/json', 'X-Kiosk-Key':deviceKey }, body:JSON.stringify(body) });
@@ -67,5 +67,23 @@ test('HTTP configured kiosk issues a usable session only to its device key', asy
     assert.equal(dashboard.status, 200); assert.equal((await dashboard.json() as any).member.username, 'demo');
     await fetch(base + '/auth/logout', { method:'POST', headers });
     assert.equal((await fetch(base + '/me/dashboard', { headers })).status, 401);
+
+    const passwordLogin = (password: string, deviceKey = key) => fetch(base + '/kiosk/password-login', {
+      method:'POST', headers:{ 'Content-Type':'application/json', 'X-Kiosk-Key':deviceKey },
+      body:JSON.stringify({ identifier:' demo ', password }),
+    });
+    assert.equal((await passwordLogin('test-member-password', 'wrong')).status, 401);
+    assert.equal((await passwordLogin('wrong')).status, 401);
+    const passwordResponse = await passwordLogin('test-member-password');
+    assert.equal(passwordResponse.status, 201);
+    const passwordTokens = await passwordResponse.json() as { accessToken:string; expiresIn:number };
+    assert.equal(passwordTokens.expiresIn, 300);
+    assert.equal('refreshToken' in passwordTokens, false);
+    const passwordHeaders = { Authorization:`Bearer ${passwordTokens.accessToken}` };
+    const passwordDashboard = await fetch(base + '/me/dashboard', { headers:passwordHeaders });
+    assert.equal(passwordDashboard.status, 200);
+    assert.equal((await passwordDashboard.json() as any).member.username, 'demo');
+    await fetch(base + '/auth/logout', { method:'POST', headers:passwordHeaders });
+    assert.equal((await fetch(base + '/me/dashboard', { headers:passwordHeaders })).status, 401);
   } finally { await app.close(); await rm(dir, { recursive:true, force:true }); }
 });

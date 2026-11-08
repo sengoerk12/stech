@@ -204,6 +204,14 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (!kioskAuth) throw new ServiceUnavailableException("Kiosk kart bağlantısı yapılandırılmadı.");
       return kioskAuth.login(key, parse(KioskCardDto, body).cardUid);
     }
+    @Post("kiosk/password-login") async kioskPasswordLogin(
+      @Headers("x-kiosk-key") key: string | undefined,
+      @Body() body: unknown,
+    ) {
+      if (!kioskAuth) throw new ServiceUnavailableException("Kiosk bağlantısı yapılandırılmadı.");
+      const dto = parse(LoginDto, body);
+      return kioskAuth.loginWithPassword(key, dto.identifier.trim(), dto.password);
+    }
     @Get("health") health() {
       return {
         status: "ok",
@@ -412,7 +420,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     const now = Date.now();
     for (const [key, value] of buckets)
       if (value.expires < now) buckets.delete(key);
-    const authRoute = req.path.includes("/auth/") || req.path.includes("/kiosk/card-login");
+    const authRoute = req.path.includes("/auth/") || req.path.includes("/kiosk/card-login") ||
+      req.path.includes("/kiosk/password-login");
     const key = `${req.ip}:${authRoute ? "auth" : "api"}`;
     const bucket = buckets.get(key) ?? { count: 0, expires: now + 60000 };
     bucket.count++;

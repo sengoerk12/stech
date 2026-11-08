@@ -20,6 +20,7 @@ class ApiGateway {
     return data;
   }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
+  loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
   dashboard(token) { return this.request('/me/dashboard', token); }
   transactions(token, cursor) { return this.request('/me/transactions' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
   sessions(token, cursor) { return this.request('/me/session-history' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
