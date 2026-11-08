@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { schema } from "./schema";
+import { acquireLocalDatabaseLease } from "./local-lease";
 
 export interface SqlExecutor {
   query<T = Record<string, unknown>>(
@@ -59,9 +60,18 @@ export async function openDatabase(
   } else {
     if (options.directory)
       await mkdir(resolve(options.directory), { recursive: true });
-    const pg = await PGlite.create(
-      options.directory ? resolve(options.directory) : "memory://",
-    );
+    const release = options.directory
+      ? await acquireLocalDatabaseLease(options.directory)
+      : async () => {};
+    let pg: PGlite;
+    try {
+      pg = await PGlite.create(
+        options.directory ? resolve(options.directory) : "memory://",
+      );
+    } catch (error) {
+      await release();
+      throw error;
+    }
     db = {
       async query<T>(sql: string, params?: unknown[]) {
         const result = await pg.query<T>(sql, params);
@@ -75,7 +85,13 @@ export async function openDatabase(
             },
           }),
         ),
-      close: () => pg.close(),
+      close: async () => {
+        try {
+          await pg.close();
+        } finally {
+          await release();
+        }
+      },
     };
     await db.transaction(async (tx) => {
       for (const statement of schema) await tx.query(statement);

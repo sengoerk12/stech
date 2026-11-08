@@ -104,6 +104,7 @@ const post = <T>(
   headers?: Record<string, string>,
 ) => request<T>(path, { method: "POST", body: JSON.stringify(body), headers });
 export const api = {
+  publicSettings: () => request<{supportText: string}>("/settings/public"),
   health: () =>
     request<{ cafe: "mock" | "pancafe"; payments: string }>("/health"),
   onExpired(callback: () => void) {

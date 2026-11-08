@@ -1,5 +1,14 @@
 # Verification notes
 
+## Admin delivery — 2026-10-28
+- 39 backend tests passed, API/mobile type checks and API build passed. Mobile lint passed.
+- Native admin writer passed on a database copy: deposit, debit, bonus credit/debit, duplicate receipt, conflict, stale balance, wrong member, overdraft and history-failure rollback.
+- Browser checks passed: admin login, ten management sections, campaign/password forms, 390px rendering and logout, with no browser page errors.
+- Windows admin EXE opens and uses the local API. Live bridge member listing returned three native members. Native admin writing requires the operator's checkbox in the bridge window; live member balances were not changed by these tests.
+- Push plans, membership levels and refunds are explicitly drafts/requests until their external integrations are configured. See ADMIN.md.
+- Local app storage could not start due to an invalid WAL checkpoint after an interrupted development session. Original directory and a full copy are retained. Recovery was performed on a separate copy, then pg_dump/restoration into a fresh database. All recovered table counts and foreign keys validated (8 payments, 21 audit entries, 4 app identities). This verifies the recovered records, not an assertion that a torn WAL contained no additional uncheckpointed data. Old auth sessions were revoked. PanCafe remains the authoritative balance source.
+- Restored runtime data directory: D:/stech-build-cache/data/stech-restored-20261028-v2. Recovery dump and validation report are outside Git under D:/stech-build-cache/postgres-recovery. A host-process lease now prevents two API instances opening the same local PGlite directory.
+
 ## Verified
 - API and mobile TypeScript checks.
 - API TypeScript compilation.

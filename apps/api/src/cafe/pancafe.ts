@@ -24,7 +24,7 @@ export class PanCafeBridgeClient {
     private fetcher: typeof fetch = fetch,
   ) {
     if (
-      !["http://127.0.0.1:3002", "http://127.0.0.1:3003"].includes(baseUrl) ||
+      !["http://127.0.0.1:3002", "http://127.0.0.1:3003", "http://127.0.0.1:3004"].includes(baseUrl) ||
       config.apiKey.length < 40 ||
       !/^[a-zA-Z0-9_-]{1,80}$/.test(config.installationId)
     )
@@ -61,7 +61,7 @@ export class PanCafeBridgeClient {
         "PanCafe işlemi tamamlanamadı. Bağlantını kontrol edip tekrar dene.",
       );
     const result: unknown = await response.json();
-    const history = path.startsWith("/transactions?") || path.startsWith("/session-history?");
+    const history = path.startsWith("/transactions?") || path.startsWith("/session-history?") || path.startsWith("/admin/members?");
     if (
       !Array.isArray(result) ||
       (history ? result.length > 101 : result.length !== 1) ||

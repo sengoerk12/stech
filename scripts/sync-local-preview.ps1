@@ -12,5 +12,7 @@ foreach ($appName in @('api', 'mobile')) {
 Copy-Item -LiteralPath "$sourceRoot\packages\contracts\src" -Destination "$previewRoot\packages\contracts" -Recurse -Force
 Copy-Item -LiteralPath "$sourceRoot\apps\mobile\app.config.ts" -Destination "$previewRoot\apps\mobile\app.config.ts" -Force
 Copy-Item -LiteralPath "$sourceRoot\apps\mobile\assets" -Destination "$previewRoot\apps\mobile" -Recurse -Force
+New-Item -ItemType Directory -Force "$previewRoot\apps\admin" | Out-Null
+Copy-Item "$sourceRoot\apps\admin\*" "$previewRoot\apps\admin" -Force
 Write-Output "Preview sources synchronized to $previewRoot"
 Write-Output 'Run npm run dev:api and npm run web from that directory in separate terminals.'

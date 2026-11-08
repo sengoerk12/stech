@@ -16,3 +16,6 @@ dist/
 coverage/
 *.log
 .DS_Store
+desktop/web/
+desktop/release/
+dist-desktop/

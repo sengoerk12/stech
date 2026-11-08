@@ -46,6 +46,10 @@ import { PersistentPaymentService } from "./payments/persistent-service";
 import { PersistentAuthService } from "./auth/persistent-service";
 import { openDatabase } from "./database/database";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { static as serveStatic } from "express";
+import { AdminService } from "./admin/service";
+import { createAdminController } from "./admin/controller";
 import {
   PanCafeSystemAdapter,
   PanCafeBridgeClient,
@@ -143,12 +147,18 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const paymentCafe = simulation ?? cafe;
   const provider = new MockPaymentProvider();
   const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock");
+  const admin = new AdminService(db, bridgeConfig ? new PanCafeBridgeClient(bridgeConfig) : null, payments, env);
+  const AdminController = createAdminController(admin);
   const auth = new PersistentAuthService(db, cafe);
-  function requirePayments() {
+  async function requirePayments() {
+    if (!(await admin.topupEnabled())) throw new ServiceUnavailableException("Bakiye yükleme geçici olarak kapalı. Lütfen daha sonra tekrar dene.");
     if (panCafe && !simulation)
       throw new ServiceUnavailableException(
         "PanCafe bakiye yükleme entegrasyonu henüz etkin değil. Şu anda bakiye görüntüleyebilirsin.",
       );
+  }
+  function requireExistingPayments() {
+    if (panCafe && !simulation) throw new ServiceUnavailableException("Ödeme entegrasyonu etkin değil.");
   }
   function token(req: Request) {
     const header = req.headers.authorization;
@@ -174,6 +184,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       const dto = parse(LoginDto, body);
       return auth.login(dto.identifier, dto.password);
     }
+    @Get("settings/public") publicSettings() { return admin.publicSettings(); }
     @Post("auth/register") async register(@Body() body: unknown) {
       const dto = parse(RegistrationDto, body);
       const member = await cafe.register(dto);
@@ -201,11 +212,12 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         ...(simulation && !nativeCredit ? { testWallet: await simulation.getBalance(id) } : {}),
         promotions,
         transactions,
+        announcements: await admin.announcements(),
         features: {
           qr: false,
           membership: false,
           activeSession: false,
-          topup: !panCafe || !!simulation,
+          topup: (!panCafe || !!simulation) && await admin.topupEnabled(),
           transactions: true,
         },
         ...(panCafe
@@ -237,7 +249,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       @Body() body: unknown,
     ) {
       const id = await user(req);
-      requirePayments();
+      await requirePayments();
       return payments.quote(id, parse(AmountDto, body).amount);
     }
     @Post("payments") async create(
@@ -246,7 +258,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       @Headers("idempotency-key") key?: string,
     ) {
       const id = await user(req);
-      requirePayments();
+      await requirePayments();
       if (!key || !/^[a-zA-Z0-9_-]{16,100}$/.test(key))
         throw new BadRequestException("Geçerli işlem anahtarı gerekli.");
       return payments.create(id, parse(AmountDto, body).amount, key);
@@ -256,7 +268,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       @Param("id") id: string,
     ) {
       const memberId = await user(req);
-      requirePayments();
+      requireExistingPayments();
       return payments.get(memberId, id);
     }
     @Post("payments/:id/simulate") async simulate(
@@ -265,7 +277,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       @Body() body: unknown,
     ) {
       const memberId = await user(req);
-      requirePayments();
+      requireExistingPayments();
       const payment = await payments.get(memberId, id);
       const dto = parse(SimulationDto, body);
       if (dto.outcome === "delayed") paymentCafe.delayTransfer(id, 5000);
@@ -288,7 +300,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       @Headers("x-signature") signature: string,
       @Headers("x-timestamp") timestamp: string,
     ) {
-      requirePayments();
+      requireExistingPayments();
       let event;
       try {
         event = provider.verifyWebhook(
@@ -341,7 +353,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       await db.close();
     }
   }
-  @Module({ controllers: [ApiController], providers: [RuntimeLifecycle] })
+  @Module({ controllers: [ApiController, AdminController], providers: [RuntimeLifecycle] })
   class AppModule {}
   const app = await NestFactory.create(AppModule, {
     rawBody: true,
@@ -349,6 +361,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   });
   app.setGlobalPrefix("api/v1");
   app.use(helmet());
+  app.use('/admin', serveStatic(resolve(env.ADMIN_WEB_DIR ?? '../admin'), { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
   app.enableCors({
     origin: (env.WEB_ORIGIN ?? "http://localhost:8081")
       .split(",")

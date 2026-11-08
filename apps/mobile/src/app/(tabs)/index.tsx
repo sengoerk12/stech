@@ -236,6 +236,12 @@ export default function Home() {
                 />
               </Card>
             ))}
+            {data.announcements?.map((announcement) => (
+              <Card key={announcement.id} style={{ gap: 8 }}>
+                <Label style={{ fontFamily: th.font.bold, color: th.colors.primary }}>{announcement.title}</Label>
+                <Label muted>{announcement.body}</Label>
+              </Card>
+            ))}
             <View style={{ gap: 10 }}>
               <Section
                 title={data.testWallet ? "Deneme kampanyaları" : "Kampanyalar"}

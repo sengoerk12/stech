@@ -74,6 +74,7 @@ export interface NotificationPreferences {
   lowBalance: boolean;
 }
 export interface Dashboard {
+  announcements?: { id: string; title: string; body: string }[];
   pendingPayments: Payment[];
   member: Member;
   wallet: Wallet;

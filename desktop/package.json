@@ -1,0 +1,7 @@
+{
+  "name": "stech-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "S TECH Windows local desktop client",
+  "main": "main.cjs"
+}

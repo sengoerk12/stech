@@ -202,7 +202,7 @@ export class PersistentMockCafeAdapter extends MockCafeSystemAdapter {
     await this.getUser(userId);
     return (
       await this.db.query<{ definition: Promotion }>(
-        "SELECT definition FROM app_promotions ORDER BY id",
+        "SELECT definition FROM app_promotions WHERE active=true AND (definition->>'startsAt')::timestamptz<=now() AND (definition->>'endsAt')::timestamptz>now() ORDER BY id",
       )
     ).rows.map((row) => row.definition);
   }

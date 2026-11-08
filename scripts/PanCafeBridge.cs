@@ -44,10 +44,24 @@ public static class PanCafeBridge
         try {
             if(!EqualSecret(request.Headers["Authorization"],"Bearer "+apiKey)) {Reply(response,401,new {error="unauthorized"});return;}
             string route=request.Url.AbsolutePath;
+            if(request.HttpMethod=="GET" && route=="/capabilities") {
+                Reply(response,200,new[]{new Dictionary<string,string>{{"ADMIN_ADJUSTMENTS",config.ContainsKey("allowAdminAdjustments") && Convert.ToBoolean(config["allowAdminAdjustments"])?"true":"false"},{"MEMBER_LIST","true"}}});return;
+            }
             if(request.HttpMethod=="GET" && route=="/health") {
                 var check=MemberByName(Setting("expectedUsername"),false);
                 if(check.Count!=1 || check[0]["ID"]!=Setting("expectedMemberId")) throw new InvalidOperationException("Configured member mismatch");
                 Reply(response,200,new {connected=true,installationId=Setting("installationId"),name=Setting("displayName"),memberRegistration=Convert.ToBoolean(config["allowRegistration"]),balanceCredit=config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"]),transactionHistory=true,sessionHistory=true});return;
+            }
+            if(request.HttpMethod=="GET" && route=="/admin/members") {
+                int after=0;string search=request.QueryString["search"]??"";
+                if(!Int32.TryParse(request.QueryString["after"]??"0",out after)||after<0||!Regex.IsMatch(search,@"\A[a-zA-Z0-9_.]{0,32}\z")) {Reply(response,400,new {error="invalid_search"});return;}
+                Reply(response,200,Query("SELECT FIRST 101 "+projection+" FROM MEMBERS WHERE ID>"+after+" AND LOWER(USERNAME) CONTAINING '"+search.ToLowerInvariant()+"' ORDER BY ID"));return;
+            }
+            if(request.HttpMethod=="POST" && route=="/admin/adjust") {
+                if(!config.ContainsKey("allowAdminAdjustments") || !Convert.ToBoolean(config["allowAdminAdjustments"])) {Reply(response,503,new {error="admin_disabled"});return;}
+                var body=ReadBody(request);int id;long delta,bonus,expected,expectedBonus;
+                if(!Int32.TryParse(Field(body,"memberId"),out id)||!Int64.TryParse(Field(body,"delta"),out delta)||!Int64.TryParse(Field(body,"bonusDelta"),out bonus)||!Int64.TryParse(Field(body,"expectedBalance"),out expected)||!Int64.TryParse(Field(body,"expectedBonus"),out expectedBonus)) {Reply(response,400,new {error="invalid_adjustment"});return;}
+                Reply(response,200,PanCafeAdminWriter.Adjust(database,clientDirectory,id,Field(body,"username"),delta,bonus,expected,expectedBonus,Field(body,"reason"),Field(body,"operationId")));return;
             }
             if(request.HttpMethod=="GET" && route=="/member") {
                 int id;string username=request.QueryString["username"];
@@ -103,14 +117,24 @@ public static class PanCafeBridge
             var rows=MemberByName(Setting("expectedUsername"),false);
             if(rows.Count!=1 || rows[0]["ID"]!=Setting("expectedMemberId")) throw new InvalidOperationException("Member number and username do not match");
             int port=config.ContainsKey("port")?Convert.ToInt32(config["port"]):3002;
-            if(port!=3002 && port!=3003) throw new InvalidOperationException("Invalid loopback port");
+            if(port!=3002 && port!=3003 && port!=3004) throw new InvalidOperationException("Invalid loopback port");
             if(config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"])) PanCafeBalanceWriter.Initialize(database,clientDirectory);
+            if(config.ContainsKey("allowAdminAdjustments") && Convert.ToBoolean(config["allowAdminAdjustments"])) PanCafeAdminWriter.Initialize(database,clientDirectory);
             listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:"+port+"/");listener.Start();Status(true);
             ThreadPool.QueueUserWorkItem(delegate{Serve();});
             Application.EnableVisualStyles();
-            var form=new Form {Text="S TECH - PanCafe bağlantısı",Width=470,Height=260,StartPosition=FormStartPosition.CenterScreen,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false};
+            var form=new Form {Text="S TECH - PanCafe bağlantısı",Width=500,Height=320,StartPosition=FormStartPosition.CenterScreen,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false};
             form.Controls.Add(new Label {Left=24,Top=24,Width=410,Height=120,Text=Setting("displayName")+" bağlantısı hazır.\n\nPanCafe üyeleri ve bakiyeleri kullanılabilir.\n"+(config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"])?"Test ödemeleri PanCafe bakiyesine işlenir.":"Para yükleme etkin değildir.")+"\nBu pencereyi kapattığında bağlantı durur."});
-            var stop=new Button {Text="Bağlantıyı durdur",Left=24,Top=155,Width=180,Height=36};stop.Click+=delegate{form.Close();};form.Controls.Add(stop);
+            var adminAccess=new CheckBox {Text="Yönetim panelinin bakiye düzenlemesine izin ver",Left=24,Top=150,Width=440,Height=32,Checked=config.ContainsKey("allowAdminAdjustments") && Convert.ToBoolean(config["allowAdminAdjustments"])};
+            adminAccess.CheckedChanged+=delegate {
+                try {
+                    if(adminAccess.Checked) PanCafeAdminWriter.Initialize(database,clientDirectory);
+                    config["allowAdminAdjustments"]=adminAccess.Checked;
+                    File.WriteAllText(Path.Combine(folder,"connection.json"),Serializer().Serialize(config),new UTF8Encoding(false));
+                } catch {config["allowAdminAdjustments"]=false;adminAccess.Checked=false;MessageBox.Show("Yönetici erişimi kaydedilemedi.","S TECH");}
+            };
+            form.Controls.Add(adminAccess);
+            var stop=new Button {Text="Bağlantıyı durdur",Left=24,Top=205,Width=180,Height=36};stop.Click+=delegate{form.Close();};form.Controls.Add(stop);
             Application.Run(form);listener.Close();Status(false);return 0;
         } catch(Exception error) {
             try{if(folder!=null)Status(false);}catch{}
