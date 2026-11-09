@@ -1,4 +1,16 @@
-# PanCafe — 2.stech test kurulumu
+# PanCafe ve kiosk kurulumu
+
+## A ve B için Windows kurulumu
+
+1. A ve B bilgisayarlarını aynı yerel ağa bağla. Yeni B'de mevcut PanCafe üyelerini kullanacaksan önce PanCafe veritabanını taşı ve PanCafe Server'ı aç.
+2. GitHub'da ilgili sürümden `B-PanCafe-Kur.cmd` dosyasını indir ve B'de aç. Kurucu ilgili sürümün sunucu kaynaklarını indirir. İlk kurulumda `wallet-stech` Firebase hizmet hesabı JSON dosyasını seç. İstendiğinde aktif PanCafe üyesinin numarasını ve kullanıcı adını, A'nın IPv4 adresini ve kiosk çıkış PIN'ini gir. A'nın adresini A'da Komut İstemi'nde `ipconfig` ile görebilirsin.
+3. B'nin `A-Bilgisayarina-Kopyala` klasöründe oluşturduğu `A-Kiosk-Kur.cmd` dosyasını A'ya kopyala ve aç. Kurucu `kiosk.exe`yi indirip doğrular. Sonraki açılışlarda masaüstündeki **S TECH Kiosk** kısayolunu kullan.
+
+B yeniden açıldığında `B-PanCafe-Kur.cmd` dosyasını tekrar çalıştır. A'nın IP adresi veya bilgisayarı değiştiğinde B kurucusuna yeni adresi verip üretilen A dosyasını tekrar kopyala. Aynı PanCafe veritabanını başka bir B'ye taşıyorsan önceki Firestore kurulum kimliğini kullan ve eski B'deki eşitlemeyi kapat. Üretilen A dosyası eşleştirme bilgileri içerir ve sadece kiosk bilgisayarına kopyalanır.
+
+Yeni sürüm yayımlarken depo kökünde `npm run build:win --prefix kiosk` çalıştır. B kurucusundaki sürüm etiketiyle `kiosk.exe` SHA-256 değerini güncelle. Aynı kaynak etiketinin GitHub sürümüne `kiosk.exe` ve `B-PanCafe-Kur.cmd` dosyalarını ekle.
+
+## 2.stech test kurulumu
 
 Hedef dosya: `D:\Pan Group\Data\USDB.DAT`. İşletme adı **2.stech**; doğrulanan test üyesi **2 / kaan2**. Önceki "stech adlı üye" yorumu yanlıştı. Güncel inceleme kopyasında kaan2'nin bakiyesi ve bonusu 0,00 TL olarak okundu.
 
@@ -44,7 +56,7 @@ FIREBASE_PROJECT_ID=wallet-stech
 GOOGLE_APPLICATION_CREDENTIALS=C:/private/wallet-stech-credentials.json
 ```
 
-API açılışta ve sonraki her turdan yaklaşık 60 saniye sonra PanCafe üyelerini okur. Değişen profiller ve bakiyeler `pancafeInstallations/{installationId}/members/{memberId}` altında güncellenir. Kullanıcı adı, üye numarası, GSM, e-posta, T.C. kimlik numarası, adres, ad, soyad, üyelik durumu ve kuruş cinsinden bakiye/bonus bu kayıtlarda tutulur. `LASTNAME` alanı kart kimliği içeriyorsa sayısal/hex değer soyad olarak kullanılmaz. Şifre doğrulaması yerel PanCafe köprüsünde kalır. Üye kaydı kaynaktan tamamen silinirse Firestore kaydı ayrıca yönetilir.
+API açılışta ve normal koşullarda yaklaşık 5 saniyede bir PanCafe üyelerini okur. Turlar art arda çalışır. İki yönlü modda API Firestore değişikliklerini bir dinleyici üzerinden alır. Değişen profiller ve bakiyeler `pancafeInstallations/{installationId}/members/{memberId}` altında güncellenir. Kullanıcı adı, üye numarası, GSM, e-posta, T.C. kimlik numarası, adres, ad, soyad, üyelik durumu ve kuruş cinsinden bakiye/bonus bu kayıtlarda tutulur. `LASTNAME` alanı kart kimliği içeriyorsa sayısal/hex değer soyad olarak kullanılmaz. Şifre doğrulaması yerel PanCafe köprüsünde kalır. Üye kaydı kaynaktan tamamen silinirse Firestore kaydı ayrıca yönetilir.
 
 `GET /api/v1/health` yanıtında `firebaseSync` alanı `pending`, `synced` veya `error` olur. Bağlantı hatasında sonraki tur güncel PanCafe verisini yeniden okur. Gerçek POS entegrasyonu, oturum geçmişi aktarımı ve Firebase Auth kurulumu bu adımın dışındadır.
 

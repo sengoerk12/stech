@@ -219,6 +219,11 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       const dto = parse(LoginDto, body);
       return kioskAuth.loginWithPassword(key, dto.identifier.trim(), dto.password);
     }
+    @Get("kiosk/dashboard") async kioskDashboard(@Req() req: Request) {
+      if (!(cafe instanceof PanCafeSystemAdapter)) return this.dashboard(req);
+      const account = await cafe.getKioskAccount(await user(req));
+      return { ...account, promotions: [], transactions: [], pendingPayments: [], features: { topup: false } };
+    }
     @Get("health") health() {
       return {
         status: "ok",

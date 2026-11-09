@@ -1,4 +1,3 @@
 # These double-clickable installers also need CRLF when downloaded as raw files.
 scripts/A-Kiosk-Kur.cmd -text whitespace=cr-at-eol
 scripts/B-PanCafe-Kur.cmd -text whitespace=cr-at-eol
-scripts/A-Bilgisayarina-Kopyala/A-Kiosk-Kur.cmd -text whitespace=cr-at-eol

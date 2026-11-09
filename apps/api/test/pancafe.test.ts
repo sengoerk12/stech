@@ -24,12 +24,14 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
   const configPath = join(directory, "connection.json");
   await writeFile(configPath, JSON.stringify({ ...config, allowBalanceCredit: nativeCredit }));
   const bridge = new TestBridge();
+  let historyUnavailable = false;
   const realFetch = globalThis.fetch;
   let app: Awaited<ReturnType<typeof createApp>>;
   try {
     globalThis.fetch = async (input, options) => {
       const url = new URL(String(input));
       assert.equal(url.origin, "http://127.0.0.1:3002");
+      if (historyUnavailable && url.pathname === "/transactions") return new Response(null, { status: 503 });
       const rows = await bridge.request(url.pathname + url.search,
         options?.body ? JSON.parse(String(options.body)) : undefined);
       return new Response(JSON.stringify(rows), { status: rows ? 200 : 401 });
@@ -85,6 +87,17 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
     assert.equal((await realFetch(base + "/api/v1/me/transactions")).status, 401);
     assert.equal((await realFetch(base + "/api/v1/me/session-history")).status, 401);
     assert.equal((await realFetch(base + "/api/v1/me/transactions?cursor=unsafe", { headers })).status, 400);
+    if (nativeCredit) {
+      historyUnavailable = true;
+      bridge.rows[1].BALANCE_TL = "148.75";
+      assert.equal((await realFetch(base + "/api/v1/me/transactions", { headers })).status, 503);
+      assert.equal((await realFetch(base + "/api/v1/kiosk/dashboard")).status, 401);
+      const kiosk = await realFetch(base + "/api/v1/kiosk/dashboard", { headers });
+      assert.equal(kiosk.status, 200);
+      const account = await kiosk.json() as { wallet: { balance: number }; features: { topup: boolean } };
+      assert.equal(account.wallet.balance, 14875);
+      assert.equal(account.features.topup, false);
+    }
   } finally {
     await app.close();
   }

@@ -15,13 +15,21 @@ class ApiGateway {
         body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(12000), redirect: 'error',
       });
     } catch { throw new Error('Sunucuya ulaşılamıyor. Lütfen yetkiliden yardım iste.'); }
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || 'İşlem tamamlanamadı.');
-    return data;
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw Object.assign(new Error(data?.message || 'İşlem tamamlanamadı.'), { status: response.status });
+    }
+    return response.json();
   }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
-  dashboard(token) { return this.request('/me/dashboard', token); }
+  async dashboard(token) {
+    try { return await this.request('/kiosk/dashboard', token); }
+    catch (error) {
+      if (error.status !== 404) throw error;
+      return this.request('/me/dashboard', token);
+    }
+  }
   transactions(token, cursor) { return this.request('/me/transactions' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
   sessions(token, cursor) { return this.request('/me/session-history' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
   logout(token) { return this.request('/auth/logout', token, {}); }

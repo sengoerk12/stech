@@ -223,8 +223,15 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
     if(rows?.[0]?.RESULT_CODE!=='ok') throw new ConflictException('Profil değişikliği doğrulanamadı. Aynı işlemi tekrar kontrol et.');
   }
   async getBalance(userId: string): Promise<Wallet> {
+    return this.wallet(await this.row(userId));
+  }
+  async getKioskAccount(userId: string) {
+    const row = await this.row(userId);
+    return { member: this.member(row, userId), wallet: this.wallet(row) };
+  }
+  private wallet(row: PanCafeRow): Wallet {
     return {
-      balance: panCafeMoney((await this.row(userId)).BALANCE_TL),
+      balance: panCafeMoney(row.BALANCE_TL),
       currency: "TRY",
       updatedAt: new Date().toISOString(),
     };

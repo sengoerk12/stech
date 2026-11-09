@@ -286,6 +286,23 @@
 .password-login-form input:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
 .password-login-form .button.wide { margin-top:0; }
 .login-error { color:var(--red); text-align:left; font-size:.9em; }
+.password-modal { max-width:800px; padding:clamp(16px,3vw,34px); }
+.login-keyboard { display:grid; gap:6px; padding:10px; border:1px solid var(--border); border-radius:12px; background:#0c1420; }
+.login-key-row { display:flex; justify-content:center; gap:5px; }
+.touch-key {
+  flex:1; min-width:0; min-height:clamp(40px,5.8vh,64px); padding:3px;
+  color:var(--text); background:#243246; border:1px solid #40536d; border-radius:8px;
+  font-size:clamp(15px,2.3vw,25px); font-weight:600; touch-action:manipulation;
+}
+.touch-key:hover { background:#30435e; }
+.touch-key:active,.touch-key[aria-pressed="true"] { color:#ffd18b; background:#3b2c1d; border-color:var(--orange); }
+.login-key-actions .touch-key { font-size:clamp(10px,1.65vw,17px); }
+.login-key-actions [data-login-key=" "] { flex:1.5; }
+@media (max-height:800px) {
+  .password-modal .modal-symbol { display:none; }
+  .password-modal > p { margin-bottom:8px; }
+  .password-login-form fieldset { gap:8px; margin-top:10px; }
+}
 @media (max-aspect-ratio:4/5) {
   .password-entry { max-width:480px; font-size:19px; }
   .password-entry .button { min-height:70px; font-size:20px; }

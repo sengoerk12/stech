@@ -1,7 +1,6 @@
 @echo off
 setlocal
 set "STECH_SETUP_SELF=%~f0"
-set "STECH_SETUP_MODE=%~1"
 powershell.exe -NoLogo -NoProfile -STA -Command "$ErrorActionPreference='Stop'; try { $text=Get-Content -LiteralPath $env:STECH_SETUP_SELF -Raw -Encoding UTF8; $mark=[regex]::Match($text,'(?m)^:STECH_POWERSHELL\r?\n'); if (!$mark.Success) { throw 'Kurulum dosyasi eksik.' }; & ([scriptblock]::Create($text.Substring($mark.Index+$mark.Length))) } catch { Write-Host $_.Exception.Message -ForegroundColor Red; exit 1 }"
 set "STECH_SETUP_EXIT=%errorlevel%"
 pause
@@ -65,6 +64,22 @@ function Is-Listening($Port) {
     return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
 
+function Get-OwnedListener($Port, $Executable, $Path) {
+    $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (!$listener) { return }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
+    if ($process.Name -ne $Executable -or !$process.CommandLine -or
+        $process.CommandLine.IndexOf($Path, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Port $Port başka bir uygulama tarafından kullanılıyor."
+    }
+    return $process.ProcessId
+}
+
+function Stop-OwnedListener($Port, $ProcessId) {
+    Stop-Process -Id $ProcessId -ErrorAction Stop
+    [void](Wait-Ready { !(Is-Listening $Port) } "Port $Port kapanmadı.")
+}
+
 function Start-PanCafeIfNeeded($Folder) {
     if (Get-Process -Name pncserver -ErrorAction SilentlyContinue) { return }
     if (Test-Path -LiteralPath "$Folder\pncserver.exe") {
@@ -75,7 +90,7 @@ function Start-PanCafeIfNeeded($Folder) {
     [void](Wait-Ready { Get-Process -Name pncserver -ErrorAction SilentlyContinue } 'PanCafe çalışmıyor. PanCafe uygulamasını açıp dosyayı tekrar çalıştır.')
 }
 
-function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate) {
+function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate, $KioskUrl, $KioskSha256) {
     $text = Get-Content -LiteralPath $Template -Raw -Encoding UTF8
     $marker = '__STECH_PAIRING_BUNDLE__'
     if (!$text.Contains($marker) -or $text.IndexOf($marker) -ne $text.LastIndexOf($marker)) {
@@ -86,7 +101,7 @@ function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate)
         $Certificate -notmatch '-----BEGIN CERTIFICATE-----') {
         throw 'A kurulum dosyası için cihaz anahtarı, PIN özeti veya HTTPS sertifikası geçersiz.'
     }
-    $payload = @{ config = $KioskConfig; rootCertificate = $Certificate } | ConvertTo-Json -Compress -Depth 8
+    $payload = @{ config = $KioskConfig; rootCertificate = $Certificate; kioskUrl = $KioskUrl; kioskSha256 = $KioskSha256 } | ConvertTo-Json -Compress -Depth 8
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
     $temporary = "$Destination.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
@@ -98,17 +113,18 @@ function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate)
     }
 }
 
+$repository = 'https://github.com/sengoerk12/stech'
+$version = 'kiosk-v0.1.1'
+$kioskUrl = "$repository/releases/download/$version/kiosk.exe"
+$kioskSha256 = '82F0C5A6121E2EB7634A3FDFC5357CAF52E7163F6A590F221AF11D87A3B4BCB3'
 $here = Split-Path -Parent $env:STECH_SETUP_SELF
-$template = Join-Path $here 'A-Kiosk-Kur.cmd'
-if (!(Test-Path -LiteralPath $template -PathType Leaf)) { throw 'A-Kiosk-Kur.cmd şablonunu bu dosyanın yanına koy.' }
 $work = "$env:LOCALAPPDATA\STech-Kiosk-Sunucu"
-$source = "$work\stech"
+$source = "$work\surumler\$version"
 $bridge = "$work\Bridge"
 $transfer = Join-Path $here 'A-Bilgisayarina-Kopyala'
 [void][IO.Directory]::CreateDirectory($work)
 $pairingPath = "$work\pairing.json"
 $pairing = if (Test-Path -LiteralPath $pairingPath) { Get-Content -LiteralPath $pairingPath -Raw | ConvertFrom-Json } else { $null }
-$repair = $env:STECH_SETUP_MODE -eq '--yeniden-esle'
 
 Write-Host 'S TECH | B bilgisayarı kurulumu' -ForegroundColor Cyan
 Update-SetupPath
@@ -118,22 +134,35 @@ $caddy = Require-Command caddy.exe CaddyServer.Caddy
 if ([int](& $node -p "process.versions.node.split('.')[0]") -lt 22) { throw 'Node.js 22 veya üstü gerekli.' }
 
 if (!(Test-Path -LiteralPath "$source\.git")) {
-    & $git clone --depth 1 --branch kiosk-v0.1.0 https://github.com/sengoerk12/stech.git $source
-    if ($LASTEXITCODE -ne 0) { throw 'S TECH kaynakları indirilemedi.' }
+    Write-Host "S TECH sunucusu GitHub üzerinden indiriliyor ($version)..."
+    $checkout = "$source.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        & $git clone --depth 1 --branch $version "$repository.git" $checkout
+        if ($LASTEXITCODE) { throw 'S TECH kaynakları indirilemedi. İnternet bağlantısını kontrol edip yeniden dene.' }
+        [IO.Directory]::Move($checkout, $source)
+    } finally {
+        if (Test-Path -LiteralPath $checkout -PathType Container) {
+            $resolved = (Resolve-Path -LiteralPath $checkout).Path
+            if ($resolved -eq $checkout) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+        }
+    }
 }
-$commit = & $git -C $source rev-parse HEAD
-if ($commit -ne 'e8be40a6356bcc2494a3130d2d8875056946074d') { throw 'B kaynakları kiosk-v0.1.0 ile eşleşmiyor.' }
+$releaseId = & $git -C $source rev-parse HEAD
+if ($LASTEXITCODE -or $releaseId -notmatch '^[0-9a-f]{40}$') { throw 'S TECH kaynak sürümü okunamadı.' }
+$tagCommit = & $git -C $source rev-parse "refs/tags/$version^{commit}"
+if ($LASTEXITCODE -or $tagCommit -ne $releaseId) { throw "Sunucu kaynakları $version sürümüyle eşleşmiyor." }
+
 $appModule = "$source\apps\api\dist\apps\api\src\app.js"
-$buildMarker = "$work\api-build-commit.txt"
-if (!(Test-Path -LiteralPath $appModule) -or !(Test-Path -LiteralPath $buildMarker) -or
-    (Get-Content -LiteralPath $buildMarker -Raw).Trim() -ne $commit) {
+$buildMarker = "$source\api-build-ok.txt"
+if (!(Test-Path -LiteralPath $appModule) -or !(Test-Path -LiteralPath $buildMarker) -or [IO.File]::ReadAllText($buildMarker) -ne $releaseId) {
+    Write-Host 'Sunucu dosyaları hazırlanıyor. İlk kurulumda npm paketleri indirilecek.'
     Push-Location -LiteralPath $source
     try {
         & npm.cmd ci --workspace '@stech/api' --include-workspace-root=false
         if ($LASTEXITCODE -ne 0) { throw 'API bağımlılıkları kurulamadı.' }
         & npm.cmd run build --workspace '@stech/api'
         if ($LASTEXITCODE -ne 0) { throw 'API derlenemedi.' }
-        [IO.File]::WriteAllText($buildMarker, $commit)
+        [IO.File]::WriteAllText($buildMarker, $releaseId)
     } finally { Pop-Location }
 }
 
@@ -193,15 +222,19 @@ if (!(Test-Path -LiteralPath "$bridge\PanCafeBridge.exe")) {
 $localIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.AddressState -eq 'Preferred' -and $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
     Select-Object -ExpandProperty IPAddress)
-if (!$pairing -or $repair -or $pairing.bIp -notin $localIps) {
+if (!$localIps.Count) { throw 'B bilgisayarını kiosk ile aynı yerel ağa bağla ve kurucuyu tekrar aç.' }
+$bIp = if ($pairing.bIp -in $localIps) { $pairing.bIp } elseif ($localIps.Count -eq 1) { $localIps[0] }
+if (!$bIp) {
     Write-Host ('Bu bilgisayarın IPv4 adresleri: ' + ($localIps -join ', '))
-    $bIp = Read-IPv4 'B bilgisayarının yerel IPv4 adresi' $(if ($localIps.Count -eq 1) { $localIps[0] })
-    if ($bIp -notin $localIps) { throw 'Girilen B adresi bu bilgisayara ait değil.' }
-    $aIp = Read-IPv4 'Kiosk bilgisayarının IPv4 adresi (orada ipconfig ile bak)' $pairing.aIp
-    if ($aIp -eq $bIp) { throw 'İki bilgisayarın IPv4 adresleri farklı olmalı.' }
-    if ($pairing -and $pairing.bIp -ne $bIp -and (Is-Listening 8443)) {
-        throw 'B adresi değişti. Eski Caddy işlemini kapat, ardından B dosyasını tekrar çalıştır.'
-    }
+    $bIp = Read-IPv4 'B bilgisayarının yerel IPv4 adresi' $null
+}
+if ($bIp -notin $localIps) { throw 'Girilen B adresi bu bilgisayara ait değil.' }
+Write-Host "B bilgisayarının adresi $bIp"
+$aPrompt = 'Kiosk bilgisayarının IPv4 adresi (A bilgisayarında Komut İstemi açıp ipconfig yaz)'
+if ($pairing) { $aPrompt = "Kiosk IPv4 adresi değiştiyse yeni adresi gir (Enter = $($pairing.aIp))" }
+$aIp = Read-IPv4 $aPrompt $pairing.aIp
+if ($aIp -eq $bIp) { throw 'İki bilgisayarın IPv4 adresleri farklı olmalı.' }
+if (!$pairing -or $pairing.bIp -ne $bIp -or $pairing.aIp -ne $aIp) {
     if ($pairing) { $key = $pairing.deviceKey; $pinHash = $pairing.adminPinHash } else {
         $key = & $node "$source\kiosk\scripts\provision.cjs" device-key
         $pin = Read-Host 'Kiosk çıkışı için 6–16 rakamlık yönetici PIN kodu' -AsSecureString
@@ -269,14 +302,16 @@ if (!(Health $bridgeUrl $config.apiKey).connected) {
 
 $apiPort = 3091
 $apiHealth = "http://127.0.0.1:$apiPort/api/v1/health"
+$apiProcess = Get-OwnedListener $apiPort 'node.exe' "$work\start-api.cjs"
 $api = Health $apiHealth
-if ($api) {
-    $listener = Get-NetTCPConnection -LocalPort $apiPort -State Listen | Select-Object -First 1
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
-    if (!$process.CommandLine -or $process.CommandLine.IndexOf("$work\start-api.cjs", [StringComparison]::OrdinalIgnoreCase) -lt 0) {
-        throw "API portu $apiPort başka bir işlem tarafından kullanılıyor."
-    }
-} else {
+$activeRelease = "$work\api-active-release.txt"
+$runningRelease = if (Test-Path -LiteralPath $activeRelease) { [IO.File]::ReadAllText($activeRelease) }
+if ($apiProcess -and (!$api -or $runningRelease -ne $releaseId)) {
+    Write-Host 'S TECH API yeni sürümle yeniden açılıyor...'
+    Stop-OwnedListener $apiPort $apiProcess
+    $api = $null
+}
+if (!$api) {
     if (Is-Listening $apiPort) { throw "API portu $apiPort başka bir işlem tarafından kullanılıyor." }
     $dir = $work.Replace('\', '/')
     [IO.File]::WriteAllText("$work\api.env", @"
@@ -292,7 +327,7 @@ FIREBASE_SYNC_ENABLED=true
 FIREBASE_BALANCE_WRITE_ENABLED=true
 FIREBASE_PROJECT_ID=wallet-stech
 GOOGLE_APPLICATION_CREDENTIALS="$dir/firebase.json"
-STECH_SOURCE_DIR="$dir/stech"
+STECH_SOURCE_DIR="$($source.Replace('\', '/'))"
 PORT=$apiPort
 "@)
     [IO.File]::WriteAllText("$work\start-api.cjs", @'
@@ -309,7 +344,8 @@ createApp().then(app => app.listen(Number(process.env.PORT), "127.0.0.1")).catch
         -WorkingDirectory "$source\apps\api" -WindowStyle Hidden -RedirectStandardOutput "$work\api.log" -RedirectStandardError "$work\api-error.log"
     $api = Wait-Ready { Health $apiHealth } "S TECH API açılmadı. Günlük: $work\api-error.log"
 }
-if ($api.cafe -ne 'pancafe' -or !$api.firebaseBalanceWrite) { throw "Port $apiPort üzerinde beklenen PanCafe API’si çalışmıyor." }
+if ($api.cafe -ne 'pancafe' -or !$api.firebaseBalanceWrite) { throw "Port $apiPort üzerinde beklenen PanCafe API yanıtı alınamadı." }
+[IO.File]::WriteAllText($activeRelease, $releaseId)
 
 $bIp = $pairing.bIp
 $site = "https://${bIp}:8443"
@@ -348,7 +384,8 @@ $httpsCheck = {
     }
 }
 if (!(& $httpsCheck)) {
-    if (Is-Listening 8443) { throw 'HTTPS portu 8443 dolu veya mevcut Caddy bağlantısı doğrulanamadı.' }
+    $caddyProcess = Get-OwnedListener 8443 'caddy.exe' $caddyfile
+    if ($caddyProcess) { Stop-OwnedListener 8443 $caddyProcess }
     Start-Process -FilePath $caddy -ArgumentList 'run', '--config', "`"$caddyfile`"", '--adapter', 'caddyfile' `
         -WorkingDirectory $work -WindowStyle Hidden -RedirectStandardOutput "$work\caddy.log" -RedirectStandardError "$work\caddy-error.log"
     [void](Wait-Ready $httpsCheck "HTTPS hazır olmadı. Günlük: $work\caddy-error.log")
@@ -357,8 +394,9 @@ if (!(& $httpsCheck)) {
 $kiosk = @{ mode = 'connected'; station = 'S TECH'; apiBaseUrl = "$site/api/v1"; deviceKey = $pairing.deviceKey; adminPinHash = $pairing.adminPinHash }
 [void][IO.Directory]::CreateDirectory($transfer)
 $generated = Join-Path $transfer 'A-Kiosk-Kur.cmd'
-Make-KioskLauncher $template $generated $kiosk ([IO.File]::ReadAllText($certPath))
+Make-KioskLauncher "$source\scripts\A-Kiosk-Kur.cmd" $generated $kiosk ([IO.File]::ReadAllText($certPath)) $kioskUrl $kioskSha256
 $current = Health $apiHealth
 if ($current.firebaseSync -eq 'error') { Write-Warning "Firebase eşitlemesi hata verdi. Yetkiyi ve Bridge ayarlarını kontrol et. Günlük: $work\api-error.log" }
 else { Write-Host "Firebase eşitleme durumu: $($current.firebaseSync)" }
-Write-Host "B hazır. A’ya şu dosyayı kopyalayıp çift tıkla: $generated" -ForegroundColor Green
+Write-Host "B hazır. A bilgisayarına kopyalayıp açacağın dosya: $generated" -ForegroundColor Green
+Write-Host 'Sonraki açılışlarda masaüstündeki S TECH Kiosk kısayolunu kullan.'

@@ -1,9 +1,12 @@
 'use strict';
 const $ = selector => document.querySelector(selector);
 const root = $('#app');
-const state = { info: null, data: null, page: 'home', epoch: 0, loading: false, filter: 'all', history: [], sessions: [], cursor: undefined, sessionCursor: undefined, historyLoading: false, amount: '200', quote: null, payment: null, processing: false, quoteVersion: 0, modal: null, pin: '', seconds: 90, clock: '' };
+const state = { info: null, data: null, page: 'home', epoch: 0, loading: false, walletStale: false, recentState: '', filter: 'all', history: [], sessions: [], cursor: undefined, sessionCursor: undefined, historyLoading: false, amount: '200', quote: null, payment: null, processing: false, quoteVersion: 0, modal: null, pin: '', seconds: 90, clock: '' };
 const e = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const cash = amount => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount / 100);
+const balanceText = () => Number.isSafeInteger(state.data?.wallet?.balance) ? cash(state.data.wallet.balance) : '—';
+const balanceCaption = () => state.info.mode === 'demo' ? 'Deneme bakiyesi · Gerçek para değildir'
+  : state.walletStale ? 'Bakiye güncellenemedi. Son okunan değer gösteriliyor.' : 'PanCafe hesabındaki güncel bakiye';
 const date = value => new Intl.DateTimeFormat('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 const paths = {
  home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/>',
@@ -38,7 +41,7 @@ async function call(action, payload) {
   return result.data;
 }
 function reset() {
-  state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
+  state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
   $('#toast').hidden = true; render(); renderModal();
 }
 function welcome() {
@@ -65,11 +68,17 @@ function campaignCard(p) {
 function home() {
   const d = state.data;
   return `<div class="page-heading"><div><span class="eyebrow">TEKRAR HOŞ GELDİN</span><h1>Merhaba, ${e(d.member.name.split(' ')[0])}<span class="orange">.</span></h1><p>Yeni bir oyun, yeni bir heyecan. Hesabın hazır.</p></div><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span></div>
-  <div class="home-grid"><section class="balance-card"><div class="balance-top"><span>${icon('topup')} KULLANILABİLİR BAKİYEN</span><span class="balance-mark">S /</span></div><div class="balance-value">${cash(d.wallet.balance)}</div><div class="balance-caption">${state.info.mode === 'demo' ? 'Deneme bakiyesi · Gerçek para değildir' : 'PanCafe hesabındaki güncel bakiye'}</div><div class="balance-bottom">${button('Bakiye yükle ' + icon('plus'), 'go-topup', 'primary')}<span>${icon('shield')} ${state.info.mode === 'demo' ? 'Deneme ortamı' : 'PanCafe bağlantısı'}</span></div><div class="balance-decoration"></div></section>
+  <div class="home-grid"><section class="balance-card"><div class="balance-top"><span>${icon('topup')} KULLANILABİLİR BAKİYEN</span><span class="balance-mark">S /</span></div><div class="balance-value" data-wallet-balance>${balanceText()}</div><div class="balance-caption" data-wallet-caption>${balanceCaption()}</div><div class="balance-bottom">${button('Bakiye yükle ' + icon('plus'), 'go-topup', 'primary')}<span>${icon('shield')} ${state.info.mode === 'demo' ? 'Deneme ortamı' : 'PanCafe bağlantısı'}</span></div><div class="balance-decoration"></div></section>
   ${d.promotions[0] ? campaignCard(d.promotions[0]) : '<section class="panel no-campaign">' + icon('campaigns') + '<h2>Yeni fırsatlara yer aç.</h2><p>Aktif kampanyalar burada görünecek.</p></section>'}</div>
   <div class="quick-strip"><div>${icon('nfc')}<span>Kartın yanında,<strong>hesabın elinin altında.</strong></span></div><p>Yükle, avantajları keşfet, oyuna devam et.</p>${button('Hesabımı görüntüle ' + icon('arrow'), 'go-profile', 'quiet')}</div>
   ${(d.pendingPayments || []).length ? `<section class="pending-banner">${icon('history')}<div><strong>Tamamlanmamış işlemin var</strong><span>Kaldığın yerden devam edebilirsin.</span></div>${button('İşlemi aç', 'resume:' + d.pendingPayments[0].id, 'secondary')}</section>` : ''}
-  <section class="panel recent"><div class="section-heading"><h2>Son işlemler</h2>${button('Tümünü gör ' + icon('arrow'), 'go-history', 'quiet')}</div>${rows(d.transactions)}</section>`;
+  <section class="panel recent"><div class="section-heading"><h2>Son işlemler</h2>${button('Tümünü gör ' + icon('arrow'), 'go-history', 'quiet')}</div><div id="recent-transactions">${recentContent()}</div></section>`;
+}
+function recentContent() {
+  const transactions = state.data.transactions || [];
+  if (!transactions.length && state.recentState === 'loading') return '<p class="loading-line">Son işlemler yükleniyor…</p>';
+  if (!transactions.length && state.recentState === 'error') return '<p class="loading-line">Son işlemler alınamadı. İşlem geçmişinden tekrar deneyebilirsin.</p>';
+  return rows(transactions);
 }
 function topup() {
   if (state.payment) return paymentView();
@@ -96,9 +105,52 @@ function history() {
 }
 function profile() {
   const m = state.data.member;
-  return `<div class="page-heading"><div><span class="eyebrow">S TECH HESABIN</span><h1>Seni tanımak güzel.</h1><p>Üyelik bilgilerin ve hesabınla ilgili her şey.</p></div></div><div class="profile-grid"><section class="panel profile-card"><div class="avatar large">${e(m.name.charAt(0))}</div><h2>${e(m.name)}</h2><span class="muted">@${e(m.username)}</span><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span><div class="profile-balance"><span>Kullanılabilir bakiye</span><strong>${cash(state.data.wallet.balance)}</strong></div></section><section class="panel profile-details"><h2>Hesap bilgilerim</h2>${[['Üye no',m.memberNumber || '—'],['Ad soyad',m.name],['Kullanıcı adı',m.username],['Telefon',m.phone || 'Belirtilmemiş'],['E-posta',m.email || 'Belirtilmemiş'],['Üyelik tarihi',new Date(m.joinedAt).toLocaleDateString('tr-TR')]].map(([label,value]) => `<div class="summary-row"><span>${label}</span><strong>${e(value)}</strong></div>`).join('')}<div class="notice neutral">${icon('info')} Bilgilerini güncellemek veya kartınla ilgili destek almak için S TECH yetkilisine başvurabilirsin.</div></section></div><section class="privacy-strip">${icon('shield')}<div><strong>Hesabın sana özel.</strong><p>İşin bittiğinde oturumunu kapat. Bir sonraki müşteri bilgilerini göremez.</p></div>${button('Oturumu bitir ' + icon('logout'), 'logout', 'secondary')}</section>`;
+  return `<div class="page-heading"><div><span class="eyebrow">S TECH HESABIN</span><h1>Seni tanımak güzel.</h1><p>Üyelik bilgilerin ve hesabınla ilgili her şey.</p></div></div><div class="profile-grid"><section class="panel profile-card"><div class="avatar large">${e(m.name.charAt(0))}</div><h2>${e(m.name)}</h2><span class="muted">@${e(m.username)}</span><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span><div class="profile-balance"><span>Kullanılabilir bakiye</span><strong data-wallet-balance>${balanceText()}</strong></div></section><section class="panel profile-details"><h2>Hesap bilgilerim</h2>${[['Üye no',m.memberNumber || '—'],['Ad soyad',m.name],['Kullanıcı adı',m.username],['Telefon',m.phone || 'Belirtilmemiş'],['E-posta',m.email || 'Belirtilmemiş'],['Üyelik tarihi',new Date(m.joinedAt).toLocaleDateString('tr-TR')]].map(([label,value]) => `<div class="summary-row"><span>${label}</span><strong>${e(value)}</strong></div>`).join('')}<div class="notice neutral">${icon('info')} Bilgilerini güncellemek veya kartınla ilgili destek almak için S TECH yetkilisine başvurabilirsin.</div></section></div><section class="privacy-strip">${icon('shield')}<div><strong>Hesabın sana özel.</strong><p>İşin bittiğinde oturumunu kapat. Bir sonraki müşteri bilgilerini göremez.</p></div>${button('Oturumu bitir ' + icon('logout'), 'logout', 'secondary')}</section>`;
 }
 let loginFormTimer;
+let loginField = 'username', loginSymbols = false, loginUppercase = false;
+const loginLetterRows = ['1234567890', 'qwertyuıopğü', 'asdfghjklşi', 'zxcvbnmöç'];
+const loginSymbolRows = ['!@#$%^&*()', '-_=+[]{}\\|', ";:'\",.<>/?`~"];
+function loginKeyboard() {
+  const rows = loginSymbols ? loginSymbolRows : loginLetterRows;
+  const key = char => {
+    const value = loginUppercase && !loginSymbols ? char.toLocaleUpperCase('tr-TR') : char;
+    return `<button type="button" class="touch-key" data-login-key="${e(value)}">${e(value)}</button>`;
+  };
+  return `${rows.map(row => `<div class="login-key-row">${Array.from(row, key).join('')}</div>`).join('')}
+    <div class="login-key-row login-key-actions">
+      <button type="button" class="touch-key" data-login-action="shift" aria-pressed="${loginUppercase}">Büyük harf</button>
+      <button type="button" class="touch-key" data-login-action="layout">${loginSymbols ? 'Harfler' : 'Semboller'}</button>
+      <button type="button" class="touch-key" data-login-key=" ">Boşluk</button>
+      <button type="button" class="touch-key" data-login-action="back">⌫ Sil</button>
+      <button type="button" class="touch-key" data-login-action="next">Sonraki</button>
+    </div>`;
+}
+function typeLoginKey(key) {
+  const form = $('#password-login-form');
+  if (!form || state.loading) return;
+  const input = form.elements.namedItem(loginField);
+  const command = key.dataset.loginAction;
+  if (command === 'shift' || command === 'layout') {
+    if (command === 'shift') { loginUppercase = !loginUppercase; loginSymbols = false; }
+    else loginSymbols = !loginSymbols;
+    form.querySelector('.login-keyboard').innerHTML = loginKeyboard();
+    input.focus();
+    return;
+  }
+  if (command === 'next') {
+    if (loginField === 'username') form.elements.password.focus();
+    else form.requestSubmit();
+    return;
+  }
+  let start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const value = key.dataset.loginKey ?? '';
+  if (command === 'back' && start === end) start -= Array.from(input.value.slice(0, start)).at(-1)?.length ?? 0;
+  if (input.value.length - (end - start) + value.length <= input.maxLength)
+    input.setRangeText(value, start, end, 'end');
+  input.focus();
+}
 function resetLoginFormTimer() {
   clearTimeout(loginFormTimer);
   loginFormTimer = setTimeout(() => {
@@ -116,9 +168,10 @@ function renderModal() {
       <p>PanCafe hesabının kullanıcı adını ve şifresini gir.</p>
       <form id="password-login-form" class="password-login-form" autocomplete="off">
         <fieldset>
-          <label>Kullanıcı adı<input name="username" maxlength="120" autocapitalize="none" spellcheck="false" required></label>
-          <label>Şifre<input name="password" type="password" maxlength="256" required></label>
+          <label>Kullanıcı adı<input name="username" maxlength="120" inputmode="none" autocapitalize="none" spellcheck="false" required></label>
+          <label>Şifre<input name="password" type="password" maxlength="256" inputmode="none" required></label>
           <p class="login-error" role="alert" hidden></p>
+          <div class="login-keyboard" role="group" aria-label="Ekran klavyesi">${loginKeyboard()}</div>
           <button type="submit" class="button primary wide">Giriş yap ${icon('arrow')}</button>
           <button type="button" class="button quiet wide" data-action="close-modal">Kartla girişe dön</button>
         </fieldset>
@@ -134,13 +187,13 @@ function renderModal() {
   }
   const label = state.modal === 'password-login' ? 'aria-labelledby="password-login-title"'
     : state.modal === 'admin' ? 'aria-label="Yetkili erişimi"' : 'aria-label="Bilgilendirme"';
-  host.innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" ${label}>${content}</section></div>`;
+  host.innerHTML = `<div class="modal-backdrop"><section class="modal${state.modal === 'password-login' ? ' password-modal' : ''}" role="dialog" aria-modal="true" ${label}>${content}</section></div>`;
   host.querySelector('input, button')?.focus();
 }
 async function scan(uid) {
   if (state.data || state.loading || state.modal) return;
   const epoch = state.epoch; state.loading = true; render();
-  try { const data = await call('scan', { uid }); if (epoch !== state.epoch) return; state.data = data; state.seconds = 90; state.page = 'home'; render(); }
+  try { const data = await call('scan', { uid }); if (epoch !== state.epoch) return; openHome(data); }
   catch (error) { if (epoch === state.epoch) toast(error.message); }
   finally { if (epoch === state.epoch) { state.loading = false; render(); } }
 }
@@ -162,12 +215,9 @@ async function submitPasswordLogin(form) {
   try {
     const data = await request;
     if (epoch !== state.epoch) return;
-    state.data = data;
-    state.seconds = 90;
-    state.page = 'home';
     state.modal = null;
     renderModal();
-    render();
+    openHome(data);
   } catch (error) {
     if (epoch !== state.epoch) return;
     fields.disabled = false;
@@ -178,6 +228,60 @@ async function submitPasswordLogin(form) {
     resetLoginFormTimer();
   } finally {
     if (epoch === state.epoch) state.loading = false;
+  }
+}
+function openHome(data) {
+  state.data = data;
+  state.seconds = 90;
+  state.page = 'home';
+  state.walletStale = false;
+  state.recentState = state.info.mode === 'connected' ? 'loading' : '';
+  render();
+  void loadRecent();
+}
+let recentEpoch;
+async function loadRecent() {
+  const epoch = state.epoch;
+  if (!state.data || state.info.mode !== 'connected' || recentEpoch === epoch) return;
+  recentEpoch = epoch;
+  try {
+    const { items } = await call('transactions');
+    if (epoch !== state.epoch || !state.data) return;
+    state.data.transactions = items.slice(0, 5);
+    state.recentState = 'ready';
+  } catch {
+    if (epoch === state.epoch) state.recentState = 'error';
+  } finally {
+    if (recentEpoch === epoch) recentEpoch = undefined;
+    const list = $('#recent-transactions');
+    if (epoch === state.epoch && state.data && list) list.innerHTML = recentContent();
+  }
+}
+let walletEpoch;
+async function refreshLiveAccount() {
+  const epoch = state.epoch;
+  if (!state.data || walletEpoch === epoch) return;
+  walletEpoch = epoch;
+  try {
+    const { member, wallet } = await call('dashboard');
+    if (epoch !== state.epoch || !state.data) return;
+    if (!Number.isSafeInteger(wallet?.balance)) throw new Error('PanCafe bakiyesi doğrulanamadı.');
+    const balanceChanged = state.data.wallet?.balance !== wallet.balance;
+    const memberChanged = JSON.stringify(state.data.member) !== JSON.stringify(member);
+    state.data.member = member;
+    state.data.wallet = wallet;
+    state.walletStale = false;
+    if (memberChanged && !state.modal) render();
+    if (state.page === 'home' && (balanceChanged || state.recentState === 'error')) void loadRecent();
+  } catch {
+    if (epoch === state.epoch) state.walletStale = true;
+  } finally {
+    if (walletEpoch === epoch) walletEpoch = undefined;
+    if (epoch === state.epoch && state.data) {
+      document.querySelectorAll('[data-wallet-balance]').forEach(element => { element.textContent = balanceText(); });
+      const caption = $('[data-wallet-caption]');
+      if (caption) caption.textContent = balanceCaption();
+    }
   }
 }
 async function refresh() {
@@ -214,6 +318,10 @@ async function go(page) {
   if (state.payment?.status === 'completed') { toast('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.'); return; }
   if (state.payment?.status === 'pending') { toast('Önce ödeme ekranındaki işlemi tamamla veya tutara geri dön.'); return; }
   state.page = page; state.payment = null; state.modal = null; renderModal(); render();
+  if (state.info.mode === 'connected' && (page === 'home' || page === 'profile')) {
+    void refreshLiveAccount();
+    if (page === 'home') void loadRecent();
+  }
   if (page === 'history') await loadHistory();
   if (page === 'topup') await updateQuote();
 }
@@ -222,6 +330,7 @@ async function action(value) {
   if (name === 'open-password-login') {
     if (state.data || state.loading || state.info?.mode !== 'connected') return;
     cardBuffer = '';
+    loginField = 'username'; loginSymbols = false; loginUppercase = false;
     state.modal = 'password-login';
     renderModal();
     return;
@@ -284,9 +393,16 @@ async function action(value) {
 }
 document.addEventListener('click', event => {
   const target = event.target.closest('button'); if (!target || target.disabled) return;
+  if (target.matches('[data-login-key], [data-login-action]')) { typeLoginKey(target); return; }
   const epoch = state.epoch;
   const task = target.dataset.page ? go(target.dataset.page) : target.dataset.action ? action(target.dataset.action) : null;
   Promise.resolve(task).catch(error => { if (epoch === state.epoch) toast(error.message); });
+});
+document.addEventListener('focusin', event => {
+  if (event.target.matches('#password-login-form input')) loginField = event.target.name;
+});
+document.addEventListener('pointerdown', event => {
+  if (event.target.closest('.login-keyboard button')) event.preventDefault();
 });
 document.addEventListener('input', event => { if (event.target.matches('.pin-input')) state.pin = event.target.value; });
 document.addEventListener('submit', event => {
@@ -342,5 +458,6 @@ function clockTick() {
   document.querySelectorAll('.clock').forEach(el => { el.textContent = state.clock; });
 }
 clockTick(); setInterval(clockTick, 10000);
-setInterval(() => { if (state.data && state.page === 'home' && !state.processing && !state.modal) void refresh().catch(() => {}); }, 15000);
+setInterval(() => { if (state.info?.mode === 'connected' && state.data && !state.processing && !state.modal) void refreshLiveAccount(); }, 5000);
+setInterval(() => { if (state.info?.mode === 'demo' && state.data && state.page === 'home' && !state.processing && !state.modal) void refresh().catch(() => {}); }, 15000);
 call('info').then(info => { state.info = info; render(); }).catch(error => { root.innerHTML = '<div class="boot-error"><h1>S TECH</h1><p>' + e(error.message) + '</p></div>'; });
