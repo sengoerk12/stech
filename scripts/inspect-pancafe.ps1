@@ -21,7 +21,8 @@ if ($MemberColumns) {
 $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($query))
 $result = & $reader $Database $ClientDirectory $encoded
 if ($LASTEXITCODE -ne 0) { throw 'PanCafe read failed. No member binding was activated.' }
-$rows = @($result | ConvertFrom-Json)
+$parsed = $result | ConvertFrom-Json
+$rows = @($parsed)
 if ($MemberColumns) {
   $rows | Select-Object -ExpandProperty COLUMN_NAME
   return

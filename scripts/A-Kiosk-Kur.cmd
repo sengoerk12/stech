@@ -16,7 +16,7 @@ try {
 $settings = $pairing.config
 $api = [Uri]$settings.apiBaseUrl
 if ($settings.mode -ne 'connected' -or $api.Scheme -ne 'https' -or $api.Port -ne 8443 -or
-    $api.AbsolutePath -ne '/api/v1' -or $settings.deviceKey -notmatch '^[a-zA-Z0-9_-]{40,}$' -or
+    $api.AbsolutePath -ne '/api/v1' -or $settings.deviceKey -cnotmatch '^[a-zA-Z0-9_-]{40,}$' -or
     $settings.adminPinHash -notmatch '^[0-9a-f]{128}$' -or $pairing.rootCertificate -notmatch '-----BEGIN CERTIFICATE-----') {
     throw 'Kiosk bağlantı ayarları geçersiz. B bilgisayarında A dosyasını yeniden oluştur.'
 }

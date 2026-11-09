@@ -15,6 +15,11 @@ function Quote-PS($Value) {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+function Update-SetupPath {
+    $env:Path += ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+        [Environment]::GetEnvironmentVariable('Path', 'User') + ";$env:LOCALAPPDATA\Microsoft\WinGet\Links"
+}
+
 function Require-Command($Name, $WingetId) {
     $command = Get-Command $Name -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
@@ -22,8 +27,7 @@ function Require-Command($Name, $WingetId) {
     Write-Host "$Name kuruluyor..."
     & winget.exe install --exact --id $WingetId --source winget --accept-source-agreements --accept-package-agreements | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "$Name kurulamadı. Kurulum çıktısını kontrol et." }
-    $env:Path += ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-        [Environment]::GetEnvironmentVariable('Path', 'User') + ";$env:LOCALAPPDATA\Microsoft\WinGet\Links"
+    Update-SetupPath
     $command = Get-Command $Name -ErrorAction SilentlyContinue
     if (!$command) { throw "$Name kuruldu fakat bu pencere henüz göremiyor. Dosyayı tekrar aç." }
     return $command.Source
@@ -77,9 +81,21 @@ function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate)
     if (!$text.Contains($marker) -or $text.IndexOf($marker) -ne $text.LastIndexOf($marker)) {
         throw 'Yanındaki A-Kiosk-Kur.cmd dosyası eşleştirilmemiş şablon olmalı.'
     }
+    if ($KioskConfig.deviceKey -cnotmatch '^[a-zA-Z0-9_-]{40,}$' -or
+        $KioskConfig.adminPinHash -cnotmatch '^[0-9a-f]{128}$' -or
+        $Certificate -notmatch '-----BEGIN CERTIFICATE-----') {
+        throw 'A kurulum dosyası için cihaz anahtarı, PIN özeti veya HTTPS sertifikası geçersiz.'
+    }
     $payload = @{ config = $KioskConfig; rootCertificate = $Certificate } | ConvertTo-Json -Compress -Depth 8
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
-    [IO.File]::WriteAllText($Destination, ($text.Replace($marker, $encoded) -replace '\r?\n', "`r`n"))
+    $temporary = "$Destination.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [IO.File]::WriteAllText($temporary, ($text.Replace($marker, $encoded) -replace '\r?\n', "`r`n"))
+        if ([IO.File]::Exists($Destination)) { [IO.File]::Replace($temporary, $Destination, [NullString]::Value) }
+        else { [IO.File]::Move($temporary, $Destination) }
+    } finally {
+        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+    }
 }
 
 $here = Split-Path -Parent $env:STECH_SETUP_SELF
@@ -90,12 +106,12 @@ $source = "$work\stech"
 $bridge = "$work\Bridge"
 $transfer = Join-Path $here 'A-Bilgisayarina-Kopyala'
 [void][IO.Directory]::CreateDirectory($work)
-[void][IO.Directory]::CreateDirectory($transfer)
 $pairingPath = "$work\pairing.json"
 $pairing = if (Test-Path -LiteralPath $pairingPath) { Get-Content -LiteralPath $pairingPath -Raw | ConvertFrom-Json } else { $null }
 $repair = $env:STECH_SETUP_MODE -eq '--yeniden-esle'
 
 Write-Host 'S TECH | B bilgisayarı kurulumu' -ForegroundColor Cyan
+Update-SetupPath
 $git = Require-Command git.exe Git.Git
 $node = Require-Command node.exe OpenJS.NodeJS.LTS
 $caddy = Require-Command caddy.exe CaddyServer.Caddy
@@ -195,9 +211,19 @@ if (!$pairing -or $repair -or $pairing.bIp -notin $localIps) {
     $schema = ''
     $columnFile = "$work\member-columns.txt"
     if (!$pairing) {
+        $schemaQuery = 'SELECT TRIM(RDB$FIELD_NAME) AS COLUMN_NAME FROM RDB$RELATION_FIELDS WHERE RDB$RELATION_NAME = ''MEMBERS'' ORDER BY RDB$FIELD_POSITION'
+        $encodedQuery = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($schemaQuery))
+        $reader = "$work\Inspect\PanCafeReadOnly.exe"
         $schema = @"
-& powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File $(Quote-PS "$source\scripts\inspect-pancafe.ps1") -Database $(Quote-PS $config.databasePath) -ClientDirectory $(Quote-PS $config.clientDirectory) -OutputDirectory $(Quote-PS "$work\Inspect") -MemberColumns | Set-Content -LiteralPath $(Quote-PS $columnFile) -Encoding UTF8
+[void][IO.Directory]::CreateDirectory($(Quote-PS "$work\Inspect"))
+& $(Quote-PS "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe") /nologo /platform:x86 /reference:System.Web.Extensions.dll $(Quote-PS "/out:$reader") $(Quote-PS "$source\scripts\PanCafeReadOnly.cs")
+if (`$LASTEXITCODE -ne 0) { throw 'PanCafe sütun okuyucusu derlenemedi.' }
+`$result = & $(Quote-PS $reader) $(Quote-PS $config.databasePath) $(Quote-PS $config.clientDirectory) '$encodedQuery'
 if (`$LASTEXITCODE -ne 0) { throw 'PanCafe sütunları okunamadı.' }
+`$rows = `$result | ConvertFrom-Json
+`$columns = @(`$rows) | Select-Object -ExpandProperty COLUMN_NAME
+if (!`$columns) { throw 'PanCafe MEMBERS tablosunda sütun bulunamadı.' }
+`$columns | Set-Content -LiteralPath $(Quote-PS $columnFile) -Encoding UTF8
 "@
     }
     $adminActions = @"
@@ -315,8 +341,8 @@ $httpsCheck = {
         $previousCa = $env:NODE_EXTRA_CA_CERTS
         try {
             $env:NODE_EXTRA_CA_CERTS = $certPath
-            'fetch(process.argv[2], {signal: AbortSignal.timeout(2000)}).then(r => {if (!r.ok) process.exitCode = 1;}, () => {process.exitCode = 1;});' |
-                & $node - "$site/api/v1/health"
+            $probe = 'fetch(process.argv[1], {signal: AbortSignal.timeout(2000)}).then(r => {if (!r.ok) process.exitCode = 1;}, () => {process.exitCode = 1;});'
+            & $node -e $probe "$site/api/v1/health"
             if ($LASTEXITCODE -eq 0) { $true }
         } finally { $env:NODE_EXTRA_CA_CERTS = $previousCa }
     }
@@ -329,8 +355,9 @@ if (!(& $httpsCheck)) {
 }
 
 $kiosk = @{ mode = 'connected'; station = 'S TECH'; apiBaseUrl = "$site/api/v1"; deviceKey = $pairing.deviceKey; adminPinHash = $pairing.adminPinHash }
+[void][IO.Directory]::CreateDirectory($transfer)
 $generated = Join-Path $transfer 'A-Kiosk-Kur.cmd'
-Make-KioskLauncher $template $generated $kiosk (Get-Content -LiteralPath $certPath -Raw)
+Make-KioskLauncher $template $generated $kiosk ([IO.File]::ReadAllText($certPath))
 $current = Health $apiHealth
 if ($current.firebaseSync -eq 'error') { Write-Warning "Firebase eşitlemesi hata verdi. Yetkiyi ve Bridge ayarlarını kontrol et. Günlük: $work\api-error.log" }
 else { Write-Host "Firebase eşitleme durumu: $($current.firebaseSync)" }

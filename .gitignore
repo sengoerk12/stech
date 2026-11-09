@@ -9,6 +9,7 @@ node_modules.incomplete/
 connection.json
 kiosk.config.json
 kiosk-cards.json
+A-Bilgisayarina-Kopyala/
 test-results/
 playwright-report/
 *.dat
