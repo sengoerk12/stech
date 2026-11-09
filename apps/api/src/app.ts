@@ -53,6 +53,7 @@ import { static as serveStatic } from "express";
 import { AdminService } from "./admin/service";
 import { createAdminController } from "./admin/controller";
 import { MemberProfileService, normalizePhone } from './profile/service';
+import { createFirebaseSync } from "./cafe/firebase-sync";
 import {
   PanCafeSystemAdapter,
   PanCafeBridgeClient,
@@ -140,21 +141,24 @@ class SafeErrors implements ExceptionFilter {
 }
 export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   assertDevelopment(env);
+  const panCafe = env.CAFE_ADAPTER === "pancafe";
+  const firebaseProject = env.FIREBASE_SYNC_ENABLED === "true" ? env.FIREBASE_PROJECT_ID : undefined;
+  const firebaseBalanceWrite = env.FIREBASE_BALANCE_WRITE_ENABLED === "true";
+  if (env.FIREBASE_SYNC_ENABLED === "true" && (!panCafe || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(firebaseProject ?? "")))
+    throw new Error("Firebase sync requires the PanCafe adapter and a Firebase project ID.");
+  const bridgeConfig: PanCafeBridgeConfig | null = panCafe
+    ? JSON.parse(await readFile(env.PANCAFE_BRIDGE_CONFIG ?? "", "utf8"))
+    : null;
+  if (firebaseBalanceWrite && (!firebaseProject || !bridgeConfig?.allowFirebaseSync || !bridgeConfig.allowFirebaseBalanceWrite))
+    throw new Error("Firestore balance writes must be enabled in both the API and local PanCafe bridge.");
   const db = await openDatabase({
     url: env.DATABASE_URL,
     directory:
       env.ENVIRONMENT === "test" ? undefined : (env.DATA_DIR ?? ".data/stech"),
   });
-  const panCafe = env.CAFE_ADAPTER === "pancafe";
-  const bridgeConfig: PanCafeBridgeConfig | null = panCafe
-    ? JSON.parse(await readFile(env.PANCAFE_BRIDGE_CONFIG ?? "", "utf8"))
-    : null;
-  const cafe = bridgeConfig
-    ? new PanCafeSystemAdapter(
-        db,
-        new PanCafeBridgeClient(bridgeConfig),
-        bridgeConfig,
-      )
+  const bridge = bridgeConfig ? new PanCafeBridgeClient(bridgeConfig) : null;
+  const cafe = bridgeConfig && bridge
+    ? new PanCafeSystemAdapter(db, bridge, bridgeConfig)
     : new PersistentMockCafeAdapter(db, env.DEMO_PASSWORD ?? "StechDemo2026!");
   await cafe.initialize();
   const nativeCredit = panCafe && env.PANCAFE_BALANCE_CREDIT === "true";
@@ -167,7 +171,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const paymentCafe = simulation ?? cafe;
   const provider = new MockPaymentProvider();
   const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock");
-  const admin = new AdminService(db, bridgeConfig ? new PanCafeBridgeClient(bridgeConfig) : null, payments, env);
+  const admin = new AdminService(db, bridge, payments, env);
   const AdminController = createAdminController(admin);
   const auth = new PersistentAuthService(db, cafe);
   const profiles=new MemberProfileService(db,cafe,env.PROFILE_ENCRYPTION_KEY);
@@ -175,6 +179,9 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     ? new KioskCardAuth(env.KIOSK_DEVICE_KEY,
         env.KIOSK_CARD_MAP_FILE ? JSON.parse(await readFile(env.KIOSK_CARD_MAP_FILE, "utf8")) as KioskCardMap : { cards: [] },
         cafe, auth)
+    : null;
+  const firebaseSync = firebaseProject && bridgeConfig && bridge
+    ? createFirebaseSync(firebaseProject, bridgeConfig.installationId, bridge, firebaseBalanceWrite)
     : null;
   async function requirePayments() {
     if (!(await admin.topupEnabled())) throw new ServiceUnavailableException("Bakiye yükleme geçici olarak kapalı. Lütfen daha sonra tekrar dene.");
@@ -219,6 +226,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         payments: panCafe && !simulation ? "disabled" : "simulation",
         cafe: panCafe ? "pancafe" : "mock",
         balanceCredit: nativeCredit,
+        ...(firebaseSync ? { firebaseSync: firebaseSync.worker.status, firebaseBalanceWrite } : {}),
       };
     }
     @Post("auth/login") login(@Body() body: unknown) {
@@ -392,9 +400,11 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   class RuntimeLifecycle {
     onModuleInit() {
       if (!panCafe || simulation) payments.startWorker();
+      firebaseSync?.worker.start();
     }
     async onModuleDestroy() {
       await payments.stopWorker();
+      await firebaseSync?.stop();
       await db.close();
     }
   }

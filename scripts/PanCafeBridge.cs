@@ -17,6 +17,8 @@ public static class PanCafeBridge
     const string projection="ID,USERNAME,NAME,LASTNAME,GSM,PHONE,EMAIL,CAST(RECDATE AS VARCHAR(30)) AS JOINED_AT,CAST(BAKIYE AS DECIMAL(18,2)) AS BALANCE_TL,CAST(AVAILBONUS AS DECIMAL(18,2)) AS BONUS_TL,ACCTYPE,ACCSTATUS";
     static JavaScriptSerializer Serializer() {return new JavaScriptSerializer { MaxJsonLength=1048576 };}
     static string Setting(string key) {return Convert.ToString(config[key]);}
+    static bool Enabled(string key) {return config.ContainsKey(key) && Convert.ToBoolean(config[key]);}
+    static bool FirebaseBalanceWriteEnabled() {return Enabled("allowFirebaseSync") && Enabled("allowFirebaseBalanceWrite");}
     static bool AllowedUser(string username) {return Regex.IsMatch(username ?? "",@"\A[a-zA-Z0-9_.]{1,32}\z");}
     static bool EqualSecret(string a,string b) {
         byte[] left=Encoding.UTF8.GetBytes(a ?? ""),right=Encoding.UTF8.GetBytes(b ?? "");
@@ -25,6 +27,11 @@ public static class PanCafeBridge
         Array.Clear(left,0,left.Length);Array.Clear(right,0,right.Length);return diff==0;
     }
     static List<Dictionary<string,string>> Query(string sql) {return PanCafeReadOnly.Query(database,clientDirectory,sql);}
+    static string FirebaseColumn(string key,string pattern) {
+        string name=Setting(key).Trim().ToUpperInvariant();
+        if(!Regex.IsMatch(name,pattern)) throw new InvalidOperationException("Invalid Firebase member column");
+        return name;
+    }
     static List<Dictionary<string,string>> MemberByName(string username,bool withPassword) {
         if(!AllowedUser(username)) return new List<Dictionary<string,string>>();
         return Query("SELECT FIRST 2 "+projection+(withPassword?",PASSWORD":"")+" FROM MEMBERS WHERE LOWER(USERNAME)='"+username.ToLowerInvariant()+"'");
@@ -53,7 +60,7 @@ public static class PanCafeBridge
                 Reply(response,200,PanCafeProfileWriter.Update(database,clientDirectory,id,Field(body,"username"),Field(body,"firstName").Trim(),Field(body,"lastName").Trim(),Field(body,"phone"),Field(body,"address"),Field(body,"currentPassword"),Field(body,"newPassword"),Field(body,"revision"),Field(body,"operationId"),Field(body,"requestHash"),apiKey,Field(body,"cardUid").Trim().ToUpperInvariant()));return;
             }
             if(request.HttpMethod=="GET" && route=="/capabilities") {
-                Reply(response,200,new[]{new Dictionary<string,string>{{"ADMIN_ADJUSTMENTS",config.ContainsKey("allowAdminAdjustments") && Convert.ToBoolean(config["allowAdminAdjustments"])?"true":"false"},{"MEMBER_LIST","true"}}});return;
+                Reply(response,200,new[]{new Dictionary<string,string>{{"ADMIN_ADJUSTMENTS",Enabled("allowAdminAdjustments")?"true":"false"},{"FIREBASE_BALANCE_WRITE",FirebaseBalanceWriteEnabled()?"true":"false"},{"MEMBER_LIST","true"}}});return;
             }
             if(request.HttpMethod=="GET" && route=="/health") {
                 var check=MemberByName(Setting("expectedUsername"),false);
@@ -65,11 +72,25 @@ public static class PanCafeBridge
                 if(!Int32.TryParse(request.QueryString["after"]??"0",out after)||after<0||!Regex.IsMatch(search,@"\A[a-zA-Z0-9_.]{0,32}\z")) {Reply(response,400,new {error="invalid_search"});return;}
                 Reply(response,200,Query("SELECT FIRST 101 "+projection+" FROM MEMBERS WHERE ID>"+after+" AND LOWER(USERNAME) CONTAINING '"+search.ToLowerInvariant()+"' ORDER BY ID"));return;
             }
-            if(request.HttpMethod=="POST" && route=="/admin/adjust") {
-                if(!config.ContainsKey("allowAdminAdjustments") || !Convert.ToBoolean(config["allowAdminAdjustments"])) {Reply(response,503,new {error="admin_disabled"});return;}
-                var body=ReadBody(request);int id;long delta,bonus,expected,expectedBonus;
-                if(!Int32.TryParse(Field(body,"memberId"),out id)||!Int64.TryParse(Field(body,"delta"),out delta)||!Int64.TryParse(Field(body,"bonusDelta"),out bonus)||!Int64.TryParse(Field(body,"expectedBalance"),out expected)||!Int64.TryParse(Field(body,"expectedBonus"),out expectedBonus)) {Reply(response,400,new {error="invalid_adjustment"});return;}
-                Reply(response,200,PanCafeAdminWriter.Adjust(database,clientDirectory,id,Field(body,"username"),delta,bonus,expected,expectedBonus,Field(body,"reason"),Field(body,"operationId")));return;
+            if(request.HttpMethod=="GET" && route=="/firebase/members") {
+                if(!config.ContainsKey("allowFirebaseSync") || !Convert.ToBoolean(config["allowFirebaseSync"])) {Reply(response,503,new {error="firebase_sync_disabled"});return;}
+                int after;
+                if(!Int32.TryParse(request.QueryString["after"],out after)||after<0) {Reply(response,400,new {error="invalid_cursor"});return;}
+                string nationalId=config.ContainsKey("firebaseNationalIdColumn")
+                    ? FirebaseColumn("firebaseNationalIdColumn",@"\A(?:TC|TCKN|TCKIMLIK|TC_KIMLIK|KIMLIK|NATIONAL_ID)(?:_?(?:NO|NUMARASI|NUMBER))?\z")
+                    : "NULL";
+                string address=FirebaseColumn("firebaseAddressColumn",@"\A(?:(?:EV_?)?ADRES(?:I)?|ADDRESS|ADRESS)(?:_?[1-9])?\z");
+                Reply(response,200,Query("SELECT FIRST 100 ID,USERNAME,NAME,LASTNAME,GSM,EMAIL,ACCSTATUS,"+
+                    "CAST(COALESCE(BAKIYE,0) AS DECIMAL(18,2)) AS BALANCE_TL,CAST(COALESCE(AVAILBONUS,0) AS DECIMAL(18,2)) AS BONUS_TL,"+
+                    "CAST("+nationalId+" AS VARCHAR(32)) AS NATIONAL_ID,CAST("+address+" AS VARCHAR(1000)) AS POSTAL_ADDRESS FROM MEMBERS WHERE ID>"+after+" ORDER BY ID"));return;
+            }
+            if(request.HttpMethod=="POST" && (route=="/admin/adjust" || route=="/firebase/adjust")) {
+                bool firebase=route=="/firebase/adjust";
+                if(firebase ? !FirebaseBalanceWriteEnabled() : !Enabled("allowAdminAdjustments")) {Reply(response,503,new {error=firebase?"firebase_balance_write_disabled":"admin_disabled"});return;}
+                var body=ReadBody(request);int id;long delta,bonus=0,expected,expectedBonus;
+                if(!Int32.TryParse(Field(body,"memberId"),out id)||!Int64.TryParse(Field(body,"delta"),out delta)||(!firebase && !Int64.TryParse(Field(body,"bonusDelta"),out bonus))||!Int64.TryParse(Field(body,"expectedBalance"),out expected)||!Int64.TryParse(Field(body,"expectedBonus"),out expectedBonus)) {Reply(response,400,new {error="invalid_adjustment"});return;}
+                string reason=firebase?"Firestore balance edit":Field(body,"reason");
+                Reply(response,200,PanCafeAdminWriter.Adjust(database,clientDirectory,id,Field(body,"username"),delta,bonus,expected,expectedBonus,reason,Field(body,"operationId")));return;
             }
             if(request.HttpMethod=="GET" && route=="/member") {
                 int id;string username=request.QueryString["username"];
@@ -137,7 +158,7 @@ public static class PanCafeBridge
             int port=config.ContainsKey("port")?Convert.ToInt32(config["port"]):3002;
             if(port!=3002 && port!=3003 && port!=3004) throw new InvalidOperationException("Invalid loopback port");
             if(config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"])) PanCafeBalanceWriter.Initialize(database,clientDirectory);
-            if(config.ContainsKey("allowAdminAdjustments") && Convert.ToBoolean(config["allowAdminAdjustments"])) PanCafeAdminWriter.Initialize(database,clientDirectory);
+            if(Enabled("allowAdminAdjustments") || FirebaseBalanceWriteEnabled()) PanCafeAdminWriter.Initialize(database,clientDirectory);
             PanCafeProfileWriter.Initialize(database,clientDirectory);
             listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:"+port+"/");listener.Start();Status(true);
             ThreadPool.QueueUserWorkItem(delegate{Serve();});

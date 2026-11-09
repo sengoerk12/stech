@@ -30,6 +30,28 @@ PANCAFE_PAYMENT_SIMULATION=true
 PANCAFE_BALANCE_CREDIT=true
 ```
 
+## Üye ve bakiye eşitlemesi (Cloud Firestore)
+
+`wallet-stech` projesinde varsayılan Cloud Firestore veritabanını **Production mode** ile oluştur. `pancafeInstallations` koleksiyonuna kiosk veya mobil istemci erişimi verme. Yerel API için ayrı bir hizmet hesabına `Cloud Datastore User` rolü ver ve Application Default Credentials (ADC) kullan. JSON kimlik dosyası kullanılıyorsa dosyayı API'yi çalıştıran hesabın erişebildiği özel bir klasörde, depo dışında sakla.
+
+1. PanCafe sunucusunda `scripts/inspect-pancafe.ps1 -Database '<PanCafe veritabanı yolu>' -MemberColumns` komutuyla `MEMBERS` tablosundaki sütun adlarını doğrula. Gerekirse mevcut Firebird istemcisi için `-ClientDirectory`, yerel derleme yolu için `-OutputDirectory` ver. Komut yalnızca sütun adlarını listeler.
+2. `scripts/build-pancafe-bridge.ps1` ile köprüyü yeniden derle. Köprünün mevcut `connection.json` dosyasına `allowFirebaseSync: true` ve adres sütununu `firebaseAddressColumn` olarak ekle. Üye tablosunda T.C. kimlik sütunu varsa adını `firebaseNationalIdColumn` olarak ekle. Bu ayar verilmediğinde Firestore'daki `nationalId` alanı boş kalır. Köprüyü yeniden başlat.
+3. PanCafe'ye bağlı yerel API'nin `.env` dosyasına aşağıdaki ayarları ekle. ADC zaten yapılandırıldıysa JSON dosyası satırı isteğe bağlıdır. Her `installationId` için tek eşitleme süreci çalıştır.
+
+```dotenv
+FIREBASE_SYNC_ENABLED=true
+FIREBASE_PROJECT_ID=wallet-stech
+GOOGLE_APPLICATION_CREDENTIALS=C:/private/wallet-stech-credentials.json
+```
+
+API açılışta ve sonraki her turdan yaklaşık 60 saniye sonra PanCafe üyelerini okur. Değişen profiller ve bakiyeler `pancafeInstallations/{installationId}/members/{memberId}` altında güncellenir. Kullanıcı adı, üye numarası, GSM, e-posta, T.C. kimlik numarası, adres, ad, soyad, üyelik durumu ve kuruş cinsinden bakiye/bonus bu kayıtlarda tutulur. `LASTNAME` alanı kart kimliği içeriyorsa sayısal/hex değer soyad olarak kullanılmaz. Şifre doğrulaması yerel PanCafe köprüsünde kalır. Üye kaydı kaynaktan tamamen silinirse Firestore kaydı ayrıca yönetilir.
+
+`GET /api/v1/health` yanıtında `firebaseSync` alanı `pending`, `synced` veya `error` olur. Bağlantı hatasında sonraki tur güncel PanCafe verisini yeniden okur. Gerçek POS entegrasyonu, oturum geçmişi aktarımı ve Firebase Auth kurulumu bu adımın dışındadır.
+
+Firestore konsolundan bakiye düzenlemesini açmak için Bridge yapılandırmasında `allowFirebaseBalanceWrite: true`, API'de `FIREBASE_BALANCE_WRITE_ENABLED=true` ayarla ve ikisini yeniden başlat. İlk tur PanCafe'den doğrulanmış başlangıç bakiyesini yazar. Sonraki düzenlemelerde üye belgesinde yalnızca `balanceKurus` alanını tam sayı olarak değiştir. API, son eşitlenen değerle arasındaki farkı güncel PanCafe bakiyesine uygular. Örneğin iki tarafta da 100 TL varken Firestore'da 150 TL yazılır ve PanCafe'de arada 1 TL harcanırsa, 50 TL'lik artış 99 TL'ye eklenir ve sonuç 149 TL olur. PanCafe yazma sırasında tekrar değişirse API aynı farkı aynı işlem kimliğiyle sonraki turda dener. Bakiye ve bonus sınırlarına uymayan işlemlerde güncel kaynak değeri geri yazılır. `balanceSync.status` alanı `pending`, `applied`, `conflict` veya `invalid` durumunu gösterir.
+
+## Test ödemeleri
+
 Üretim/staging korumaları devam eder. `ENVIRONMENT=development` ve ödeme sağlayıcısı `mock` kalır. Yukarıdaki iki bayrak ve bağlantı dosyasındaki `allowBalanceCredit: true` ile ödeme temsili, PanCafe bakiye aktarımı gerçektir. En az 50 TL; 200 TL ve üzeri %10 bonus. Ana kart gerçek PanCafe bakiyesini gösterir; ayrı test bakiyesi dönmez. Ödeme başarılı doğrulandıktan sonra kaynak Firebird'de BAKIYE tutar+bonus kadar, AVAILBONUS bonus kadar artırılır. Bonus ana bakiyeye ikinci kez eklenmez. MEMBERSHISTORY kaydı ve yeni STECH_MOBILE_CREDITS ödeme makbuzu aynı transaction içinde yazılır. Aynı ödeme numarası farklı parametreyle reddedilir; tekrar çağrı bakiye eklemez. Kaynak DOUBLE alanlar DECIMAL(18,2) üzerinden hesaplanır.
 
 PANCAFE_BALANCE_CREDIT kapalı tutulursa önceki ayrı deneme bakiyesi modu kullanılabilir. Ödeme hedefi `payment_orders.transfer_target` içinde saklanır. İşleyiciler sadece kendi hedeflerindeki işleri alır: eski ayrı test ödemeleri yeni moda geçince gerçek bakiyeye taşınmaz. İmzalı gerçek ödeme sağlayıcısı ve üretici tarafından desteklenen üretim entegrasyonu yayın öncesinde ayrıca gereklidir.

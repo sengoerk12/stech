@@ -16,6 +16,8 @@ export interface PanCafeBridgeConfig {
   apiKey: string;
   port?: number;
   allowBalanceCredit?: boolean;
+  allowFirebaseSync?: boolean;
+  allowFirebaseBalanceWrite?: boolean;
 }
 export class PanCafeBridgeClient {
   constructor(
@@ -61,10 +63,11 @@ export class PanCafeBridgeClient {
         "PanCafe işlemi tamamlanamadı. Bağlantını kontrol edip tekrar dene.",
       );
     const result: unknown = await response.json();
-    const history = path.startsWith("/transactions?") || path.startsWith("/session-history?") || path.startsWith("/admin/members?");
+    const pageSize = path.startsWith("/firebase/members?") ? 100
+      : path.startsWith("/transactions?") || path.startsWith("/session-history?") || path.startsWith("/admin/members?") ? 101 : 0;
     if (
       !Array.isArray(result) ||
-      (history ? result.length > 101 : result.length !== 1) ||
+      (pageSize ? result.length > pageSize : result.length !== 1) ||
       !result.every(row => row && typeof row === "object" && !Array.isArray(row) &&
         !Object.hasOwn(row, "PASSWORD") && Object.values(row).every(value => value === null || typeof value === "string"))
     )
