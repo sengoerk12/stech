@@ -160,6 +160,7 @@ export function createFirebaseSync(projectId: string, installationId: string, br
     await batch.commit();
   }, balanceWrite);
   return {
+    firestore,
     worker,
     async stop() {
       await worker.stop();

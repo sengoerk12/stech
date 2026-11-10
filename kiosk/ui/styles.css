@@ -323,3 +323,26 @@
   font-size: clamp(13px, 1.4vw, 18px);
   font-weight: 650;
 }
+
+.campaign-card.campaign-blue{background:linear-gradient(135deg,#123b66,#172638);border-color:#3278ac}.campaign-blue .campaign-big,.campaign-blue .eyebrow{color:#75cdff}
+.campaign-terms p{white-space:pre-line;overflow-wrap:anywhere}.campaign-card h3,.campaign-card>p{overflow-wrap:anywhere}
+.campaign-picker{display:grid;gap:8px;margin:20px 0}.campaign-picker .button{white-space:normal;text-align:left;height:auto;padding:12px}.campaign-picker .selected{border-color:var(--orange);color:var(--orange)}.quote-error{color:var(--red);margin:12px 0}
+/* S TECH bonus tickets: compact value stub, perforation and clear selection. */
+.campaign-picker{display:block;margin:22px 0 26px}
+.coupon-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px}
+.coupon-heading h3{font-size:15px;margin:0}.coupon-heading>span{font-size:11px;color:var(--muted)}
+.coupon-auto{display:flex;align-items:center;gap:12px;width:100%;padding:13px 15px;border:1px solid var(--border);border-radius:12px;background:#101722;color:var(--text);text-align:left;cursor:pointer;margin-bottom:12px;font:inherit}
+.coupon-auto>.icon{color:var(--orange);flex-shrink:0}.coupon-auto>span:nth-child(2){flex:1;font-size:13px;font-weight:650}.coupon-auto small{display:block;font-weight:400;font-size:10px;color:var(--muted);margin-top:4px}.coupon-auto.is-selected{border-color:#97702c;background:#241e15}.coupon-radio{width:22px;height:22px;border:1px solid #687386;border-radius:50%;display:grid;place-items:center;color:var(--orange);font-size:13px}
+.coupon-list{display:grid;gap:12px;max-height:380px;overflow:auto;padding:2px 4px 3px 0}
+.bonus-coupon{--coupon-accent:#ffb632;display:grid;grid-template-columns:94px minmax(0,1fr);border:1px solid #3d3527;border-radius:14px;background:linear-gradient(110deg,#272016,#161d28 60%);min-height:125px;position:relative;isolation:isolate}
+.bonus-coupon.coupon-blue{--coupon-accent:#65c7ff;border-color:#2b435b;background:linear-gradient(110deg,#152b3e,#161d28 60%)}
+.bonus-coupon.is-selected{border-color:var(--coupon-accent);box-shadow:0 0 0 1px var(--coupon-accent)}
+.coupon-value{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--coupon-accent);border-right:1px dashed #566170;position:relative;padding:16px 5px}
+.coupon-value:before,.coupon-value:after{content:'';position:absolute;right:-7px;width:12px;height:7px;background:var(--surface);border:1px solid #566170;z-index:1}.coupon-value:before{top:-1px;border-top:0;border-radius:0 0 9px 9px}.coupon-value:after{bottom:-1px;border-bottom:0;border-radius:9px 9px 0 0}
+.coupon-value strong{font-size:29px;line-height:1.1;letter-spacing:-1px}.coupon-value>span{font-size:9px;letter-spacing:2px;font-weight:750}
+.coupon-body{padding:15px 16px;min-width:0}.coupon-body h4{font-size:14px;line-height:1.4;margin:0 0 10px;overflow-wrap:anywhere}
+.coupon-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px}.coupon-bottom p{font-size:10px;color:var(--muted);margin:0}.coupon-bottom strong{display:block;color:var(--text);font-size:13px;margin-top:3px}
+.coupon-apply{border:1px solid #465165;border-radius:20px;min-height:38px;padding:8px 18px;background:#283344;color:var(--text);font:inherit;font-size:12px;font-weight:700;cursor:pointer}.is-selected .coupon-apply{background:var(--coupon-accent);border-color:var(--coupon-accent);color:#10141b}.coupon-hint{display:block;font-size:9px;color:var(--muted);margin-top:10px;line-height:1.4}
+.coupon-apply:focus-visible,.coupon-auto:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+@media(orientation:portrait) and (min-height:1000px){.coupon-heading h3{font-size:24px}.coupon-heading>span{font-size:17px}.coupon-auto{padding:20px;gap:18px}.coupon-auto>span:nth-child(2){font-size:21px}.coupon-auto small{font-size:15px}.coupon-radio{width:30px;height:30px}.coupon-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-height:430px}.bonus-coupon{grid-template-columns:100px minmax(0,1fr);min-height:172px}.coupon-value strong{font-size:36px}.coupon-value>span{font-size:12px}.coupon-body{padding:20px 16px}.coupon-body h4{font-size:20px}.coupon-bottom p{font-size:14px}.coupon-bottom strong{font-size:18px}.coupon-apply{min-height:46px;font-size:16px;padding:9px 15px}.coupon-hint{font-size:13px}}
+.campaign-ticket{min-height:240px;grid-template-columns:110px minmax(0,1fr)}.campaign-ticket .coupon-body{padding:24px}.campaign-ticket h3{font-size:23px;margin:12px 0}.campaign-ticket .ticket-description{font-size:14px;line-height:1.6;color:var(--muted);margin-bottom:24px}.campaign-ticket .coupon-value strong{font-size:38px}.campaign-ticket .coupon-apply{min-height:44px;gap:8px}.campaign-ticket .eyebrow{font-size:9px;color:var(--coupon-accent)}@media(orientation:portrait) and (min-height:1000px){.campaign-ticket{grid-template-columns:160px minmax(0,1fr);min-height:270px}.campaign-ticket .coupon-value strong{font-size:48px}.campaign-ticket h3{font-size:28px}.campaign-ticket .ticket-description{font-size:20px}.campaign-ticket .eyebrow{font-size:13px}}

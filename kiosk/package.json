@@ -12,6 +12,7 @@
     "test": "node --test test/*.test.cjs",
     "check": "node scripts/check.cjs",
     "test:ui": "node scripts/ui-smoke.cjs",
+    "test:campaigns": "node scripts/campaign-sync-smoke.cjs",
     "pack:win": "electron-builder --win --x64 --dir",
     "build:win": "electron-builder --win portable --x64"
   },

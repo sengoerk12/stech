@@ -55,6 +55,8 @@ import { AdminService } from "./admin/service";
 import { createAdminController } from "./admin/controller";
 import { MemberProfileService, normalizePhone } from './profile/service';
 import { createFirebaseSync } from "./cafe/firebase-sync";
+import { calculateQuote } from "./payments/service";
+import { activePromotions, firestoreCampaigns, PromotionSync } from "./cafe/promotion-sync";
 import {
   PanCafeSystemAdapter,
   PanCafeBridgeClient,
@@ -94,6 +96,9 @@ class RefreshDto {
 }
 class AmountDto {
   @IsInt() @Min(5000) @Max(1000000) amount!: number;
+}
+class KioskQuoteDto extends AmountDto {
+  @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]{1,80}$/) promotionId?: string;
 }
 class SimulationDto {
   @IsIn(["succeeded", "failed", "delayed"]) outcome!:
@@ -143,9 +148,10 @@ class SafeErrors implements ExceptionFilter {
 export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   assertDevelopment(env);
   const panCafe = env.CAFE_ADAPTER === "pancafe";
-  const firebaseProject = env.FIREBASE_SYNC_ENABLED === "true" ? env.FIREBASE_PROJECT_ID : undefined;
+  const firebaseEnabled = env.FIREBASE_SYNC_ENABLED === "true" || env.FIREBASE_CAMPAIGN_SYNC_ENABLED === "true";
+  const firebaseProject = firebaseEnabled ? env.FIREBASE_PROJECT_ID : undefined;
   const firebaseBalanceWrite = env.FIREBASE_BALANCE_WRITE_ENABLED === "true";
-  if (env.FIREBASE_SYNC_ENABLED === "true" && (!panCafe || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(firebaseProject ?? "")))
+  if (firebaseEnabled && (!panCafe || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(firebaseProject ?? "")))
     throw new Error("Firebase sync requires the PanCafe adapter and a Firebase project ID.");
   const bridgeConfig: PanCafeBridgeConfig | null = panCafe
     ? JSON.parse(await readFile(env.PANCAFE_BRIDGE_CONFIG ?? "", "utf8"))
@@ -184,6 +190,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const firebaseSync = firebaseProject && bridgeConfig && bridge
     ? createFirebaseSync(firebaseProject, bridgeConfig.installationId, bridge, firebaseBalanceWrite)
     : null;
+  const promotionSync = firebaseSync && bridgeConfig
+    ? new PromotionSync(db, firestoreCampaigns(firebaseSync.firestore, env.FIREBASE_CAMPAIGN_INSTALLATION_ID ?? bridgeConfig.installationId)) : null;
   async function requirePayments() {
     if (!(await admin.topupEnabled())) throw new ServiceUnavailableException("Bakiye yükleme geçici olarak kapalı. Lütfen daha sonra tekrar dene.");
     if (panCafe && !simulation)
@@ -223,7 +231,12 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     @Get("kiosk/dashboard") async kioskDashboard(@Req() req: Request) {
       if (!(cafe instanceof PanCafeSystemAdapter)) return this.dashboard(req);
       const account = await cafe.getKioskAccount(await user(req));
-      return { ...account, promotions: [], transactions: [], pendingPayments: [], features: { topup: false } };
+      return { ...account, promotions: await activePromotions(db), transactions: [], pendingPayments: [], features: { topup: false } };
+    }
+    @Post("kiosk/quote") async kioskQuote(@Req() req: Request, @Body() body: unknown) {
+      await user(req);
+      const dto = parse(KioskQuoteDto, body);
+      return calculateQuote(dto.amount, await activePromotions(db), Date.now(), dto.promotionId);
     }
     @Get("kiosk/pc-availability")
     @Header("Cache-Control", "no-store")
@@ -240,7 +253,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         payments: panCafe && !simulation ? "disabled" : "simulation",
         cafe: panCafe ? "pancafe" : "mock",
         balanceCredit: nativeCredit,
-        ...(firebaseSync ? { firebaseSync: firebaseSync.worker.status, firebaseBalanceWrite } : {}),
+        ...(firebaseSync && env.FIREBASE_SYNC_ENABLED === "true" ? { firebaseSync: firebaseSync.worker.status, firebaseBalanceWrite } : {}),
+        campaignSync: promotionSync?.status ?? "disabled",
       };
     }
     @Post("auth/login") login(@Body() body: unknown) {
@@ -266,7 +280,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       const [member, wallet, promotions, transactions] = await Promise.all([
         cafe.getUser(id),
         cafe.getBalance(id),
-        paymentCafe.getAvailablePromotions(id),
+        activePromotions(db),
         paymentCafe.getTransactions(id),
       ]);
       return {
@@ -414,10 +428,12 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   class RuntimeLifecycle {
     onModuleInit() {
       if (!panCafe || simulation) payments.startWorker();
-      firebaseSync?.worker.start();
+      if (env.FIREBASE_SYNC_ENABLED === "true") firebaseSync?.worker.start();
+      promotionSync?.start();
     }
     async onModuleDestroy() {
       await payments.stopWorker();
+      await promotionSync?.stop();
       await firebaseSync?.stop();
       await db.close();
     }

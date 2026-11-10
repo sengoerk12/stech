@@ -3,9 +3,11 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const money = amount => Number.isSafeInteger(amount) && amount >= 5000 && amount <= 1000000;
-function quote(amount, promotions, now = Date.now()) {
+function quote(amount, promotions, now = Date.now(), promotionId) {
   if (!money(amount)) throw new Error('50 TL ile 10.000 TL arasında bir tutar seç.');
-  const best = promotions.filter(p => now >= Date.parse(p.startsAt) && now < Date.parse(p.endsAt) && amount >= p.minimumAmount)
+  const eligible = promotions.filter(p => now >= Date.parse(p.startsAt) && now < Date.parse(p.endsAt) && amount >= p.minimumAmount);
+  if (promotionId && !eligible.some(p => p.id === promotionId)) throw new Error('Seçilen kampanya bu tutar için geçerli değil.');
+  const best = eligible.filter(p => !promotionId || p.id === promotionId)
     .map(p => ({ id: p.id, bonus: Math.min(Math.floor(amount * p.bonusPercent / 100), p.maxBonus) }))
     .sort((a, b) => b.bonus - a.bonus)[0];
   return { amount, bonus: best?.bonus || 0, total: amount + (best?.bonus || 0) };
@@ -61,12 +63,12 @@ class DemoStore {
     return { items: all.slice(offset, offset + 20), nextCursor: offset + 20 < all.length ? String(offset + 20) : undefined };
   }
   serial(fn) { const next = this.chain.then(fn); this.chain = next.catch(() => {}); return next; }
-  async create(card, amount, key) {
+  async create(card, amount, key, promotionId) {
     return this.serial(async () => {
       this.assert(card);
       const old = Object.values(this.state.payments).find(p => p.card === card && p.key === key);
       if (old) { if (old.amount !== amount) throw new Error('İşlem tutarı değişmiş.'); return structuredClone(old); }
-      const q = quote(amount, (await this.dashboard(card)).promotions);
+      const q = quote(amount, (await this.dashboard(card)).promotions, Date.now(), promotionId);
       const p = { ...q, id: randomUUID(), card, key, status: 'pending', createdAt: new Date().toISOString() };
       this.state.payments[p.id] = p;
       try { await this.save(); } catch (error) { delete this.state.payments[p.id]; throw error; }

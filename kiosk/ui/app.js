@@ -1,7 +1,7 @@
 'use strict';
 const $ = selector => document.querySelector(selector);
 const root = $('#app');
-const state = { info: null, data: null, page: 'home', epoch: 0, loading: false, walletStale: false, recentState: '', filter: 'all', history: [], sessions: [], cursor: undefined, sessionCursor: undefined, historyLoading: false, amount: '200', quote: null, payment: null, processing: false, quoteVersion: 0, modal: null, pin: '', seconds: 90, clock: '' };
+const state = { info: null, data: null, page: 'home', epoch: 0, loading: false, walletStale: false, recentState: '', filter: 'all', history: [], sessions: [], cursor: undefined, sessionCursor: undefined, historyLoading: false, amount: '200', quote: null, promotionId: undefined, quoteError: '', payment: null, processing: false, quoteVersion: 0, modal: null, pin: '', seconds: 90, clock: '' };
 const e = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const cash = amount => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount / 100);
 const balanceText = () => Number.isSafeInteger(state.data?.wallet?.balance) ? cash(state.data.wallet.balance) : '—';
@@ -54,7 +54,7 @@ async function call(action, payload) {
   return result.data;
 }
 function reset() {
-  state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
+  state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
   $('#toast').hidden = true; render(); renderModal();
   void refreshPcAvailability();
 }
@@ -77,8 +77,9 @@ function rows(items) {
   return items.map(t => `<div class="transaction"><div class="transaction-icon ${e(t.kind)}">${icon(t.kind === 'usage' ? 'monitor' : t.kind === 'bonus' ? 'bolt' : 'topup')}</div><div class="transaction-description"><strong>${e(t.title)}</strong><span>${date(t.createdAt)}</span></div><div class="transaction-amount ${t.amount > 0 ? 'positive' : ''}"><strong>${t.amount > 0 ? '+' : ''}${cash(t.amount)}</strong><span>Bakiye ${cash(t.balanceAfter)}</span></div></div>`).join('');
 }
 function campaignCard(p) {
-  return `<article class="campaign-card"><span class="eyebrow">YÜKLEDİKÇE KAZAN</span><div class="campaign-big">%${e(p.bonusPercent)}<span>BONUS</span></div><h3>${e(p.title)}</h3><p>${e(p.description)}</p>${button('Kampanyayı incele ' + icon('arrow'), 'campaign:' + e(p.id), 'light-button')}<div class="campaign-watermark">+</div></article>`;
+  return `<article class="bonus-coupon campaign-ticket ${p.accent === 'blue' ? 'coupon-blue campaign-blue' : ''}"><div class="coupon-value"><strong>%${e(p.bonusPercent)}</strong><span>BONUS</span></div><div class="coupon-body"><span class="eyebrow">S TECH ÜYE KUPONU</span><h3>${e(p.title)}</h3><p class="ticket-description">${e(p.description)}</p><div class="coupon-bottom"><p>Alt limit<strong>${cash(p.minimumAmount)}</strong></p>${button('Kampanyayı incele ' + icon('arrow'), 'campaign:' + e(p.id), 'coupon-apply')}</div><small class="coupon-hint">Son gün: ${new Date(p.endsAt).toLocaleDateString('tr-TR')}</small></div></article>`;
 }
+
 function home() {
   const d = state.data;
   return `<div class="page-heading"><div><span class="eyebrow">TEKRAR HOŞ GELDİN</span><h1>Merhaba, ${e(d.member.name.split(' ')[0])}<span class="orange">.</span></h1><p>Yeni bir oyun, yeni bir heyecan. Hesabın hazır.</p></div><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span></div>
@@ -94,6 +95,15 @@ function recentContent() {
   if (!transactions.length && state.recentState === 'error') return '<p class="loading-line">Son işlemler alınamadı. İşlem geçmişinden tekrar deneyebilirsin.</p>';
   return rows(transactions);
 }
+function campaignPicker(amount) {
+  return '<section class="campaign-picker" aria-label="Kampanya seçimi"><div class="coupon-heading"><h3>Bonus kuponların</h3><span>' + state.data.promotions.length + ' kampanya</span></div>' +
+    '<button class="coupon-auto ' + (!state.promotionId ? 'is-selected' : '') + '" data-action="select-promotion:auto" aria-pressed="' + !state.promotionId + '">' + icon('bolt') + '<span>En avantajlı kampanya<small>En yüksek bonusu senin için seçelim</small></span><span class="coupon-radio">' + (!state.promotionId ? '✓' : '') + '</span></button>' +
+    '<div class="coupon-list">' + state.data.promotions.map(p => {
+      const selected = state.promotionId === p.id;
+      const eligible = amount >= p.minimumAmount;
+      return '<article class="bonus-coupon ' + (p.accent === 'blue' ? 'coupon-blue ' : '') + (selected ? 'is-selected' : '') + '"><div class="coupon-value"><strong>%' + e(p.bonusPercent) + '</strong><span>BONUS</span></div><div class="coupon-body"><h4>' + e(p.title) + '</h4><div class="coupon-bottom"><p>Alt limit<strong>' + cash(p.minimumAmount) + '</strong></p><button class="coupon-apply" data-action="select-promotion:' + e(p.id) + '" aria-label="' + e(p.title) + (selected ? ' seçildi' : ' uygula') + '" aria-pressed="' + selected + '">' + (selected ? '✓ Seçili' : 'Uygula') + '</button></div><small class="coupon-hint">' + (eligible ? 'En fazla ' + cash(p.maxBonus) + ' bonus' : cash(p.minimumAmount - amount) + ' daha yükleyerek yararlan') + '</small></div></article>';
+    }).join('') + '</div></section>';
+}
 function topup() {
   if (state.payment) return paymentView();
   const amount = Number(state.amount || 0) * 100;
@@ -101,7 +111,7 @@ function topup() {
   return `<div class="page-heading"><div><span class="eyebrow">OYUNA ARA VERME</span><h1>Bir sonraki oyuna hazır ol.</h1><p>Yüklemek istediğin tutarı seç, kartınla öde, devam et.</p></div></div>
   ${state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : '<div class="notice">' + icon('info') + ' POS cihazı henüz eşleştirilmedi. Gerçek yükleme için şube yetkilisine başvur.</div>'}
   <div class="topup-grid"><section class="panel amount-panel"><div class="section-heading"><h2>Yükleme tutarı</h2><span>01 / 02</span></div><div class="amount-display"><span>₺</span><strong>${e(state.amount || '0')}</strong><span>TL</span></div><div class="amount-presets">${[100, 200, 500, 1000].map(n => button(`${n} TL`, `amount:${n}`, Number(state.amount) === n ? 'preset selected' : 'preset')).join('')}</div><div class="keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Temizle' : k === 'back' ? '⌫' : k, `key:${k}`, k === 'clear' ? 'key key-small' : 'key')).join('')}</div><p class="muted minimum">En az 50 TL · En fazla 10.000 TL</p></section>
-  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2><div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">+${cash(q?.bonus || 0)}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
+  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
 }
 function paymentView() {
   const p = state.payment, done = p.status === 'completed', failed = p.status === 'failed';
@@ -198,7 +208,7 @@ function renderModal() {
   else {
     const p = state.data?.promotions.find(p => p.id === state.modal);
     if (!p) { state.modal = null; host.innerHTML = ''; return; }
-    content = `<span class="eyebrow">KAMPANYA DETAYI</span><h2>${e(p.title)}</h2><p>${e(p.description)}</p><div class="campaign-terms"><strong>Kampanya koşulları</strong><p>${e(p.terms)}</p><span>Son gün: ${new Date(p.endsAt).toLocaleDateString('tr-TR')}</span></div>${button('Bakiye yükle ' + icon('arrow'), 'modal-topup', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
+    content = `<span class="eyebrow">KAMPANYA DETAYI</span><h2>${e(p.title)}</h2><p>${e(p.description)}</p><div class="campaign-terms"><strong>Kampanya koşulları</strong><p>${e(p.terms)}</p><p>Minimum yükleme: <strong>${cash(p.minimumAmount)}</strong><br>Bonus: <strong>%${e(p.bonusPercent)}</strong><br>En fazla bonus: <strong>${cash(p.maxBonus)}</strong></p><span>${date(p.startsAt)} – ${date(p.endsAt)}</span></div>${button('Bakiye yükle ' + icon('arrow'), 'modal-topup', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   }
   const label = state.modal === 'password-login' ? 'aria-labelledby="password-login-title"'
     : state.modal === 'admin' ? 'aria-label="Yetkili erişimi"' : 'aria-label="Bilgilendirme"';
@@ -278,15 +288,19 @@ async function refreshLiveAccount() {
   if (!state.data || walletEpoch === epoch) return;
   walletEpoch = epoch;
   try {
-    const { member, wallet } = await call('dashboard');
+    const { member, wallet, promotions } = await call('dashboard');
     if (epoch !== state.epoch || !state.data) return;
     if (!Number.isSafeInteger(wallet?.balance)) throw new Error('PanCafe bakiyesi doğrulanamadı.');
     const balanceChanged = state.data.wallet?.balance !== wallet.balance;
     const memberChanged = JSON.stringify(state.data.member) !== JSON.stringify(member);
+    const promotionsChanged = Array.isArray(promotions) && JSON.stringify(state.data.promotions) !== JSON.stringify(promotions);
+    if (Array.isArray(promotions)) state.data.promotions = promotions;
     state.data.member = member;
     state.data.wallet = wallet;
     state.walletStale = false;
-    if (memberChanged && !state.modal) render();
+    if ((memberChanged || promotionsChanged) && !state.modal && !state.processing && !state.payment) render();
+    if (promotionsChanged && state.page === 'topup' && !state.payment) void updateQuote();
+    if (promotionsChanged && state.modal && !['idle', 'logout', 'admin', 'password-login'].includes(state.modal)) { render(); renderModal(); }
     if (state.page === 'home' && (balanceChanged || state.recentState === 'error')) void loadRecent();
   } catch {
     if (epoch === state.epoch) state.walletStale = true;
@@ -322,11 +336,12 @@ async function loadHistory(more = false, sessionsOnly = false) {
 }
 async function updateQuote() {
   const version = ++state.quoteVersion, epoch = state.epoch;
-  state.quote = null; render();
+  state.quote = null; state.quoteError = ''; render();
   const amount = Number(state.amount || 0) * 100;
-  if (amount < 5000 || amount > 1000000 || !state.data.features.topup) return;
-  const q = await call('quote', { amount });
+  if (amount < 5000 || amount > 1000000) return;
+  try { const q = await call('quote', { amount, promotionId: state.promotionId });
   if (version === state.quoteVersion && epoch === state.epoch) { state.quote = q; render(); }
+  } catch (error) { if (version === state.quoteVersion && epoch === state.epoch) { state.quoteError = error.message; render(); } }
 }
 async function go(page) {
   if (state.processing) return;
@@ -386,7 +401,8 @@ async function action(value) {
     return;
   }
   if (name === 'campaign') { state.modal = arg; renderModal(); return; }
-  if (name === 'modal-topup') return go('topup');
+  if (name === 'modal-topup') { state.promotionId = state.modal; return go('topup'); }
+  if (name === 'select-promotion') { state.promotionId = arg === 'auto' ? undefined : arg; return updateQuote(); }
   if (name.startsWith('go-')) return go(name.slice(3));
   if (name === 'filter') { state.filter = arg; render(); return; }
   if (name === 'history-refresh') return loadHistory();
@@ -400,7 +416,7 @@ async function action(value) {
   if (name === 'pay') {
     if (state.processing || !state.quote) return;
     const epoch = state.epoch; state.processing = true; render();
-    try { const payment = await call('create', { amount: Number(state.amount) * 100, key: crypto.randomUUID() }); if (epoch !== state.epoch) return; state.payment = payment; }
+    try { const payment = await call('create', { amount: Number(state.amount) * 100, key: crypto.randomUUID(), promotionId: state.promotionId }); if (epoch !== state.epoch) return; state.payment = payment; }
     finally { if (epoch === state.epoch) { state.processing = false; render(); } }
     return;
   }
@@ -490,7 +506,7 @@ function clockTick() {
   document.querySelectorAll('.clock').forEach(el => { el.textContent = state.clock; });
 }
 clockTick(); setInterval(clockTick, 10000);
-setInterval(() => { if (state.info?.mode === 'connected' && state.data && !state.processing && !state.modal) void refreshLiveAccount(); }, 5000);
+setInterval(() => { if (state.info?.mode === 'connected' && state.data && !state.processing) void refreshLiveAccount(); }, 5000);
 setInterval(() => { if (state.info?.mode === 'demo' && state.data && state.page === 'home' && !state.processing && !state.modal) void refresh().catch(() => {}); }, 15000);
 setInterval(refreshPcAvailability, 5000);
 call('info').then(info => { state.info = info; render(); void refreshPcAvailability(); }).catch(error => { root.innerHTML = '<div class="boot-error"><h1>S TECH</h1><p>' + e(error.message) + '</p></div>'; });

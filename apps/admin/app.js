@@ -219,6 +219,7 @@ async function renderPage() {
         "Üst sınır",
         "Tarih aralığı",
         "Durum",
+        "Firestore",
         "",
       ],
       cache.promotions.map((p) => [
@@ -228,6 +229,7 @@ async function renderPage() {
         money(p.maxBonus),
         `${date(p.startsAt)}<small>${date(p.endsAt)}</small>`,
         badge(p.active ? "Yayında" : "Kapalı"),
+        `<span data-campaign-sync="${esc(p.id)}">${badge(p.cloudSync === "synced" ? "Eşitlendi" : p.cloudSync === "pending" ? "Gönderim bekliyor" : "Bağlantı kapalı")}</span>`,
         canWrite() ? button("Düzenle", "promotion-edit", p.id) : "",
       ]),
     )}`;
@@ -819,3 +821,17 @@ document.addEventListener("click", async (e) => {
 loginScreen().catch((error) => {
   root.innerHTML = `<section class="login card error">${esc(error.message)}</section>`;
 });
+let checkingCampaigns = false;
+setInterval(async () => {
+  if (checkingCampaigns || !token || page !== "promotions" || document.hidden) return;
+  checkingCampaigns = true;
+  try {
+    const campaigns = await api("promotions");
+    if (page !== "promotions") return;
+    for (const element of document.querySelectorAll('[data-campaign-sync]')) {
+      const p = campaigns.find(p => p.id === element.dataset.campaignSync);
+      if (p) element.innerHTML = badge(p.cloudSync === "synced" ? "Eşitlendi" : p.cloudSync === "pending" ? "Gönderim bekliyor" : "Bağlantı kapalı");
+    }
+  } catch { /* A failed check must not discard an open campaign form. */ }
+  finally { checkingCampaigns = false; }
+}, 5000);

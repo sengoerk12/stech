@@ -62,4 +62,12 @@ export const schema = [
   `ALTER TABLE demo_profile_details ADD COLUMN IF NOT EXISTS last_name text`,
   `CREATE TABLE IF NOT EXISTS demo_profile_receipts (id uuid PRIMARY KEY, user_id text NOT NULL, request_hash text NOT NULL)`,
   `INSERT INTO schema_migrations(version) VALUES(7) ON CONFLICT DO NOTHING`,
+  `CREATE TABLE IF NOT EXISTS promotion_sync_outbox (id text PRIMARY KEY REFERENCES app_promotions(id), operation_id uuid NOT NULL, payload jsonb NOT NULL)`,
+  `DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version=8) THEN
+    INSERT INTO promotion_sync_outbox(id,operation_id,payload)
+      SELECT p.id,gen_random_uuid(),p.definition || jsonb_build_object('active',p.active)
+      FROM app_promotions p WHERE EXISTS(SELECT 1 FROM audit_logs a WHERE a.event='admin.promotion.save' AND a.resource_id=p.id)
+      ON CONFLICT DO NOTHING;
+    INSERT INTO schema_migrations(version) VALUES(8);
+  END IF; END $$`,
 ];

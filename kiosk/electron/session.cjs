@@ -95,12 +95,14 @@ class KioskSession {
     if (action === 'dashboard') result = this.publicDashboard(this.mode === 'demo' ? await this.demo.dashboard(session.card) : await this.gateway.dashboard(session.token));
     else if (action === 'transactions') result = this.mode === 'demo' ? await this.demo.transactions(session.card, payload.cursor) : await this.gateway.transactions(session.token, payload.cursor);
     else if (action === 'sessions') result = this.mode === 'demo' ? { items: [] } : await this.gateway.sessions(session.token, payload.cursor);
-    else if (['quote', 'create', 'settle', 'payment'].includes(action)) {
+    else if (action === 'quote') result = this.mode === 'demo'
+      ? quote(payload.amount, (await this.demo.dashboard(session.card)).promotions, Date.now(), payload.promotionId)
+      : await this.gateway.quote(session.token, payload);
+    else if (['create', 'settle', 'payment'].includes(action)) {
       if (this.mode !== 'demo') throw new Error('POS bağlantısı henüz etkin değil. Yükleme için S TECH yetkilisine başvur.');
-      if (action === 'quote') result = quote(payload.amount, (await this.demo.dashboard(session.card)).promotions);
       if (action === 'create') {
         if (typeof payload.key !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(payload.key)) throw new Error('Geçersiz işlem anahtarı.');
-        result = await this.demo.create(session.card, payload.amount, payload.key);
+        result = await this.demo.create(session.card, payload.amount, payload.key, payload.promotionId);
       }
       if (action === 'payment') result = this.demo.get(session.card, payload.id);
       if (action === 'settle') result = await this.demo.settle(session.card, payload.id, payload.outcome);

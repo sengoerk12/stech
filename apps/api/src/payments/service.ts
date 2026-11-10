@@ -12,6 +12,7 @@ export function calculateQuote(
   amount: number,
   promotions: Promotion[],
   now = Date.now(),
+  promotionId?: string,
 ): Quote {
   if (!Number.isSafeInteger(amount) || amount < 5000 || amount > 1000000)
     throw new BadRequestException(
@@ -28,7 +29,10 @@ export function calculateQuote(
       Number.isSafeInteger(p.maxBonus) &&
       p.maxBonus >= 0,
   );
+  if (promotionId && !eligible.some(p => p.id === promotionId))
+    throw new BadRequestException("Seçilen kampanya bu tutar için geçerli değil. Tutarı veya kampanyayı değiştir.");
   const best = eligible
+    .filter(p => !promotionId || p.id === promotionId)
     .map((p) => ({
       id: p.id,
       bonus: Math.min(Math.floor((amount * p.bonusPercent) / 100), p.maxBonus),

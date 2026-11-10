@@ -90,7 +90,9 @@ test('connected mode never enables POS simulation or topup', async () => {
   const gateway = { login:async () => ({ accessToken:'opaque' }), dashboard:async () => ({ member:{ id:'1' }, features:{ topup:true } }), logout:async () => {} };
   const kiosk = new KioskSession({ gateway, mode:'connected' });
   assert.equal((await kiosk.scan('001234')).features.topup, false);
-  for (const action of ['quote','create','settle','payment']) await assert.rejects(() => kiosk.run(action, { amount:20000 }), /POS bağlantısı/);
+  gateway.quote = async (token, payload) => { assert.equal(token, 'opaque'); assert.equal(payload.promotionId, 'selected'); return { amount:20000, bonus:2000, total:22000 }; };
+  assert.equal((await kiosk.run('quote', { amount:20000, promotionId:'selected' })).bonus, 2000);
+  for (const action of ['create','settle','payment']) await assert.rejects(() => kiosk.run(action, { amount:20000 }), /POS bağlantısı/);
   kiosk.lock();
 });
 test('unknown and overlapping cards cannot switch customers', async t => {

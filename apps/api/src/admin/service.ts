@@ -487,11 +487,13 @@ export class AdminService {
         definition: Promotion;
         active: boolean;
         revision: number;
-      }>("SELECT definition,active,revision FROM app_promotions ORDER BY id")
+        pending: boolean;
+      }>("SELECT definition,active,revision,EXISTS(SELECT 1 FROM promotion_sync_outbox o WHERE o.id=p.id) AS pending FROM app_promotions p ORDER BY id")
     ).rows.map((r) => ({
       ...r.definition,
       active: r.active,
       revision: r.revision,
+      cloudSync: this.env.FIREBASE_SYNC_ENABLED !== "true" && this.env.FIREBASE_CAMPAIGN_SYNC_ENABLED !== "true" ? "disabled" : r.pending ? "pending" : "synced",
     }));
   }
   async savePromotion(actor: Admin, input: unknown) {
@@ -519,6 +521,7 @@ export class AdminService {
     if (definition.endsAt <= definition.startsAt)
       throw new BadRequestException("Bitiş tarihi başlangıçtan sonra olmalı.");
     return this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(72389413)");
       const result =
         revision === 0
           ? await tx.query(
@@ -538,6 +541,9 @@ export class AdminService {
         active: d.active,
         revision: revision + 1,
       });
+      await tx.query(`INSERT INTO promotion_sync_outbox(id,operation_id,payload) VALUES($1,$2,$3)
+        ON CONFLICT(id) DO UPDATE SET operation_id=EXCLUDED.operation_id,payload=EXCLUDED.payload`,
+        [id, randomUUID(), JSON.stringify({ ...definition, active: d.active })]);
       return { ok: true };
     });
   }

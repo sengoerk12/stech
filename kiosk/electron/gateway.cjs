@@ -29,6 +29,7 @@ class ApiGateway {
       return this.request(endpoint, token);
     }
   }
+  quote(token, payload) { return this.request('/kiosk/quote', token, { amount: payload.amount, promotionId: payload.promotionId }); }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
   pcAvailability() { return this.read('/kiosk/pc-availability', null); }
