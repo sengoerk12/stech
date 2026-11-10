@@ -139,9 +139,9 @@ function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate,
 }
 
 $repository = 'https://github.com/sengoerk12/stech'
-$version = 'kiosk-v0.1.3'
+$version = 'kiosk-v0.1.5'
 $kioskUrl = "$repository/releases/download/$version/kiosk.exe"
-$kioskSha256 = 'EE82BB18E38BB49B72F9FA5A0BF3C463878BEC2883F36FBB880F684112631A1C'
+$kioskSha256 = 'C258169E9B0B6419A35B73408D8D90D7417D7380E91E20EB0E75C5C8D603FFBF'
 $here = Split-Path -Parent $env:STECH_SETUP_SELF
 $work = "$env:LOCALAPPDATA\STech-Kiosk-Sunucu"
 $source = "$work\surumler\$version"
@@ -151,7 +151,7 @@ $transfer = Join-Path $here 'A-Bilgisayarina-Kopyala'
 $pairingPath = "$work\pairing.json"
 $pairing = if (Test-Path -LiteralPath $pairingPath) { Get-Content -LiteralPath $pairingPath -Raw | ConvertFrom-Json } else { $null }
 
-Write-Host 'S TECH | B bilgisayarı kurulumu' -ForegroundColor Cyan
+Write-Host "S TECH | B bilgisayarı kurulumu ($version)" -ForegroundColor Cyan
 Update-SetupPath
 $git = Require-Command git.exe Git.Git
 $node = Require-Command node.exe OpenJS.NodeJS.LTS

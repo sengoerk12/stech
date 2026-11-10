@@ -21,4 +21,4 @@ Kontroller:
 - Gerçek Firestore testi: `STECH_FIREBASE_SMOKE_PROJECT` ve sunucu kimliği ayarlanarak `test/promotion-firestore.test.ts`. Rastgele adlandırılan ayrı test kurulumu kullanılır ve yalnız test belgeleri temizlenir.
 - Kiosk: `npm run test:campaigns`. Gerçek Electron'da bağlı mod ile ekleme, otomatik yenileme, renk, tutar, açık detayda düzenleme ve pasife alma kontrol edilir.
 
-Mevcut A bilgisayarında otomatik ekran yenilemesi için yeni kiosk EXE gereklidir. `npm run build:win` çıktısı `kiosk/dist/kiosk.exe`. Kiosku yetkili PIN ile kapatıp A'daki `%LOCALAPPDATA%\STechKiosk\kiosk.exe` dosyasını değiştir; mevcut `kiosk.config.json` korunur. GitHub'a yeni sürüm yayımlanana kadar eski sürümü indiren A kurulumunu yeniden çalıştırmak yerel EXE güncellemesini geri alabilir.
+Mevcut A ve B bilgisayarlarını birlikte güncellemek için GitHub sürümünden `B-PanCafe-Kur.cmd` dosyasını yeniden indirip B'de çalıştır. Kiosku yetkili PIN ile kapat ve B'nin bu kurulumda ürettiği `A-Kiosk-Kur.cmd` dosyasını A'da çalıştır. A dosyası, oluşturulduğu sürümün EXE adresini ve SHA-256 değerini taşır. Eski A dosyasını tekrar çalıştırmak eski EXE'yi geri yükleyebilir.

@@ -22,6 +22,7 @@ if ($settings.mode -ne 'connected' -or $api.Scheme -ne 'https' -or $api.Port -ne
     $pairing.kioskUrl -cnotmatch '^https://github\.com/sengoerk12/stech/releases/download/kiosk-v[0-9]+\.[0-9]+\.[0-9]+/kiosk\.exe$') {
     throw 'Kiosk bağlantı ayarları geçersiz. B bilgisayarında A dosyasını yeniden oluştur.'
 }
+$kioskVersion = ([Uri]$pairing.kioskUrl).Segments[-2].TrimEnd('/')
 
 if (Get-Process -Name kiosk -ErrorAction SilentlyContinue) {
     throw 'Önce açık kiosk uygulamasını kapat, sonra bu dosyayı tekrar çalıştır.'
@@ -47,7 +48,7 @@ if ($curl -and (& $curl.Source --help all | Select-String -SimpleMatch '--ssl-re
     } finally { [IO.File]::Delete($probeCa) }
 }
 if (!(Test-Path -LiteralPath $exe) -or (Get-FileHash -LiteralPath $exe).Hash -ne $pairing.kioskSha256) {
-    Write-Host 'Bu kurulum için kiosk.exe indiriliyor...'
+    Write-Host "kiosk.exe indiriliyor ($kioskVersion)..."
     $staged = "$exe.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -73,4 +74,4 @@ if ($env:STECH_SETUP_SELF -ne $launcher) {
 [IO.File]::WriteAllText($env:STECH_KIOSK_CONFIG, ($settings | ConvertTo-Json))
 [IO.File]::WriteAllText($env:NODE_EXTRA_CA_CERTS, $pairing.rootCertificate)
 Start-Process -FilePath $exe -WorkingDirectory $work
-Write-Host 'Kiosk açıldı. Yetkili çıkışı için Ctrl+Alt+Q ve kurulumda seçilen PIN kullanılır.'
+Write-Host "Kiosk açıldı ($kioskVersion). Yetkili çıkışı için Ctrl+Alt+Q ve kurulumda seçilen PIN kullanılır."
