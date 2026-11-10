@@ -25,12 +25,15 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
   await writeFile(configPath, JSON.stringify({ ...config, allowBalanceCredit: nativeCredit }));
   const bridge = new TestBridge();
   let historyUnavailable = false;
+  let pcAvailability = { TOTAL: "12", AVAILABLE: "10" };
+  const kioskKey = "k".repeat(48);
   const realFetch = globalThis.fetch;
   let app: Awaited<ReturnType<typeof createApp>>;
   try {
     globalThis.fetch = async (input, options) => {
       const url = new URL(String(input));
       assert.equal(url.origin, "http://127.0.0.1:3002");
+      if (url.pathname === "/pc-availability") return Response.json([pcAvailability]);
       if (historyUnavailable && url.pathname === "/transactions") return new Response(null, { status: 503 });
       const rows = await bridge.request(url.pathname + url.search,
         options?.body ? JSON.parse(String(options.body)) : undefined);
@@ -39,6 +42,7 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
     app = await createApp({ ENVIRONMENT: "test", CAFE_ADAPTER: "pancafe",
       PAYMENT_PROVIDER: "mock", PANCAFE_PAYMENT_SIMULATION: "true",
       PANCAFE_BALANCE_CREDIT: String(nativeCredit),
+      KIOSK_DEVICE_KEY: kioskKey,
       PANCAFE_BRIDGE_CONFIG: configPath });
   } finally {
     globalThis.fetch = realFetch;
@@ -46,6 +50,18 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
   try {
     await app.listen(0, "127.0.0.1");
     const base = await app.getUrl();
+    if (nativeCredit) {
+      const url = base + "/api/v1/kiosk/pc-availability";
+      assert.equal((await realFetch(url)).status, 401);
+      const read = () => realFetch(url, { headers: { "X-Kiosk-Key": kioskKey } });
+      const initial = await read();
+      assert.equal(initial.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await initial.json(), { total: 12, available: 10 });
+      pcAvailability = { TOTAL: "12", AVAILABLE: "9" };
+      assert.deepEqual(await (await read()).json(), { total: 12, available: 9 });
+      pcAvailability = { TOTAL: "12", AVAILABLE: "13" };
+      assert.equal((await read()).status, 503);
+    }
     const login = await realFetch(base + "/api/v1/auth/login", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifier: "kaan2", password: "PanCafePassword!" }),

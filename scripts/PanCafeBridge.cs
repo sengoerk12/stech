@@ -15,6 +15,8 @@ public static class PanCafeBridge
     static string database,clientDirectory,apiKey,folder;
     static HttpListener listener;
     const string projection="ID,USERNAME,NAME,LASTNAME,GSM,PHONE,EMAIL,CAST(RECDATE AS VARCHAR(30)) AS JOINED_AT,CAST(BAKIYE AS DECIMAL(18,2)) AS BALANCE_TL,CAST(AVAILBONUS AS DECIMAL(18,2)) AS BONUS_TL,ACCTYPE,ACCSTATUS";
+    // PanCafe's ttComputer is 0 and tsReady is 1. Offline PCs remain in the total.
+    internal const string PcAvailabilitySql="SELECT COUNT(*) AS TOTAL,COUNT(CASE WHEN TERMINALSTATUS=1 THEN 1 END) AS AVAILABLE FROM TERMINALS WHERE TERMINALTYPE=0 AND ISVIRTUAL=0";
     static JavaScriptSerializer Serializer() {return new JavaScriptSerializer { MaxJsonLength=1048576 };}
     static string Setting(string key) {return Convert.ToString(config[key]);}
     static bool Enabled(string key) {return config.ContainsKey(key) && Convert.ToBoolean(config[key]);}
@@ -69,6 +71,9 @@ public static class PanCafeBridge
             if(request.HttpMethod=="GET" && route=="/health") {
                 VerifyDatabase();
                 Reply(response,200,new {connected=true,installationId=Setting("installationId"),name=Setting("displayName"),memberRegistration=Convert.ToBoolean(config["allowRegistration"]),balanceCredit=config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"]),transactionHistory=true,sessionHistory=true});return;
+            }
+            if(request.HttpMethod=="GET" && route=="/pc-availability") {
+                Reply(response,200,Query(PcAvailabilitySql));return;
             }
             if(request.HttpMethod=="GET" && route=="/admin/members") {
                 int after=0;string search=request.QueryString["search"]??"";

@@ -139,9 +139,9 @@ function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate,
 }
 
 $repository = 'https://github.com/sengoerk12/stech'
-$version = 'kiosk-v0.1.2'
+$version = 'kiosk-v0.1.3'
 $kioskUrl = "$repository/releases/download/$version/kiosk.exe"
-$kioskSha256 = '531BEF33DB09C461E71BF05D3ABEB26262A1FE42C4788FF4198D9873686AE4FF'
+$kioskSha256 = 'EE82BB18E38BB49B72F9FA5A0BF3C463878BEC2883F36FBB880F684112631A1C'
 $here = Split-Path -Parent $env:STECH_SETUP_SELF
 $work = "$env:LOCALAPPDATA\STech-Kiosk-Sunucu"
 $source = "$work\surumler\$version"

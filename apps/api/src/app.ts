@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   Req,
+  Header,
   Headers,
   Module,
   BadRequestException,
@@ -223,6 +224,14 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (!(cafe instanceof PanCafeSystemAdapter)) return this.dashboard(req);
       const account = await cafe.getKioskAccount(await user(req));
       return { ...account, promotions: [], transactions: [], pendingPayments: [], features: { topup: false } };
+    }
+    @Get("kiosk/pc-availability")
+    @Header("Cache-Control", "no-store")
+    pcAvailability(@Headers("x-kiosk-key") key: string | undefined) {
+      if (!kioskAuth || !(cafe instanceof PanCafeSystemAdapter))
+        throw new ServiceUnavailableException("Bilgisayar durumu alınamıyor.");
+      kioskAuth.verifyDevice(key);
+      return cafe.getPcAvailability();
     }
     @Get("health") health() {
       return {

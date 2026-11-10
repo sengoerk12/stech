@@ -69,6 +69,10 @@ class KioskSession {
     this.tick(now);
     if (action === 'scan') return this.scan(payload.uid);
     if (action === 'passwordLogin') return this.loginWithPassword(payload);
+    if (action === 'pcAvailability') {
+      if (this.mode !== 'connected') return null;
+      return this.gateway.pcAvailability();
+    }
     if (action === 'logout') { this.lock(); return { ok: true }; }
     const session = this.session, epoch = this.generation;
     if (!session) throw new Error('Devam etmek için tekrar giriş yap.');

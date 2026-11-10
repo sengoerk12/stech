@@ -233,6 +233,14 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
     const row = await this.row(userId);
     return { member: this.member(row, userId), wallet: this.wallet(row) };
   }
+  async getPcAvailability() {
+    const [row] = await this.client.request("/pc-availability") ?? [];
+    const total = row?.TOTAL ?? "";
+    const available = row?.AVAILABLE ?? "";
+    if (!/^\d+$/.test(total) || !/^\d+$/.test(available) || !Number.isSafeInteger(Number(total)) || Number(available) > Number(total))
+      throw new ServiceUnavailableException("Bilgisayar durumu doğrulanamadı.");
+    return { total: Number(total), available: Number(available) };
+  }
   private wallet(row: PanCafeRow): Wallet {
     return {
       balance: panCafeMoney(row.BALANCE_TL),

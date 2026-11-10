@@ -31,6 +31,7 @@ class ApiGateway {
   }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
+  pcAvailability() { return this.read('/kiosk/pc-availability', null); }
   async dashboard(token) {
     try { return await this.read('/kiosk/dashboard', token); }
     catch (error) {

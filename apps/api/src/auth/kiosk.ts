@@ -19,7 +19,7 @@ export class KioskCardAuth {
     if (new Set(map.cards.map(c => c.cardHash)).size !== map.cards.length)
       throw new Error("Duplicate kiosk card mapping");
   }
-  private verifyDevice(key: string | undefined) {
+  verifyDevice(key: string | undefined) {
     const actual = createHash("sha256").update(key ?? "").digest();
     const expected = createHash("sha256").update(this.deviceKey).digest();
     if (!timingSafeEqual(actual, expected)) throw new UnauthorizedException("Kiosk cihazı doğrulanamadı.");
