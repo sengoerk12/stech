@@ -51,9 +51,16 @@ if (!(Test-Path -LiteralPath $exe) -or (Get-FileHash -LiteralPath $exe).Hash -ne
     Write-Host "kiosk.exe indiriliyor ($kioskVersion)..."
     $staged = "$exe.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -UseBasicParsing -Uri $pairing.kioskUrl -OutFile $staged -TimeoutSec 600
+        if ($curl) {
+            & $curl.Source --fail --location --progress-bar --connect-timeout 15 --max-time 600 `
+                --speed-limit 1024 --speed-time 45 --retry 2 --retry-max-time 90 --output $staged $pairing.kioskUrl
+            if ($LASTEXITCODE -ne 0) { throw "GitHub indirmesi tamamlanamadı (curl $LASTEXITCODE). İnternet bağlantısını kontrol edip A dosyasını tekrar aç." }
+        } else {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $ProgressPreference = 'Continue'
+            Invoke-WebRequest -UseBasicParsing -Uri $pairing.kioskUrl -OutFile $staged -TimeoutSec 600
+        }
+        Write-Host 'İndirilen kiosk.exe doğrulanıyor...'
         if ((Get-FileHash -LiteralPath $staged).Hash -ne $pairing.kioskSha256) { throw 'İndirilen kiosk.exe doğrulanamadı.' }
         if ([IO.File]::Exists($exe)) { [IO.File]::Replace($staged, $exe, [NullString]::Value) }
         else { [IO.File]::Move($staged, $exe) }
