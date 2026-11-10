@@ -4,6 +4,7 @@ class KioskSession {
   constructor({ demo, gateway, mode, idleSeconds = 90, completionSeconds = 20, onLock = () => {} }) {
     this.demo = demo; this.gateway = gateway; this.mode = mode; this.idleMs = idleSeconds * 1000; this.onLock = onLock;
     this.generation = 0; this.session = null; this.busy = false;
+    this.countdownRevision = 0;
     this.completionMs = Math.max(5, Math.min(60, Number(completionSeconds) || 20)) * 1000;
   }
   touch(now = Date.now()) { if (this.session) this.session.activity = now; }
@@ -12,6 +13,13 @@ class KioskSession {
       this.session.completionDeadline ?? this.session.activity + this.idleMs,
       this.session.started + 300000,
     ) - now) / 1000)) : 0;
+  }
+  countdown(now = Date.now()) {
+    return {
+      revision: ++this.countdownRevision,
+      remaining: this.remaining(now),
+      canContinue: Boolean(this.session && !this.session.completionDeadline && this.session.started + 300000 - now > 15000),
+    };
   }
   tick(now = Date.now()) { if (this.session && this.remaining(now) <= 0) this.lock(); }
   lock() {
@@ -57,14 +65,20 @@ class KioskSession {
       features: { ...data.features, topup: this.mode === 'demo' }, kioskMode: this.mode };
   }
   async run(action, payload = {}) {
-    this.tick();
+    const now = Date.now();
+    this.tick(now);
     if (action === 'scan') return this.scan(payload.uid);
     if (action === 'passwordLogin') return this.loginWithPassword(payload);
     if (action === 'logout') { this.lock(); return { ok: true }; }
-    if (action === 'activity') { this.touch(); return { remaining: this.remaining() }; }
-    this.tick();
     const session = this.session, epoch = this.generation;
     if (!session) throw new Error('Devam etmek için tekrar giriş yap.');
+    if (action === 'activity') { this.touch(now); return this.countdown(now); }
+    if (action === 'keepAlive') {
+      const status = this.countdown(now);
+      if (!status.canContinue) return status;
+      this.touch(now);
+      return this.countdown(now);
+    }
     if (action === 'continueSession') {
       if (!session.completionDeadline) throw new Error('Tamamlanmış işlem bulunamadı.');
       delete session.completionDeadline;

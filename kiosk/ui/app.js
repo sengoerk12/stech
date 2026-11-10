@@ -178,6 +178,7 @@ function renderModal() {
       </form>`;
     resetLoginFormTimer();
   } else if (state.modal === 'idle') content = `<div class="modal-symbol">${icon('history')}</div><h2>Hâlâ burada mısın?</h2><p>Gizliliğin için oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak.</p>${button('Buradayım, devam et', 'continue', 'primary wide')}${button('Oturumu bitir', 'logout', 'quiet wide')}`;
+  else if (state.modal === 'expiry') content = `<div class="modal-symbol">${icon('history')}</div><h2>Oturum süren doluyor</h2><p>Oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak. Devam etmek için yeniden giriş yapabilirsin.</p>${button('Oturumu bitir', 'confirm-logout', 'primary wide')}`;
   else if (state.modal === 'logout') content = `<div class="modal-symbol">${icon('logout')}</div><h2>İşlemlerin tamam mı?</h2><p>Oturumun kapanacak ve ekran yeni müşteri için hazırlanacak.</p>${button('Evet, oturumu bitir', 'confirm-logout', 'primary wide')}${button('Hesabıma dön', 'close-modal', 'secondary wide')}`;
   else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   else {
@@ -349,8 +350,18 @@ async function action(value) {
   }
   if (name === 'logout') { state.modal = 'logout'; renderModal(); return; }
   if (name === 'confirm-logout') { reset(); await call('logout'); return; }
-  if (name === 'continue' && state.payment?.status === 'completed') return;
-  if (name === 'continue') { await call('activity'); state.modal = null; renderModal(); return; }
+  if (name === 'continue') {
+    if (state.payment?.status === 'completed' || confirmingEpoch === state.epoch) return;
+    const epoch = state.epoch;
+    confirmingEpoch = epoch;
+    try {
+      const countdown = await call('keepAlive');
+      if (epoch !== state.epoch) return;
+      if (state.modal === 'idle' && countdown.canContinue) { state.modal = null; renderModal(); }
+      showCountdown(countdown);
+    } finally { if (confirmingEpoch === epoch) confirmingEpoch = undefined; }
+    return;
+  }
   if (name === 'close-modal') {
     const wasLogin = state.modal === 'password-login';
     if (wasLogin && state.loading) return;
@@ -413,7 +424,7 @@ document.addEventListener('submit', event => {
 let lastActivity = 0;
 for (const event of ['pointerdown','keydown']) document.addEventListener(event, () => {
   if (state.modal === 'password-login' && !state.loading) resetLoginFormTimer();
-  if (state.data && Date.now() - lastActivity > 1000) { lastActivity = Date.now(); void call('activity').catch(() => {}); }
+  if (state.data && !['idle', 'expiry'].includes(state.modal) && Date.now() - lastActivity > 1000) { lastActivity = Date.now(); void call('activity').catch(() => {}); }
 });
 let cardBuffer = '', lastKey = 0;
 document.addEventListener('keydown', event => {
@@ -438,20 +449,27 @@ document.addEventListener('keydown', event => {
   }
   else if (/^[a-zA-Z0-9_-]$/.test(event.key)) { event.preventDefault(); cardBuffer = (cardBuffer + event.key).slice(0,64); }
 });
+let confirmingEpoch;
+let countdownRevision = 0;
+function showCountdown({ remaining, canContinue, revision }) {
+  if (revision <= countdownRevision) return;
+  countdownRevision = revision ?? countdownRevision;
+  state.seconds = remaining;
+  for (const id of ['seconds', 'completion-seconds', 'idle-seconds']) {
+    const element = $('#' + id);
+    if (element) element.textContent = remaining;
+  }
+  if (!state.data || state.payment?.status === 'completed' || remaining > 15) return;
+  const modal = canContinue ? 'idle' : 'expiry';
+  if (state.modal !== modal) { state.modal = modal; renderModal(); }
+}
 if (window.stech) {
   window.stech.on('locked', reset);
   window.stech.on('admin', () => {
     if (state.modal === 'password-login' && state.loading) return;
     state.modal = 'admin'; state.pin = ''; renderModal();
   });
-  window.stech.on('countdown', seconds => {
-    state.seconds = seconds;
-    if ($('#seconds')) $('#seconds').textContent = Math.ceil(seconds);
-    if ($('#completion-seconds')) $('#completion-seconds').textContent = Math.ceil(seconds);
-    if (state.payment?.status === 'completed') return;
-    if ($('#idle-seconds')) $('#idle-seconds').textContent = Math.ceil(seconds);
-    if (seconds <= 15 && state.data && state.modal !== 'idle') { state.modal = 'idle'; renderModal(); }
-  });
+  window.stech.on('countdown', countdown => { if (confirmingEpoch !== state.epoch) showCountdown(countdown); });
 }
 function clockTick() {
   state.clock = new Intl.DateTimeFormat('tr-TR', { hour: '2-digit', minute: '2-digit' }).format(new Date());

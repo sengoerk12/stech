@@ -129,20 +129,25 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   private async ensureIdentity(row: PanCafeRow): Promise<Member> {
     this.validate(row);
     const member = await this.db.transaction(async (tx) => {
-      const existing = (
-        await tx.query<{ user_id: string; member_id: string }>(
-          "SELECT user_id,member_id FROM cafe_member_links WHERE installation_id=$1 AND member_username=$2 FOR UPDATE",
-          [this.config.installationId, row.USERNAME],
+      const links = (
+        await tx.query<{ user_id: string; member_id: string; member_username: string }>(
+          "SELECT user_id,member_id,member_username FROM cafe_member_links WHERE installation_id=$1 AND (member_username=$2 OR member_id=$3) FOR UPDATE",
+          [this.config.installationId, row.USERNAME, row.ID],
         )
-      ).rows[0];
+      ).rows;
+      const namedLink = links.find(link => link.member_username === row.USERNAME);
+      if (!namedLink && links.length > 1) throw new ConflictException("PanCafe üye eşleştirmesi değişmiş.");
+      const existing = namedLink ?? links[0];
       if (existing) {
         if (String(existing.member_id) !== row.ID)
           throw new ConflictException(
             "PanCafe üyeliğin değişmiş. Hesap eşleştirmesi için destek al.",
           );
+        if (existing.member_username !== row.USERNAME)
+          await tx.query("UPDATE cafe_member_links SET member_username=$1 WHERE user_id=$2", [row.USERNAME, existing.user_id]);
         return this.member(row, existing.user_id);
       }
-      const externalId = `pancafe:${this.config.installationId}:${row.USERNAME}`;
+      const externalId = `pancafe:${this.config.installationId}:member:${row.ID}`;
       const userId = (
         await tx.query<{ id: string }>(
           "INSERT INTO app_users(id,cafe_member_id) VALUES($1,$2) ON CONFLICT(cafe_member_id) DO UPDATE SET cafe_member_id=EXCLUDED.cafe_member_id RETURNING id",
@@ -183,8 +188,8 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   }
   private async row(userId: string) {
     const link = (
-      await this.db.query<{ member_id: string; member_username: string }>(
-        "SELECT member_id,member_username FROM cafe_member_links WHERE user_id=$1 AND installation_id=$2",
+      await this.db.query<{ member_id: string }>(
+        "SELECT member_id FROM cafe_member_links WHERE user_id=$1 AND installation_id=$2",
         [userId, this.config.installationId],
       )
     ).rows[0];
@@ -193,12 +198,11 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
         "Bu hesabın PanCafe üyeliği doğrulanmamış. PanCafe kullanıcı adın ve şifrenle tekrar giriş yap.",
       );
     const rows = await this.client.request(
-      `/member?id=${encodeURIComponent(link.member_id)}&username=${encodeURIComponent(link.member_username)}`,
+      `/member?id=${encodeURIComponent(link.member_id)}`,
     );
     if (
       !rows ||
-      rows[0].ID !== String(link.member_id) ||
-      rows[0].USERNAME !== link.member_username
+      rows[0].ID !== String(link.member_id)
     )
       throw new ServiceUnavailableException(
         "PanCafe üye eşleştirmesi doğrulanamadı.",

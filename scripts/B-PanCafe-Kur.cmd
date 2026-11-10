@@ -80,6 +80,31 @@ function Stop-OwnedListener($Port, $ProcessId) {
     [void](Wait-Ready { !(Is-Listening $Port) } "Port $Port kapanmadı.")
 }
 
+function Update-PanCafeBridge($Source, $Bridge, $ReleaseId) {
+    $exe = Join-Path $Bridge 'PanCafeBridge.exe'
+    $marker = Join-Path $Bridge 'build-commit.txt'
+    if ((Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath $marker) -and [IO.File]::ReadAllText($marker) -eq $ReleaseId) { return }
+    $staging = Join-Path $Bridge 'build'
+    & powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "$Source\scripts\build-pancafe-bridge.ps1" -OutputDirectory $staging
+    if ($LASTEXITCODE) { throw 'PanCafe Bridge derlenemedi.' }
+    if ((Test-Path -LiteralPath $exe) -and (Get-Process -Name PanCafeBridge -ErrorAction SilentlyContinue)) {
+        $script = @"
+`$ErrorActionPreference = 'Stop'
+`$running = Get-Process -Name PanCafeBridge -ErrorAction SilentlyContinue | Where-Object { `$_.Path -eq $(Quote-PS $exe) }
+foreach (`$process in `$running) {
+    if (!`$process.CloseMainWindow() -or !`$process.WaitForExit(10000)) { exit 1 }
+}
+"@
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+        $closed = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-EncodedCommand', $encoded -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+        if ($closed.ExitCode) { throw 'Eski S TECH Bridge penceresini kapatıp kurucuyu tekrar aç.' }
+    }
+    $built = Join-Path $staging 'PanCafeBridge.exe'
+    if ([IO.File]::Exists($exe)) { [IO.File]::Replace($built, $exe, [NullString]::Value) }
+    else { [IO.File]::Move($built, $exe) }
+    [IO.File]::WriteAllText($marker, $ReleaseId)
+}
+
 function Start-PanCafeIfNeeded($Folder) {
     if (Get-Process -Name pncserver -ErrorAction SilentlyContinue) { return }
     if (Test-Path -LiteralPath "$Folder\pncserver.exe") {
@@ -114,9 +139,9 @@ function Make-KioskLauncher($Template, $Destination, $KioskConfig, $Certificate,
 }
 
 $repository = 'https://github.com/sengoerk12/stech'
-$version = 'kiosk-v0.1.1'
+$version = 'kiosk-v0.1.2'
 $kioskUrl = "$repository/releases/download/$version/kiosk.exe"
-$kioskSha256 = '82F0C5A6121E2EB7634A3FDFC5357CAF52E7163F6A590F221AF11D87A3B4BCB3'
+$kioskSha256 = '531BEF33DB09C461E71BF05D3ABEB26262A1FE42C4788FF4198D9873686AE4FF'
 $here = Split-Path -Parent $env:STECH_SETUP_SELF
 $work = "$env:LOCALAPPDATA\STech-Kiosk-Sunucu"
 $source = "$work\surumler\$version"
@@ -206,7 +231,7 @@ if (Test-Path -LiteralPath $bridgeConfig) {
     [void][IO.Directory]::CreateDirectory($bridge)
     $config = [pscustomobject]@{
         databasePath = "$pan\Data\USDB.DAT"; clientDirectory = "$pan\Core"; expectedMemberId = $memberId
-        expectedUsername = $username; installationId = $installation; displayName = 'S TECH'
+        expectedUsername = $username; verifyExpectedUsername = $true; installationId = $installation; displayName = 'S TECH'
         apiKey = (& $node "$source\kiosk\scripts\provision.cjs" device-key); port = $port
         allowRegistration = $false; allowBalanceCredit = $false; allowAdminAdjustments = $false
         allowFirebaseSync = $true; allowFirebaseBalanceWrite = $true; firebaseAddressColumn = 'ADDRESS'
@@ -215,10 +240,7 @@ if (Test-Path -LiteralPath $bridgeConfig) {
 }
 
 Start-PanCafeIfNeeded (Split-Path -Parent (Split-Path -Parent $config.databasePath))
-if (!(Test-Path -LiteralPath "$bridge\PanCafeBridge.exe")) {
-    & powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "$source\scripts\build-pancafe-bridge.ps1" -OutputDirectory $bridge
-    if ($LASTEXITCODE -ne 0) { throw 'PanCafe Bridge derlenemedi.' }
-}
+Update-PanCafeBridge $source $bridge $releaseId
 $localIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.AddressState -eq 'Preferred' -and $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
     Select-Object -ExpandProperty IPAddress)

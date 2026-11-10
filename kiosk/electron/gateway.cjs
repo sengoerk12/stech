@@ -21,17 +21,25 @@ class ApiGateway {
     }
     return response.json();
   }
+  async read(endpoint, token) {
+    try { return await this.request(endpoint, token); }
+    catch (error) {
+      if (error.status !== undefined && ![502, 503, 504].includes(error.status)) throw error;
+      await new Promise(resolve => setTimeout(resolve, 400));
+      return this.request(endpoint, token);
+    }
+  }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
   async dashboard(token) {
-    try { return await this.request('/kiosk/dashboard', token); }
+    try { return await this.read('/kiosk/dashboard', token); }
     catch (error) {
       if (error.status !== 404) throw error;
-      return this.request('/me/dashboard', token);
+      return this.read('/me/dashboard', token);
     }
   }
-  transactions(token, cursor) { return this.request('/me/transactions' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
-  sessions(token, cursor) { return this.request('/me/session-history' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
+  transactions(token, cursor) { return this.read('/me/transactions' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
+  sessions(token, cursor) { return this.read('/me/session-history' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
   logout(token) { return this.request('/auth/logout', token, {}); }
 }
 module.exports = { ApiGateway };

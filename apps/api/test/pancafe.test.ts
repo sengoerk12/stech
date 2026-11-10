@@ -90,11 +90,13 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
     if (nativeCredit) {
       historyUnavailable = true;
       bridge.rows[1].BALANCE_TL = "148.75";
+      bridge.rows[1].USERNAME = "kaan_renamed";
       assert.equal((await realFetch(base + "/api/v1/me/transactions", { headers })).status, 503);
       assert.equal((await realFetch(base + "/api/v1/kiosk/dashboard")).status, 401);
       const kiosk = await realFetch(base + "/api/v1/kiosk/dashboard", { headers });
       assert.equal(kiosk.status, 200);
-      const account = await kiosk.json() as { wallet: { balance: number }; features: { topup: boolean } };
+      const account = await kiosk.json() as { member: { username: string }; wallet: { balance: number }; features: { topup: boolean } };
+      assert.equal(account.member.username, "kaan_renamed");
       assert.equal(account.wallet.balance, 14875);
       assert.equal(account.features.topup, false);
     }
@@ -279,10 +281,10 @@ class TestBridge extends PanCafeBridgeClient {
         CREDIT_BALANCE_TL: member.BALANCE_TL });
       return [{ RESULT_CODE: "ok", BALANCE_TL: member.BALANCE_TL }];
     }
-    if (path === "/authenticate")
-      return body.password === "PanCafePassword!"
-        ? this.rows.filter((row) => row.USERNAME === body.identifier)
-        : null;
+    if (path === "/authenticate") {
+      const member = this.rows.find(row => row.USERNAME === body.identifier);
+      return member && body.password === "PanCafePassword!" ? [member] : null;
+    }
     if (path === "/register") {
       this.lastRegistration = body;
       const row = fixture("3", body.username);
@@ -302,7 +304,7 @@ class TestBridge extends PanCafeBridgeClient {
     return this.rows.filter(
       (row) =>
         row.ID === url.searchParams.get("id") &&
-        row.USERNAME === url.searchParams.get("username"),
+        (!url.searchParams.has("username") || row.USERNAME === url.searchParams.get("username")),
     );
   }
 }
@@ -320,6 +322,10 @@ test("PanCafe login uses PanCafe credentials and links only the same native user
     assert.equal((await adapter.getBalance(kaan.id)).balance, 20000);
     bridge.rows[1].BALANCE_TL = "82.50";
     assert.equal((await adapter.getBalance(kaan.id)).balance, 8250);
+    bridge.rows[1].USERNAME = "kaan_renamed";
+    assert.equal((await adapter.getKioskAccount(kaan.id)).member.username, "kaan_renamed");
+    assert.equal(await adapter.authenticate("kaan2", "PanCafePassword!"), null);
+    assert.equal((await adapter.authenticate("kaan_renamed", "PanCafePassword!"))?.id, kaan.id);
     const first = await adapter.authenticate("first", "PanCafePassword!");
     assert(first);
     assert.notEqual(first.id, kaan.id);
@@ -333,7 +339,7 @@ test("PanCafe login uses PanCafe credentials and links only the same native user
     );
     bridge.rows[1].ID = "99";
     await assert.rejects(() =>
-      adapter.authenticate("kaan2", "PanCafePassword!"),
+      adapter.authenticate("kaan_renamed", "PanCafePassword!"),
     );
     await assert.rejects(() => adapter.addBalance(kaan.id, 5000, 0, "00000000-0000-0000-0000-000000000001"));
   } finally {

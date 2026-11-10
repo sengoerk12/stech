@@ -63,6 +63,23 @@ test('activity cannot extend five minute hard limit', async t => {
   await kiosk.scan('DEMO0001'); const start = kiosk.session.started;
   kiosk.touch(start + 299000); kiosk.tick(start + 300001); assert.equal(kiosk.session, null);
 });
+test('idle confirmation renews the idle timer and distinguishes the hard deadline', async t => {
+  const kiosk = new KioskSession({ demo: await fixture(t), mode: 'demo', idleSeconds: 30 });
+  await kiosk.scan('DEMO0001');
+  kiosk.session.activity = Date.now() - 25000;
+  const warning = kiosk.countdown();
+  assert.equal(warning.canContinue, true);
+  assert.ok(warning.remaining <= 5);
+  const renewed = await kiosk.run('keepAlive');
+  assert.equal(renewed.remaining, 30);
+  assert.ok(renewed.revision > warning.revision);
+  kiosk.session.started = Date.now() - 290000;
+  const activity = kiosk.session.activity;
+  const expired = await kiosk.run('keepAlive');
+  assert.equal(expired.canContinue, false);
+  assert.ok(expired.remaining <= 10);
+  assert.equal(kiosk.session.activity, activity);
+});
 test('late response cannot reopen locked session', async () => {
   let finish; const demo = { dashboard: () => new Promise(resolve => finish = resolve) };
   const kiosk = new KioskSession({ demo, mode:'demo' }); const scan = kiosk.scan('DEMO0001');
@@ -86,6 +103,19 @@ test('gateway rejects insecure remote endpoints and missing keys', () => {
   assert.throws(() => new ApiGateway({ apiBaseUrl:'http://192.168.1.2:3001', deviceKey:'x'.repeat(48) }));
   assert.throws(() => new ApiGateway({ apiBaseUrl:'https://example.com', deviceKey:'' }));
   assert.doesNotThrow(() => new ApiGateway({ apiBaseUrl:'http://127.0.0.1:3001/api/v1', deviceKey:'x'.repeat(48) }));
+});
+test('gateway retries transient account reads once and preserves authentication failures', async () => {
+  const gateway = new ApiGateway({ apiBaseUrl: 'https://example.com', deviceKey: 'x'.repeat(48) });
+  let attempts = 0;
+  gateway.request = async () => {
+    if (++attempts === 1) throw Object.assign(new Error('offline'), { status: 503 });
+    return { wallet: { balance: 2500 } };
+  };
+  assert.equal((await gateway.dashboard('token')).wallet.balance, 2500);
+  assert.equal(attempts, 2);
+  gateway.request = async () => { attempts++; throw Object.assign(new Error('expired'), { status: 401 }); };
+  await assert.rejects(() => gateway.dashboard('token'), /expired/);
+  assert.equal(attempts, 3);
 });
 
 test('only the current card suffix is hidden; real surnames remain intact', async () => {

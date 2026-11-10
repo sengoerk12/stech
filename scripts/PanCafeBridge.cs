@@ -36,6 +36,10 @@ public static class PanCafeBridge
         if(!AllowedUser(username)) return new List<Dictionary<string,string>>();
         return Query("SELECT FIRST 2 "+projection+(withPassword?",PASSWORD":"")+" FROM MEMBERS WHERE LOWER(USERNAME)='"+username.ToLowerInvariant()+"'");
     }
+    static List<Dictionary<string,string>> MemberById(int id) {
+        return Query("SELECT FIRST 2 "+projection+" FROM MEMBERS WHERE ID="+id);
+    }
+    static void VerifyDatabase() { Query("SELECT FIRST 1 ID FROM MEMBERS"); }
     static void Reply(HttpListenerResponse response,int code,object data) {
         byte[] bytes=Encoding.UTF8.GetBytes(Serializer().Serialize(data));response.StatusCode=code;
         response.ContentType="application/json; charset=utf-8";response.Headers["Cache-Control"]="no-store";
@@ -63,8 +67,7 @@ public static class PanCafeBridge
                 Reply(response,200,new[]{new Dictionary<string,string>{{"ADMIN_ADJUSTMENTS",Enabled("allowAdminAdjustments")?"true":"false"},{"FIREBASE_BALANCE_WRITE",FirebaseBalanceWriteEnabled()?"true":"false"},{"MEMBER_LIST","true"}}});return;
             }
             if(request.HttpMethod=="GET" && route=="/health") {
-                var check=MemberByName(Setting("expectedUsername"),false);
-                if(check.Count!=1 || check[0]["ID"]!=Setting("expectedMemberId")) throw new InvalidOperationException("Configured member mismatch");
+                VerifyDatabase();
                 Reply(response,200,new {connected=true,installationId=Setting("installationId"),name=Setting("displayName"),memberRegistration=Convert.ToBoolean(config["allowRegistration"]),balanceCredit=config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"]),transactionHistory=true,sessionHistory=true});return;
             }
             if(request.HttpMethod=="GET" && route=="/admin/members") {
@@ -94,9 +97,9 @@ public static class PanCafeBridge
             }
             if(request.HttpMethod=="GET" && route=="/member") {
                 int id;string username=request.QueryString["username"];
-                if(!Int32.TryParse(request.QueryString["id"],out id)||id<1||!AllowedUser(username)) {Reply(response,400,new {error="invalid_member"});return;}
-                var rows=MemberByName(username,false);
-                if(rows.Count!=1 || rows[0]["ID"]!=id.ToString()) {Reply(response,404,new {error="member_not_found"});return;}
+                if(!Int32.TryParse(request.QueryString["id"],out id)||id<1||(username!=null&&!AllowedUser(username))) {Reply(response,400,new {error="invalid_member"});return;}
+                var rows=MemberById(id);
+                if(rows.Count!=1 || (username!=null&&!String.Equals(rows[0]["USERNAME"],username,StringComparison.OrdinalIgnoreCase))) {Reply(response,404,new {error="member_not_found"});return;}
                 Reply(response,200,rows);return;
             }
             if(request.HttpMethod=="GET" && route=="/transactions") {
@@ -152,9 +155,17 @@ public static class PanCafeBridge
             folder=Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
             config=Serializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(folder,"connection.json")));
             database=Setting("databasePath");clientDirectory=Setting("clientDirectory");apiKey=Setting("apiKey");
-            if(apiKey.Length<40 || !File.Exists(database) || !AllowedUser(Setting("expectedUsername"))) throw new InvalidOperationException("Invalid configuration");
-            var rows=MemberByName(Setting("expectedUsername"),false);
-            if(rows.Count!=1 || rows[0]["ID"]!=Setting("expectedMemberId")) throw new InvalidOperationException("Member number and username do not match");
+            if(apiKey.Length<40 || !File.Exists(database)) throw new InvalidOperationException("Invalid configuration");
+            VerifyDatabase();
+            if(Enabled("verifyExpectedUsername")) {
+                var rows=MemberByName(Setting("expectedUsername"),false);
+                if(rows.Count!=1 || rows[0]["ID"]!=Setting("expectedMemberId"))
+                    throw new InvalidOperationException("Member number and username do not match");
+                config.Remove("verifyExpectedUsername");
+                string pending=Path.Combine(folder,"connection.json.pending");
+                File.WriteAllText(pending,Serializer().Serialize(config),new UTF8Encoding(false));
+                File.Replace(pending,Path.Combine(folder,"connection.json"),null);
+            }
             int port=config.ContainsKey("port")?Convert.ToInt32(config["port"]):3002;
             if(port!=3002 && port!=3003 && port!=3004) throw new InvalidOperationException("Invalid loopback port");
             if(config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"])) PanCafeBalanceWriter.Initialize(database,clientDirectory);

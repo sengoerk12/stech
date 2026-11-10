@@ -80,7 +80,7 @@ async function boot() {
   });
   setInterval(() => {
     kiosk.tick();
-    if (kiosk.session) window?.webContents.send('kiosk:countdown', kiosk.remaining());
+    if (kiosk.session) window?.webContents.send('kiosk:countdown', kiosk.countdown());
   }, 1000).unref();
   await window.loadFile(uiFile);
   if (portraitPreview) window.webContents.setZoomFactor(previewScale);

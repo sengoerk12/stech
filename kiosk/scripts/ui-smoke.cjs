@@ -53,10 +53,11 @@ const assert = require('node:assert/strict');
     await page.getByRole('button', { name:'Ana ekran', exact:true }).click();
     assert.match(await page.locator('.balance-value').innerText(), /125,00/);
     // Exercise idle warning/expiry without waiting in real time.
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('kiosk:countdown', 10));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('kiosk:countdown', { remaining: 10, canContinue: true }));
     await page.getByRole('heading', { name:'Hâlâ burada mısın?' }).waitFor();
     await page.screenshot({ path:path.join(output,'08-idle.png') });
     await page.getByRole('button', { name:'Buradayım, devam et' }).click();
+    await page.getByRole('heading', { name:'Hâlâ burada mısın?' }).waitFor({ state: 'hidden' });
     await page.getByRole('button', { name:'Profilim', exact:true }).click();
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 768));
     await page.waitForTimeout(200);
@@ -85,6 +86,9 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('.member-mini').count(), 0);
     await page.getByRole('button', { name:'Kaan olarak dene' }).click();
     await page.getByRole('heading', { name:'Merhaba, Kaan.' }).waitFor();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('kiosk:countdown', { remaining: 10, canContinue: false }));
+    await page.getByRole('heading', { name:'Oturum süren doluyor' }).waitFor();
+    assert.equal(await page.getByRole('button', { name:'Buradayım, devam et' }).count(), 0);
     assert.deepEqual(errors, []);
     console.log('Electron UI verified: NFC keyboard login, topup, approval, decline, history, campaign, profile, account isolation, idle modal, 1024px layout, ATM continue/finish, fixed completion timeout and fresh customer entry.');
   } finally { await app.close(); await rm(dataDir, { recursive:true, force:true }); }
