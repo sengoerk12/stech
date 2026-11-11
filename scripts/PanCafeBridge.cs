@@ -15,8 +15,8 @@ public static class PanCafeBridge
     static string database,clientDirectory,apiKey,folder;
     static HttpListener listener;
     const string projection="ID,USERNAME,NAME,LASTNAME,GSM,PHONE,EMAIL,CAST(RECDATE AS VARCHAR(30)) AS JOINED_AT,CAST(BAKIYE AS DECIMAL(18,2)) AS BALANCE_TL,CAST(AVAILBONUS AS DECIMAL(18,2)) AS BONUS_TL,ACCTYPE,ACCSTATUS";
-    // PanCafe's ttComputer is 0 and tsReady is 1. Offline PCs remain in the total.
-    internal const string PcAvailabilitySql="SELECT COUNT(*) AS TOTAL,COUNT(CASE WHEN TERMINALSTATUS=1 THEN 1 END) AS AVAILABLE FROM TERMINALS WHERE TERMINALTYPE=0 AND ISVIRTUAL=0";
+    // Match the terminal view, including PCs marked virtual. tsReady is 1.
+    internal const string PcAvailabilitySql="SELECT COUNT(*) AS TOTAL,COUNT(CASE WHEN TERMINALSTATUS=1 THEN 1 END) AS AVAILABLE FROM TERMINALS WHERE TERMINALTYPE=0";
     static JavaScriptSerializer Serializer() {return new JavaScriptSerializer { MaxJsonLength=1048576 };}
     static string Setting(string key) {return Convert.ToString(config[key]);}
     static bool Enabled(string key) {return config.ContainsKey(key) && Convert.ToBoolean(config[key]);}
@@ -74,6 +74,20 @@ public static class PanCafeBridge
             }
             if(request.HttpMethod=="GET" && route=="/pc-availability") {
                 Reply(response,200,Query(PcAvailabilitySql));return;
+            }
+            if(request.HttpMethod=="GET" && route=="/computers") {
+                Reply(response,200,Query("SELECT ID,NAME,ISVIRTUAL,TERMINALSTATUS FROM TERMINALS WHERE TERMINALTYPE=0 ORDER BY ID"));return;
+            }
+            if(request.HttpMethod=="POST" && route=="/sessions/start") {
+                if(!Enabled("allowVirtualSessionStart")) {Reply(response,503,new {error="session_start_disabled"});return;}
+                var body=ReadBody(request);int terminalId,memberId;
+                if(!Int32.TryParse(Field(body,"terminalId"),out terminalId)||!Int32.TryParse(Field(body,"memberId"),out memberId)) {Reply(response,400,new {error="invalid_session"});return;}
+                Reply(response,200,PanCafeNativeSessions.Start(database,clientDirectory,folder,terminalId,memberId,Field(body,"username"),Field(body,"operationId")));return;
+            }
+            if(request.HttpMethod=="GET" && route=="/sessions/status") {
+                int terminalId,memberId;
+                if(!Int32.TryParse(request.QueryString["terminalId"],out terminalId)||!Int32.TryParse(request.QueryString["memberId"],out memberId)) {Reply(response,400,new {error="invalid_session"});return;}
+                Reply(response,200,PanCafeNativeSessions.Status(database,clientDirectory,folder,terminalId,memberId,request.QueryString["username"],request.QueryString["operationId"]));return;
             }
             if(request.HttpMethod=="GET" && route=="/admin/members") {
                 int after=0;string search=request.QueryString["search"]??"";

@@ -6,6 +6,62 @@ const { join } = require('node:path');
 const { DemoStore, normalizeCard, quote } = require('../electron/core.cjs');
 const { KioskSession } = require('../electron/session.cjs');
 const { ApiGateway } = require('../electron/gateway.cjs');
+test('computer start stays bound to the current authenticated session and retries the same pending operation', async () => {
+  let resolveStart;
+  const requests = [];
+  const gateway = {
+    login: async () => ({ accessToken: 'current-member-token' }),
+    dashboard: async () => ({ member: { name: 'Kaan', username: 'kaan' }, features: {} }), logout: async () => {},
+    startComputer: async (token, request) => { requests.push({ token, request }); return new Promise(resolve => { resolveStart = resolve; }); },
+    computerStatus: async () => ({ status: 'not_started' }),
+  };
+  const kiosk = new KioskSession({ gateway, mode: 'connected' });
+  const payload = { terminalId: '1', operationId: 'ebd09a10-41ed-4155-8cfe-3a311a9e475e', memberId: 'forged' };
+  await assert.rejects(() => kiosk.run('startComputer', payload));
+  await kiosk.scan('SENGOR');
+  const first = kiosk.run('startComputer', payload);
+  await assert.rejects(() => kiosk.run('startComputer', payload), /zaten sürüyor/);
+  resolveStart({ status: 'pending' }); await first;
+  assert.deepEqual(requests[0], { token: 'current-member-token', request: { terminalId: '1', operationId: payload.operationId } });
+  await assert.rejects(() => kiosk.run('startComputer', { ...payload, terminalId: '2' }), /devam eden/);
+  const retry = kiosk.run('startComputer', payload);
+  resolveStart({ status: 'started' }); await retry;
+  assert.equal(kiosk.session.unresolvedStart, undefined);
+  await assert.rejects(() => kiosk.run('computerStatus', { ...payload, operationId: 'bad' }));
+  assert.equal((await kiosk.run('computerStatus', payload)).status, 'not_started');
+  assert.equal(requests.length, 2, 'Status lookup must never submit a new native start');
+  const late = kiosk.run('startComputer', { ...payload, terminalId: '2' });
+  kiosk.lock(); resolveStart({ status: 'started' });
+  await assert.rejects(() => late, /Oturum kapandı/);
+});
+
+test('computer gateway sends both device and member credentials and no caller-supplied member ID', async () => {
+  const original = global.fetch;
+  const gateway = new ApiGateway({ apiBaseUrl: 'http://127.0.0.1:3001/api/v1', deviceKey: 'k'.repeat(48) });
+  try {
+    global.fetch = async (url, options) => {
+      assert.equal(url, 'http://127.0.0.1:3001/api/v1/kiosk/computers/1/start');
+      assert.equal(options.headers.Authorization, 'Bearer member-token');
+      assert.equal(options.headers['X-Kiosk-Key'], 'k'.repeat(48));
+      assert.deepEqual(JSON.parse(options.body), { operationId: 'operation' });
+      return Response.json({ status: 'started' });
+    };
+    await gateway.startComputer('member-token', { terminalId: '1', operationId: 'operation', memberId: 'forged' });
+  } finally { global.fetch = original; }
+});
+
+test('computer status is a GET and cannot create an unsubmitted operation', async () => {
+  const original = global.fetch;
+  const gateway = new ApiGateway({ apiBaseUrl: 'http://127.0.0.1:3001/api/v1', deviceKey: 'k'.repeat(48) });
+  try {
+    global.fetch = async (url, options) => {
+      assert.equal(url, 'http://127.0.0.1:3001/api/v1/kiosk/computers/1/start/operation');
+      assert.equal(options.method, 'GET'); assert.equal(options.body, undefined);
+      return Response.json({ status: 'not_started' });
+    };
+    assert.equal((await gateway.computerStatus('token', { terminalId: '1', operationId: 'operation' })).status, 'not_started');
+  } finally { global.fetch = original; }
+});
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'stech-kiosk-test-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const demo = new DemoStore(join(dir, 'wallet.json')); await demo.initialize(); return demo;

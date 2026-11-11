@@ -43,7 +43,7 @@ const assert = require('node:assert/strict');
       bonusPercent: 15, minimumAmount: 40000, maxBonus: 20000, accent: 'blue', startsAt: '2020-01-01', endsAt: '2099-01-01' }];
     await page.getByRole('heading', { name: 'Senkron kampanya', exact: true }).waitFor({ timeout: 15000 });
     assert.equal(await page.locator('.campaign-blue').count(), 1);
-    await page.getByRole('button', { name: /Kampanyayı incele/ }).click();
+    await page.getByRole('button', { name: /Kampanyayı incele/ }).first().click();
     await page.getByText('Koşullar aynen aktarılır.').waitFor();
     assert.match(await page.getByRole('dialog').innerText(), /400,00/);
     campaigns = [{ ...campaigns[0], title: 'Düzenlenen kampanya', bonusPercent: 20 }];
@@ -54,15 +54,28 @@ const assert = require('node:assert/strict');
     await page.getByRole('button', { name: /Düzenlenen kampanya uygula/ }).click();
     await page.waitForFunction(() => document.querySelector('.summary-row .positive')?.textContent.includes('100,00'));
     assert.equal(await page.getByRole('button', { name: /POS ile ödemeye geç/ }).isDisabled(), true);
+    campaigns.push(...Array.from({ length: 7 }, (_, index) => ({ ...campaigns[0], id: 'extra-' + index, title: 'Ek kupon ' + (index + 1) })));
+    await page.waitForFunction(() => document.querySelectorAll('.coupon-list .bonus-coupon').length === 8);
+    const layout = await page.evaluate(() => { const content = document.querySelector('.content'); const coupons = document.querySelector('.coupon-list'); return { fits: content.scrollHeight <= content.clientHeight + 1, horizontal: coupons.scrollWidth > coupons.clientWidth }; });
+    assert.equal(layout.fits, true, 'Topup controls must fit without vertical scrolling');
+    assert.equal(layout.horizontal, true, 'Extra coupons must scroll horizontally');
     await page.screenshot({ path: path.join(__dirname, '../dist/coupon-preview.png'), fullPage: true });
     await page.getByRole('button', { name: '100 TL', exact: true }).click();
     await page.locator('.quote-error').waitFor();
     await page.getByRole('button', { name: 'Kampanyalar', exact: true }).click();
-    await page.getByRole('button', { name: /Kampanyayı incele/ }).click();
+    await page.getByRole('button', { name: /Kampanyayı incele/ }).first().click();
     campaigns = [];
     await page.getByRole('dialog').waitFor({ state: 'hidden', timeout: 15000 });
     await page.getByRole('heading', { name: 'Şu an aktif kampanya yok.' }).waitFor({ timeout: 15000 });
     assert.deepEqual(errors, []);
+    await app.evaluate(({ app, BrowserWindow }) => {
+      globalThis.closeErrors = [];
+      process.on('uncaughtException', error => globalThis.closeErrors.push(error.message));
+      app.removeAllListeners('window-all-closed');
+      BrowserWindow.getAllWindows().forEach(window => window.destroy());
+    });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.deepEqual(await app.evaluate(() => globalThis.closeErrors), [], 'Closing a window must stop session timers');
     console.log('PASS: connected kiosk receives, renders, updates and removes campaigns without refresh.');
   } finally {
     if (app) { await app.evaluate(({ app }) => app.exit(0)).catch(() => {}); }

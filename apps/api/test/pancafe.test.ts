@@ -22,7 +22,7 @@ for (const nativeCredit of [false, true]) {
 test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated"} destination`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "stech-simulation-http-"));
   const configPath = join(directory, "connection.json");
-  await writeFile(configPath, JSON.stringify({ ...config, allowBalanceCredit: nativeCredit }));
+  await writeFile(configPath, JSON.stringify({ ...config, allowBalanceCredit: nativeCredit, allowVirtualSessionStart: true }));
   const bridge = new TestBridge();
   let historyUnavailable = false;
   let pcAvailability = { TOTAL: "12", AVAILABLE: "10" };
@@ -69,6 +69,26 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
     assert.equal(login.status, 201);
     const tokens = await login.json() as { accessToken: string };
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${tokens.accessToken}` };
+    if (nativeCredit) {
+      const url = base + '/api/v1/kiosk/computers/1/start';
+      const body = { operationId: 'ebd09a10-41ed-4155-8cfe-3a311a9e475e' };
+      const start = (extra = {}) => realFetch(url, { method: 'POST', headers: { ...headers, ...extra }, body: JSON.stringify(body) });
+      assert.equal((await start()).status, 401);
+      assert.equal((await start({ 'X-Kiosk-Key': 'wrong' })).status, 401);
+      const kioskHeaders = { ...headers, 'X-Kiosk-Key': kioskKey };
+      assert.equal((await realFetch(url, { method: 'POST', headers: kioskHeaders, body: JSON.stringify({ ...body, memberId: 1 }) })).status, 400);
+      assert.equal((await realFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kiosk-Key': kioskKey }, body: JSON.stringify(body) })).status, 401);
+      assert.equal((await (await start({ 'X-Kiosk-Key': kioskKey })).json() as any).status, 'started');
+      assert.equal((await (await start({ 'X-Kiosk-Key': kioskKey })).json() as any).status, 'started');
+      assert.equal(bridge.sessionStarts.size, 1);
+      assert.deepEqual(bridge.sessionStarts.get(body.operationId), { ...body, terminalId: 1, memberId: 2, username: 'kaan2' });
+      const statusUrl = url + '/' + body.operationId;
+      assert.equal((await realFetch(statusUrl, { headers })).status, 401);
+      assert.equal((await (await realFetch(statusUrl, { headers: kioskHeaders })).json() as any).status, 'started');
+      const unknown = url + '/97ce3f26-26da-4184-95c2-b6be2ef0febd';
+      assert.equal((await (await realFetch(unknown, { headers: kioskHeaders })).json() as any).status, 'not_started');
+      assert.equal(bridge.sessionStarts.size, 1, 'Status requests must not call start');
+    }
     const dashboard = () => realFetch(base + "/api/v1/me/dashboard", { headers }).then(r => r.json()) as Promise<any>;
     const before = await dashboard();
     assert.equal(before.features.topup, true);
@@ -262,6 +282,7 @@ function fixture(id: string, username: string): PanCafeRow {
   };
 }
 class TestBridge extends PanCafeBridgeClient {
+  sessionStarts = new Map<string, unknown>();
   historyRows: PanCafeRow[] = [];
   sessionRows: PanCafeRow[] = [];
   credits = new Map<string, { memberId: number; username: string; amount: number; bonus: number; balance: string }>();
@@ -271,6 +292,17 @@ class TestBridge extends PanCafeBridgeClient {
     super(config);
   }
   override async request(path: string, body?: any) {
+    if (path.startsWith('/sessions/status?')) {
+      const url = new URL(path, 'http://local');
+      const previous = this.sessionStarts.get(url.searchParams.get('operationId')!);
+      return [{ RESULT_CODE: previous ? 'started' : 'not_started', MESSAGE: 'Durum sorgusu' }];
+    }
+    if (path === '/sessions/start') {
+      const previous = this.sessionStarts.get(body.operationId);
+      if (previous) assert.deepEqual(body, previous);
+      this.sessionStarts.set(body.operationId, body);
+      return [{ RESULT_CODE: 'started', MESSAGE: 'Test' }];
+    }
     if (path === "/card-member") {
       const matches = this.rows.filter(row => row.LASTNAME?.trim().toUpperCase() === body.cardUid);
       return matches.length === 1 && matches[0].ACCSTATUS === "1" ? matches : null;
@@ -436,5 +468,67 @@ test('PanCafe kiosk resolves LASTNAME card IDs, rejects duplicate/inactive cards
     bridge.rows[0].LASTNAME = ''; bridge.rows[1].ACCSTATUS = '0'; assert.equal(await cafe.authenticateCard('00123456'), null);
     assert.equal((await db.query('SELECT * FROM demo_members')).rows.length, 0);
     assert.equal((await db.query('SELECT * FROM demo_wallets')).rows.length, 0);
+  } finally { await db.close(); }
+});
+test('legacy local bridge accepts kiosk member reads through verified username fallback', async () => {
+  const db = await openDatabase();
+  const paths: string[] = [];
+  const row = fixture('1', 'first');
+  const bridge = new PanCafeBridgeClient(config, undefined, async input => {
+    const url = new URL(String(input));
+    paths.push(url.pathname + url.search);
+    if (url.pathname === '/member' && !url.searchParams.has('username'))
+      return Response.json({ error: 'invalid_member' }, { status: 400 });
+    return Response.json([row]);
+  });
+  try {
+    const cafe = new PanCafeSystemAdapter(db, bridge, config);
+    const member = await cafe.authenticate('first', 'test');
+    assert(member);
+    assert.equal((await cafe.getUser(member.id)).username, 'first');
+    assert(paths.includes('/member?id=1&username=first'));
+  } finally { await db.close(); }
+});
+test('native computer start records one audit event and rejects unlinked identities and invalid requests', async () => {
+  const db = await openDatabase();
+  try {
+    const bridge = new TestBridge();
+    const cafe = new PanCafeSystemAdapter(db, bridge, { ...config, allowVirtualSessionStart: true });
+    const member = await cafe.authenticate('first', 'PanCafePassword!'); assert(member);
+    const operationId = 'b2d602b6-05a3-4c39-8b35-70c87a095d0f';
+    assert.equal((await cafe.startComputer(member.id, '1', operationId)).status, 'started');
+    await cafe.startComputer(member.id, '1', operationId);
+    const audit = await db.query("SELECT resource_id,metadata FROM audit_logs WHERE event='kiosk.session.started'");
+    assert.equal(audit.rows.length, 1);
+    assert.equal(audit.rows[0].resource_id, member.id);
+    assert.deepEqual(audit.rows[0].metadata, { installationId: config.installationId, terminalId: '1', memberId: '1' });
+    await assert.rejects(() => cafe.startComputer('unlinked-user', '1', operationId));
+    await assert.rejects(() => cafe.startComputer(member.id, '1 OR 1=1', operationId));
+    await assert.rejects(() => cafe.startComputer(member.id, '1', 'not-a-uuid'));
+    const disabled = new PanCafeSystemAdapter(db, bridge, config);
+    await assert.rejects(() => disabled.startComputer(member.id, '1', operationId));
+    assert.equal(bridge.sessionStarts.size, 1);
+  } finally { await db.close(); }
+});
+
+test('computer list distinguishes ready, occupied and unavailable terminals', async () => {
+  const db = await openDatabase();
+  class ComputerBridge extends TestBridge {
+    override async request(path: string, body?: unknown) {
+      if (path === '/computers') return [
+        { ID: '1', NAME: 'PC-1', TERMINALSTATUS: '1' },
+        { ID: '2', NAME: 'PC-2', TERMINALSTATUS: '3' },
+        { ID: '3', NAME: 'PC-3', TERMINALSTATUS: '0' },
+        { ID: '4', NAME: 'PC-4', TERMINALSTATUS: '5' },
+      ];
+      return super.request(path, body);
+    }
+  }
+  try {
+    const cafe = new PanCafeSystemAdapter(db, new ComputerBridge(), config);
+    const member = await cafe.authenticate('first', 'PanCafePassword!');
+    assert(member);
+    const result = await cafe.getComputers(member.id);
+    assert.deepEqual(result.computers.map(pc => pc.status), ['available', 'occupied', 'unavailable', 'occupied']);
   } finally { await db.close(); }
 });

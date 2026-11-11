@@ -30,7 +30,10 @@ async function boot() {
   if (config.mode === 'demo') await demo.initialize();
   kiosk = new KioskSession({ demo, gateway: config.mode === 'connected' ? new ApiGateway(config) : null,
     mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)), completionSeconds: config.completionSeconds,
-    onLock: () => window?.webContents.send('kiosk:locked') });
+    onLock: () => {
+      if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
+        window.webContents.send('kiosk:locked');
+    } });
   const uiFile = path.join(__dirname, '../ui/index.html');
   const workArea = screen.getPrimaryDisplay().workAreaSize;
   const previewScale = Math.min(1, (workArea.height - 80) / 1920, (workArea.width - 80) / 1080);
@@ -58,7 +61,7 @@ async function boot() {
   });
   const expectedUrl = pathToFileURL(uiFile).href;
   ipcMain.handle('kiosk:call', async (event, action, payload) => {
-    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== expectedUrl)
+    if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== expectedUrl)
       return { ok: false, error: 'İzin verilmeyen istek.' };
     try {
       if (typeof action !== 'string' || JSON.stringify(payload ?? {}).length > 2048) throw new Error('Geçersiz istek.');
@@ -78,10 +81,16 @@ async function boot() {
       return { ok: true, data: await kiosk.run(action, payload) };
     } catch (error) { return { ok: false, error: error.message || 'İşlem tamamlanamadı.' }; }
   });
-  setInterval(() => {
+  const countdownTimer = setInterval(() => {
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
     kiosk.tick();
-    if (kiosk.session) window?.webContents.send('kiosk:countdown', kiosk.countdown());
+    if (kiosk.session) window.webContents.send('kiosk:countdown', kiosk.countdown());
   }, 1000).unref();
+  window.on('closed', () => {
+    clearInterval(countdownTimer);
+    window = null;
+    kiosk.lock();
+  });
   await window.loadFile(uiFile);
   if (portraitPreview) window.webContents.setZoomFactor(previewScale);
   window.show();

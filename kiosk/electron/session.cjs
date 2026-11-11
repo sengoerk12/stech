@@ -93,6 +93,26 @@ class KioskSession {
       throw new Error('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.');
     let result;
     if (action === 'dashboard') result = this.publicDashboard(this.mode === 'demo' ? await this.demo.dashboard(session.card) : await this.gateway.dashboard(session.token));
+    else if (action === 'computers') {
+      if (this.mode !== 'connected') throw new Error('Bilgisayar listesi için PanCafe bağlantısı gerekli.');
+      result = await this.gateway.computers(session.token);
+    }
+    else if (action === 'startComputer' || action === 'computerStatus') {
+      if (this.mode !== 'connected') throw new Error('Oturum açmak için PanCafe bağlantısı gerekli.');
+      if (typeof payload.terminalId !== 'string' || !/^[1-9]\d{0,9}$/.test(payload.terminalId) ||
+          typeof payload.operationId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(payload.operationId))
+        throw new Error('Bilgisayar seçimini kontrol et.');
+      if (session.startInFlight) throw new Error('Oturum açma işlemi zaten sürüyor.');
+      if (session.unresolvedStart && (session.unresolvedStart.operationId !== payload.operationId || session.unresolvedStart.terminalId !== payload.terminalId))
+        throw new Error('Önce devam eden oturum açma işlemini kontrol et.');
+      session.startInFlight = true;
+      session.unresolvedStart = { terminalId: payload.terminalId, operationId: payload.operationId };
+      this.touch();
+      try {
+        result = await this.gateway[action](session.token, session.unresolvedStart);
+        if (result.status !== 'pending') delete session.unresolvedStart;
+      } finally { session.startInFlight = false; }
+    }
     else if (action === 'transactions') result = this.mode === 'demo' ? await this.demo.transactions(session.card, payload.cursor) : await this.gateway.transactions(session.token, payload.cursor);
     else if (action === 'sessions') result = this.mode === 'demo' ? { items: [] } : await this.gateway.sessions(session.token, payload.cursor);
     else if (action === 'quote') result = this.mode === 'demo'

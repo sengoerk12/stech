@@ -18,6 +18,7 @@ export interface PanCafeBridgeConfig {
   allowBalanceCredit?: boolean;
   allowFirebaseSync?: boolean;
   allowFirebaseBalanceWrite?: boolean;
+  allowVirtualSessionStart?: boolean;
 }
 export class PanCafeBridgeClient {
   constructor(
@@ -42,7 +43,7 @@ export class PanCafeBridgeClient {
           "Content-Type": "application/json",
         },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(path === '/sessions/start' ? 40000 : 10000),
       });
     } catch {
       throw new ServiceUnavailableException(
@@ -63,7 +64,7 @@ export class PanCafeBridgeClient {
         "PanCafe işlemi tamamlanamadı. Bağlantını kontrol edip tekrar dene.",
       );
     const result: unknown = await response.json();
-    const pageSize = path.startsWith("/firebase/members?") ? 100
+      const pageSize = path === "/computers" ? 5000 : path.startsWith("/firebase/members?") ? 100
       : path.startsWith("/transactions?") || path.startsWith("/session-history?") || path.startsWith("/admin/members?") ? 101 : 0;
     if (
       !Array.isArray(result) ||
@@ -188,8 +189,8 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   }
   private async row(userId: string) {
     const link = (
-      await this.db.query<{ member_id: string }>(
-        "SELECT member_id FROM cafe_member_links WHERE user_id=$1 AND installation_id=$2",
+      await this.db.query<{ member_id: string; member_username: string }>(
+        "SELECT member_id,member_username FROM cafe_member_links WHERE user_id=$1 AND installation_id=$2",
         [userId, this.config.installationId],
       )
     ).rows[0];
@@ -197,9 +198,16 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
       throw new ServiceUnavailableException(
         "Bu hesabın PanCafe üyeliği doğrulanmamış. PanCafe kullanıcı adın ve şifrenle tekrar giriş yap.",
       );
-    const rows = await this.client.request(
-      `/member?id=${encodeURIComponent(link.member_id)}`,
-    );
+    let rows: PanCafeRow[] | null;
+    try {
+      rows = await this.client.request(`/member?id=${encodeURIComponent(link.member_id)}`);
+    } catch (error) {
+      // Older installed bridges also require the last verified username.
+      if (!(error instanceof BadRequestException) || !link.member_username) throw error;
+      rows = await this.client.request(
+        `/member?id=${encodeURIComponent(link.member_id)}&username=${encodeURIComponent(link.member_username)}`,
+      );
+    }
     if (
       !rows ||
       rows[0].ID !== String(link.member_id)
@@ -240,6 +248,44 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
     if (!/^\d+$/.test(total) || !/^\d+$/.test(available) || !Number.isSafeInteger(Number(total)) || Number(available) > Number(total))
       throw new ServiceUnavailableException("Bilgisayar durumu doğrulanamadı.");
     return { total: Number(total), available: Number(available) };
+  }
+  async getComputers(userId: string) {
+    await this.row(userId);
+    const rows = await this.client.request("/computers");
+    if (!rows) throw new ServiceUnavailableException("Bilgisayar listesi alınamıyor.");
+    return { startSupported: this.config.allowVirtualSessionStart === true, computers: rows.map(row => {
+      if (!/^[1-9]\d*$/.test(row.ID ?? '') || !row.NAME || !/^\d+$/.test(row.TERMINALSTATUS ?? ''))
+        throw new ServiceUnavailableException("Bilgisayar bilgileri doğrulanamadı.");
+      return {
+        id: row.ID!,
+        name: row.NAME!,
+        virtual: row.ISVIRTUAL === '1',
+        available: row.TERMINALSTATUS === '1',
+        status: row.TERMINALSTATUS === '1' ? 'available' : ['3', '5'].includes(row.TERMINALSTATUS!) ? 'occupied' : 'unavailable',
+      };
+    }) };
+  }
+  async startComputer(userId: string, terminalId: string, operationId: string, checkOnly = false) {
+    if (!checkOnly && !this.config.allowVirtualSessionStart)
+      throw new ServiceUnavailableException('Kiosktan oturum başlatma bu şubede etkin değil.');
+    if (!/^[1-9]\d{0,9}$/.test(terminalId) || Number(terminalId) > 2147483647 ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(operationId))
+      throw new BadRequestException('Bilgisayar seçimini kontrol et.');
+    const member = await this.row(userId);
+    const rows = checkOnly
+      ? await this.client.request(`/sessions/status?terminalId=${terminalId}&memberId=${member.ID}&username=${encodeURIComponent(member.USERNAME!)}&operationId=${operationId}`)
+      : await this.client.request('/sessions/start', {
+          terminalId: Number(terminalId), memberId: Number(member.ID), username: member.USERNAME, operationId,
+        });
+    const result = rows?.[0];
+    if (!result || !['started', 'pending', 'failed', 'busy', 'occupied', 'unsupported', 'member', 'active', 'ambiguous', 'conflict', 'review', 'not_started'].includes(result.RESULT_CODE ?? ''))
+      throw new ServiceUnavailableException('PanCafe oturum sonucu doğrulanamadı. Aynı işlemi tekrar kontrol et.');
+    if (result.RESULT_CODE === 'started') {
+      await this.db.query(`INSERT INTO audit_logs(id,event,resource_id,metadata) VALUES($1,'kiosk.session.started',$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
+        [operationId, userId, JSON.stringify({ installationId: this.config.installationId, terminalId, memberId: member.ID })]);
+    }
+    return { status: result.RESULT_CODE, terminalId, operationId,
+      message: result.RESULT_CODE === 'started' ? 'PanCafe’de üye oturumun başladı.' : result.MESSAGE || 'Şube yetkilisinden yardım iste.' };
   }
   private wallet(row: PanCafeRow): Wallet {
     return {

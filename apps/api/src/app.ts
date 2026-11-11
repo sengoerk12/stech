@@ -70,6 +70,9 @@ class LoginDto {
 class KioskCardDto {
   @IsString() @MinLength(4) @MaxLength(64) cardUid!: string;
 }
+class ComputerStartDto {
+  @IsUUID('4') operationId!: string;
+}
 class RegistrationDto {
   @IsString() @Matches(/^[a-zA-Z0-9_.]{3,32}$/) username!: string;
   @IsString() @MinLength(2) @MaxLength(80) @Matches(/\S.*\S/u) name!: string;
@@ -245,6 +248,30 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         throw new ServiceUnavailableException("Bilgisayar durumu alınamıyor.");
       kioskAuth.verifyDevice(key);
       return cafe.getPcAvailability();
+    }
+    @Get("kiosk/computers") async computers(@Req() req: Request) {
+      const id = await user(req);
+      if (!(cafe instanceof PanCafeSystemAdapter))
+        throw new ServiceUnavailableException("Bilgisayar listesi için PanCafe bağlantısı gerekli.");
+      return cafe.getComputers(id);
+    }
+    @Post('kiosk/computers/:id/start') async startComputer(@Req() req: Request,
+      @Headers('x-kiosk-key') key: string | undefined, @Param('id') terminalId: string, @Body() body: unknown) {
+      if (!kioskAuth || !(cafe instanceof PanCafeSystemAdapter))
+        throw new ServiceUnavailableException('Kiosk PanCafe bağlantısı yapılandırılmadı.');
+      kioskAuth.verifyDevice(key);
+      const userId = await user(req);
+      const dto = parse(ComputerStartDto, body);
+      return cafe.startComputer(userId, terminalId, dto.operationId);
+    }
+    @Get('kiosk/computers/:id/start/:operationId')
+    @Header('Cache-Control', 'no-store')
+    async computerStartStatus(@Req() req: Request, @Headers('x-kiosk-key') key: string | undefined,
+      @Param('id') terminalId: string, @Param('operationId') operationId: string) {
+      if (!kioskAuth || !(cafe instanceof PanCafeSystemAdapter))
+        throw new ServiceUnavailableException('Kiosk PanCafe bağlantısı yapılandırılmadı.');
+      kioskAuth.verifyDevice(key);
+      return cafe.startComputer(await user(req), terminalId, operationId, true);
     }
     @Get("health") health() {
       return {

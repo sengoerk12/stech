@@ -11,8 +11,8 @@ class ApiGateway {
     try {
       response = await fetch(this.config.apiBaseUrl.replace(/\/$/, '') + endpoint, {
         method: body ? 'POST' : 'GET',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : { 'X-Kiosk-Key': this.config.deviceKey }) },
-        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(12000), redirect: 'error',
+        headers: { 'Content-Type': 'application/json', 'X-Kiosk-Key': this.config.deviceKey, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 45000 : 12000), redirect: 'error',
       });
     } catch { throw new Error('Sunucuya ulaşılamıyor. Lütfen yetkiliden yardım iste.'); }
     if (!response.ok) {
@@ -33,6 +33,13 @@ class ApiGateway {
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
   pcAvailability() { return this.read('/kiosk/pc-availability', null); }
+  computers(token) { return this.read('/kiosk/computers', token); }
+  startComputer(token, payload) {
+    return this.request(`/kiosk/computers/${encodeURIComponent(payload.terminalId)}/start`, token, { operationId: payload.operationId });
+  }
+  computerStatus(token, payload) {
+    return this.read(`/kiosk/computers/${encodeURIComponent(payload.terminalId)}/start/${encodeURIComponent(payload.operationId)}`, token);
+  }
   async dashboard(token) {
     try { return await this.read('/kiosk/dashboard', token); }
     catch (error) {

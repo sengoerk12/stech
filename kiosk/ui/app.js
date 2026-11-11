@@ -54,7 +54,7 @@ async function call(action, payload) {
   return result.data;
 }
 function reset() {
-  state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
+  computerData = undefined; computersError = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
   $('#toast').hidden = true; render(); renderModal();
   void refreshPcAvailability();
 }
@@ -65,12 +65,12 @@ function welcome() {
     ${state.info?.mode === 'demo' ? `<div class="demo-entry"><span>Keşfetmek için bir deneme hesabı seç</span>${button('Kaan olarak dene ' + icon('arrow'), 'demo1', 'primary', state.loading)}${button('Deniz olarak dene', 'demo2', 'quiet', state.loading)}</div>` : `<div class="password-entry"><span>Kartın yanında değil mi?</span>${button(icon('profile') + ' Kullanıcı adıyla giriş', 'open-password-login', 'secondary wide', state.loading)}</div><div class="secure-note">${icon('shield')} Oturumun işlem sonunda güvenle kapanır.</div>`}</section></main>
     <footer><span>${e(state.info?.station || 'S TECH')} <span class="footer-separator">/</span> MÜŞTERİ NOKTASI</span><span>İyi oyunlar. <span class="orange">İyi ki buradasın.</span></span></footer></div>`;
 }
-const nav = [{ id: 'home', label: 'Ana ekran', icon: 'home' }, { id: 'topup', label: 'Bakiye yükle', icon: 'topup' }, { id: 'campaigns', label: 'Kampanyalar', icon: 'campaigns' }, { id: 'history', label: 'İşlem geçmişi', icon: 'history' }, { id: 'profile', label: 'Profilim', icon: 'profile' }];
+const nav = [{ id: 'computers', label: 'Bilgisayarlar', icon: 'monitor' }, { id: 'home', label: 'Ana ekran', icon: 'home' }, { id: 'topup', label: 'Bakiye yükle', icon: 'topup' }, { id: 'campaigns', label: 'Kampanyalar', icon: 'campaigns' }, { id: 'history', label: 'İşlem geçmişi', icon: 'history' }, { id: 'profile', label: 'Profilim', icon: 'profile' }];
 function render() {
   if (!state.data) { root.innerHTML = welcome(); return; }
   const member = state.data.member;
-  const title = { home: 'Ana ekran', topup: 'Bakiye yükle', campaigns: 'Kampanyalar', history: 'İşlem geçmişi', profile: 'Profilim' }[state.page];
-  root.innerHTML = `<div class="shell"><aside>${logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${n.label}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${title}</span><div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : profile()}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Oturum <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
+  const title = { home: 'Ana ekran', topup: 'Bakiye yükle', campaigns: 'Kampanyalar', history: 'İşlem geçmişi', profile: 'Profilim', computers: 'Bilgisayarlar' }[state.page];
+  root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${n.label}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${title}</span><div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : profile()}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Oturum <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
 }
 function rows(items) {
   if (!items.length) return '<div class="empty">' + icon('history') + '<h3>Henüz işlem yok</h3><p>Hesap hareketlerin burada görünecek.</p></div>';
@@ -205,7 +205,9 @@ function renderModal() {
   else if (state.modal === 'expiry') content = `<div class="modal-symbol">${icon('history')}</div><h2>Oturum süren doluyor</h2><p>Oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak. Devam etmek için yeniden giriş yapabilirsin.</p>${button('Oturumu bitir', 'confirm-logout', 'primary wide')}`;
   else if (state.modal === 'logout') content = `<div class="modal-symbol">${icon('logout')}</div><h2>İşlemlerin tamam mı?</h2><p>Oturumun kapanacak ve ekran yeni müşteri için hazırlanacak.</p>${button('Evet, oturumu bitir', 'confirm-logout', 'primary wide')}${button('Hesabıma dön', 'close-modal', 'secondary wide')}`;
   else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
-  else {
+  else if (state.modal === 'computer-start' && selectedComputer) {
+    content = `<div class="modal-symbol">${icon('monitor')}</div><h2>${e(selectedComputer.name)} açılsın mı?</h2><p>Oturum ${e(state.data.member.username)} üyeliğinle başlayacak. PanCafe’deki üye tarifesi ve varsa açılış ücreti uygulanır.</p>${button('Oturumu başlat', 'computer-confirm', 'primary wide')}${button('Vazgeç', 'close-modal', 'secondary wide')}`;
+  } else {
     const p = state.data?.promotions.find(p => p.id === state.modal);
     if (!p) { state.modal = null; host.innerHTML = ''; return; }
     content = `<span class="eyebrow">KAMPANYA DETAYI</span><h2>${e(p.title)}</h2><p>${e(p.description)}</p><div class="campaign-terms"><strong>Kampanya koşulları</strong><p>${e(p.terms)}</p><p>Minimum yükleme: <strong>${cash(p.minimumAmount)}</strong><br>Bonus: <strong>%${e(p.bonusPercent)}</strong><br>En fazla bonus: <strong>${cash(p.maxBonus)}</strong></p><span>${date(p.startsAt)} – ${date(p.endsAt)}</span></div>${button('Bakiye yükle ' + icon('arrow'), 'modal-topup', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
@@ -347,6 +349,7 @@ async function go(page) {
   if (state.processing) return;
   if (state.payment?.status === 'completed') { toast('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.'); return; }
   if (state.payment?.status === 'pending') { toast('Önce ödeme ekranındaki işlemi tamamla veya tutara geri dön.'); return; }
+  if (page === 'computers') void loadComputers();
   state.page = page; state.payment = null; state.modal = null; renderModal(); render();
   if (state.info.mode === 'connected' && (page === 'home' || page === 'profile')) {
     void refreshLiveAccount();
@@ -400,6 +403,14 @@ async function action(value) {
     if (wasLogin) $('[data-action="open-password-login"]')?.focus();
     return;
   }
+  if (name === 'computer-select') {
+    if (computerStart || !computerData?.startSupported) return;
+    const pc = computerData.computers.find(pc => pc.id === arg && pc.available && pc.virtual);
+    if (!pc) return;
+    selectedComputer = pc; state.modal = 'computer-start'; renderModal(); return;
+  }
+  if (name === 'computer-confirm') return startSelectedComputer();
+  if (name === 'computer-check') return startSelectedComputer(true);
   if (name === 'campaign') { state.modal = arg; renderModal(); return; }
   if (name === 'modal-topup') { state.promotionId = state.modal; return go('topup'); }
   if (name === 'select-promotion') { state.promotionId = arg === 'auto' ? undefined : arg; return updateQuote(); }
@@ -510,3 +521,81 @@ setInterval(() => { if (state.info?.mode === 'connected' && state.data && !state
 setInterval(() => { if (state.info?.mode === 'demo' && state.data && state.page === 'home' && !state.processing && !state.modal) void refresh().catch(() => {}); }, 15000);
 setInterval(refreshPcAvailability, 5000);
 call('info').then(info => { state.info = info; render(); void refreshPcAvailability(); }).catch(error => { root.innerHTML = '<div class="boot-error"><h1>S TECH</h1><p>' + e(error.message) + '</p></div>'; });
+// Native touch scrolling and mouse dragging share the same coupon strip.
+let couponDrag;
+document.addEventListener('pointerdown', event => {
+  couponDrag = undefined;
+  const strip = event.target.closest('.coupon-list');
+  if (!strip || event.pointerType !== 'mouse' || event.button !== 0) return;
+  couponDrag = { strip, x: event.clientX, left: strip.scrollLeft, moved: false };
+});
+document.addEventListener('pointermove', event => {
+  if (!couponDrag || event.buttons !== 1) return;
+  const distance = event.clientX - couponDrag.x;
+  if (Math.abs(distance) > 6) couponDrag.moved = true;
+  if (!couponDrag.moved) return;
+  couponDrag.strip.classList.add('is-dragging');
+  couponDrag.strip.scrollLeft = couponDrag.left - distance;
+  event.preventDefault();
+});
+document.addEventListener('click', event => {
+  if (!couponDrag?.moved) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  couponDrag = undefined;
+}, true);
+function endCouponDrag() {
+  couponDrag?.strip.classList.remove('is-dragging');
+  if (couponDrag && !couponDrag.moved) couponDrag = undefined;
+}
+document.addEventListener('pointerup', endCouponDrag);
+document.addEventListener('pointercancel', () => { endCouponDrag(); couponDrag = undefined; });
+
+let computerData;
+let computersError = '';
+let loadingComputers = false;
+let selectedComputer;
+let computerStart;
+let startingComputer = false;
+async function startSelectedComputer(checkOnly = false) {
+  if (startingComputer || !state.data || (!selectedComputer && !computerStart)) return;
+  const epoch = state.epoch;
+  computerStart ??= { terminalId: selectedComputer.id, operationId: crypto.randomUUID(), status: 'pending' };
+  const request = computerStart;
+  state.modal = null; renderModal(); startingComputer = true; render();
+  try {
+    const result = await call(checkOnly ? 'computerStatus' : 'startComputer', { terminalId: request.terminalId, operationId: request.operationId });
+    if (epoch !== state.epoch) return;
+    request.status = result.status; request.message = result.message;
+    if (result.status !== 'pending') {
+      toast(result.message);
+      computerStart = undefined; selectedComputer = undefined;
+      computersError = result.status === 'started' ? '' : result.message;
+      await refreshLiveAccount(); await loadComputers();
+    }
+  } catch (error) {
+    if (epoch === state.epoch && computerStart === request) request.message = `${error.message} İşlem durumunu kontrol et.`;
+  } finally { if (epoch === state.epoch) { startingComputer = false; render(); } }
+}
+async function loadComputers() {
+  if (loadingComputers || !state.data) return;
+  const epoch = state.epoch;
+  loadingComputers = true;
+  try {
+    const result = await call('computers');
+    if (epoch !== state.epoch) return;
+    computerData = result;
+    computersError = '';
+  } catch (error) { if (epoch === state.epoch) computersError = error.message; }
+  finally { loadingComputers = false; if (epoch === state.epoch && state.page === 'computers') render(); }
+}
+function computersPage() {
+  return `<div class="page-heading"><div><span class="eyebrow">OYUN ALANIN</span><h1>Bilgisayarlar</h1><p>PanCafe terminal durumları otomatik güncellenir.</p></div></div>
+    ${computersError ? `<div role="alert" class="notice">${e(computersError)}</div>` : ''}
+    ${computerStart ? `<div class="notice" role="status">${e(startingComputer ? 'PanCafe’de oturumun başlatılıyor…' : computerStart.message || 'Oturum sonucu bekleniyor.')}${!startingComputer ? button('Durumu kontrol et', 'computer-check', 'secondary') : ''}</div>` : ''}
+    <div class="computers-grid">${(computerData?.computers || []).map(pc => `<article class="panel computer-card">${icon('monitor')}<h2>${e(pc.name)}</h2><span class="computer-status ${pc.available ? 'computer-available' : pc.status === 'occupied' ? 'computer-occupied' : ''}">${pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'}</span>${computerData.startSupported && pc.virtual && pc.available ? button('Oturum aç', 'computer-select:' + pc.id, 'primary', Boolean(computerStart)) : ''}</article>`).join('')}</div>
+    ${!computerData && !computersError ? '<p role="status">Bilgisayarlar alınıyor…</p>' : ''}
+    ${computerData && !computerData.startSupported ? '<div class="notice">Bu şubede kiosktan oturum açma etkin değil. Şube yetkilisine başvur.</div>' : ''}`;
+}
+
+setInterval(() => { if (state.data && state.page === 'computers') void loadComputers(); }, 5000);
