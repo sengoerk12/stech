@@ -10,7 +10,7 @@ function quote(amount, promotions, now = Date.now(), promotionId) {
   const best = eligible.filter(p => !promotionId || p.id === promotionId)
     .map(p => ({ id: p.id, bonus: Math.min(Math.floor(amount * p.bonusPercent / 100), p.maxBonus) }))
     .sort((a, b) => b.bonus - a.bonus)[0];
-  return { amount, bonus: best?.bonus || 0, total: amount + (best?.bonus || 0) };
+  return { amount, bonus: best?.bonus || 0, total: amount + (best?.bonus || 0), sCoinEarned: Math.floor(amount / 10000) };
 }
 function normalizeCard(value) {
   if (typeof value !== 'string') throw new Error('Kart okunamadı. Tekrar okut.');

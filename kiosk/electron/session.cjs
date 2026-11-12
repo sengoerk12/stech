@@ -67,6 +67,7 @@ class KioskSession {
   async run(action, payload = {}) {
     const now = Date.now();
     this.tick(now);
+    if (action === 'design') { const update = this.mode === 'connected' ? await this.gateway.design() : null; if(update)this.designSnapshot=update; const result=this.designSnapshot||null; const seconds=result?.document?.behavior?.idleSeconds; if(!this.session&&Number.isInteger(seconds)&&seconds>=30&&seconds<=300)this.idleMs=seconds*1000;return result; }
     if (action === 'scan') return this.scan(payload.uid);
     if (action === 'passwordLogin') return this.loginWithPassword(payload);
     if (action === 'pcAvailability') {
@@ -93,6 +94,8 @@ class KioskSession {
       throw new Error('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.');
     let result;
     if (action === 'dashboard') result = this.publicDashboard(this.mode === 'demo' ? await this.demo.dashboard(session.card) : await this.gateway.dashboard(session.token));
+    else if (action === 'sCoin' && this.mode === 'connected') result = await this.gateway.sCoin(session.token);
+    else if (action === 'sCoinPlay' && this.mode === 'connected') result = await this.gateway.sCoinPlay(session.token, payload);
     else if (action === 'computers') {
       if (this.mode !== 'connected') throw new Error('Bilgisayar listesi için PanCafe bağlantısı gerekli.');
       result = await this.gateway.computers(session.token);

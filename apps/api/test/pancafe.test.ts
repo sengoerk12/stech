@@ -11,6 +11,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app";
+import { SCoinService } from "../src/cafe/s-coin";
+import type { CollectionReference } from "firebase-admin/firestore";
 
 const config = {
   installationId: "test-installation",
@@ -208,7 +210,27 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     await oldPayments.accept({ eventId: "old-event", paymentId: old.id, amount: 5000, currency: "TRY", status: "succeeded" });
     await db.query("UPDATE transfer_jobs SET next_attempt_at=now()-interval '1 second'");
     const destination = new PanCafeSimulationAdapter(db, source, true);
-    const payments = new PersistentPaymentService(db, destination, new MockPaymentProvider(), "pancafe");
+    const documents = new Map<string, Record<string, unknown>>();
+    type Ref = { path: string };
+    const snapshot = ({ path }: Ref) => ({ exists: documents.has(path), get: (key: string) => documents.get(path)?.[key], data: () => documents.get(path) });
+    const collection = (prefix: string) => ({
+      doc: (id: string) => {
+        const path = prefix + "/" + id;
+        return { path, get: async () => snapshot({ path }), collection: (name: string) => collection(path + "/" + name) };
+      },
+      firestore: {
+        runTransaction: async (work: (tx: object) => Promise<unknown>) => work({
+          get: async (ref: Ref) => snapshot(ref),
+          set: (ref: Ref, data: Record<string, unknown>) => documents.set(ref.path, data),
+          create: (ref: Ref, data: Record<string, unknown>) => {
+            assert(!documents.has(ref.path));
+            documents.set(ref.path, data);
+          },
+        }),
+      },
+    });
+    const sCoin = new SCoinService(db, collection("test-wallets") as unknown as CollectionReference, config.installationId, true);
+    const payments = new PersistentPaymentService(db, destination, new MockPaymentProvider(), "pancafe", sCoin);
     await payments.drain();
     assert.equal(bridge.credits.size, 0);
     await assert.rejects(() => payments.get(member.id, old.id));
@@ -228,6 +250,30 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     await payments.accept({ ...event, eventId: "native-failed", paymentId: failed.id, amount: 5000, status: "failed" });
     assert.equal((await source.getBalance(member.id)).balance, 42000);
     assert.equal(bridge.credits.size, 1);
+    assert.equal((await db.query("SELECT payment_id FROM s_coin_awards")).rows.length, 1);
+    await sCoin.drain();
+    await db.query("UPDATE s_coin_awards SET synced_at=NULL");
+    await sCoin.drain();
+    assert.deepEqual(await sCoin.balance(member.id), { units: 20000, unitsPerCoin: 10000, playableCoins: 2, testOnly: true });
+    const playId = "4702edba-3e4a-4487-9a6f-b3cc0c9262ec";
+    const play = await sCoin.playTestGame(member.id, playId);
+    assert.deepEqual(await sCoin.playTestGame(member.id, playId), play);
+    assert.equal((await sCoin.balance(member.id)).playableCoins, 1);
+    await assert.rejects(() => sCoin.playTestGame(member.id, playId, "scratch"), /başka bir oyuna ait/);
+    const scratchId = "cf4ce669-41cc-4bbb-98e8-e984651f20dd";
+    const scratch = await sCoin.playTestGame(member.id, scratchId, "scratch");
+    assert.equal(scratch.game, "scratch");
+    assert.equal((await sCoin.balance(member.id)).playableCoins, 0);
+    const other = await source.authenticate("first", "PanCafePassword!");
+    assert(other);
+    await assert.rejects(() => sCoin.playTestGame(other.id, playId), /1 S Coin/);
+    assert.equal((await payments.quote(member.id, 45800)).sCoinEarned, 4);
+    const rounded = await payments.create(member.id, 45800, "rounded-s-coin-payment");
+    await payments.accept({ ...event, eventId: "rounded-s-coin", paymentId: rounded.id, amount: 45800 });
+    const small = await payments.create(member.id, 9999, "under-one-s-coin-payment");
+    await payments.accept({ ...event, eventId: "under-one-s-coin", paymentId: small.id, amount: 9999 });
+    await sCoin.drain();
+    assert.equal((await sCoin.balance(member.id)).units, 40000);
   } finally { await db.close(); }
 });
 

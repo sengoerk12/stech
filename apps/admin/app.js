@@ -8,6 +8,7 @@ let token = "",
   pendingAdjustment = null;
 const titles = {
   overview: "Genel bakış",
+  "kiosk-design": "Kiosk tasarım merkezi",
   members: "Üyeler ve bakiye",
   promotions: "Kampanya ve bonus",
   payments: "Ödemeler",
@@ -179,6 +180,7 @@ async function render() {
 }
 async function renderPage() {
   const c = document.querySelector("#content");
+  if (page === "kiosk-design") return kioskEditor.open(c);
   if (page === "overview") {
     const d = await api("overview"),
       s = d.summary;

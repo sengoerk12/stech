@@ -9,6 +9,7 @@ import type { Database, SqlExecutor } from "../database/database";
 import type { CafeSystemAdapter } from "../cafe/adapter";
 import type { PaymentProvider, VerifiedPaymentEvent } from "./provider";
 import { calculateQuote } from "./service";
+import type { SCoinService } from "../cafe/s-coin";
 
 interface PaymentRow {
   transfer_target: "mock" | "pancafe";
@@ -50,6 +51,7 @@ export class PersistentPaymentService {
     private cafe: CafeSystemAdapter,
     private provider: PaymentProvider,
     private target: "mock" | "pancafe" = "mock",
+    private sCoin?: Pick<SCoinService, "enqueue">,
   ) {}
   async quote(userId: string, amount: number) {
     return calculateQuote(
@@ -217,6 +219,7 @@ export class PersistentPaymentService {
           [paymentId, wallet.balance],
         );
         await audit(tx, paymentId, "completed");
+        if (this.target === "pancafe") await this.sCoin?.enqueue(tx, row);
       });
     } catch {
       const delay = Math.min(300000, 1000 * 2 ** Math.min(attempts - 1, 8));

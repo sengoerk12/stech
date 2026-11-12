@@ -66,12 +66,41 @@ function welcome() {
     ${state.info?.mode === 'demo' ? `<div class="demo-entry"><span>Keşfetmek için bir deneme hesabı seç</span>${button('Kaan olarak dene ' + icon('arrow'), 'demo1', 'primary', state.loading)}${button('Deniz olarak dene', 'demo2', 'quiet', state.loading)}</div>` : `<div class="password-entry"><span>Kartın yanında değil mi?</span>${button(icon('profile') + ' Kullanıcı adıyla giriş', 'open-password-login', 'secondary wide', state.loading)}</div><div class="secure-note">${icon('shield')} Oturumun işlem sonunda güvenle kapanır.</div>`}</section></main>
     <footer><span>${e(state.info?.station || 'S TECH')} <span class="footer-separator">/</span> MÜŞTERİ NOKTASI</span><span>İyi oyunlar. <span class="orange">İyi ki buradasın.</span></span></footer></div>`;
 }
-const nav = [{ id: 'computers', label: 'Bilgisayarlar', icon: 'monitor' }, { id: 'home', label: 'Ana ekran', icon: 'home' }, { id: 'topup', label: 'Bakiye yükle', icon: 'topup' }, { id: 'campaigns', label: 'Kampanyalar', icon: 'campaigns' }, { id: 'history', label: 'İşlem geçmişi', icon: 'history' }, { id: 'profile', label: 'Profilim', icon: 'profile' }, { id: 'games', label: 'Oyunlar', icon: 'bolt' }];
+const originalNav = [
+  { id: 'computers', label: 'Bilgisayarlar', icon: 'monitor' },
+  { id: 'campaigns', label: 'Kampanyalar', icon: 'campaigns' },
+  { id: 'topup', label: 'Bakiye yükle', icon: 'topup' },
+  { id: 'home', label: 'Ana ekran', icon: 'home' },
+  { id: 'history', label: 'İşlem geçmişi', icon: 'history' },
+  { id: 'profile', label: 'Profilim', icon: 'profile' },
+  { id: 'games', label: 'Oyunlar', icon: 'bolt' },
+];
+const nav = originalNav;
+let campaignRotationTimer;
+let campaignPointerId;
+function scheduleCampaignRotation() {
+  clearTimeout(campaignRotationTimer);
+  const track = root.querySelector('.home-campaign-track');
+  if (window.kioskDesign?.config?.behavior.autoplay === false || !track || track.children.length < 2 || state.modal || document.hidden || campaignPointerId !== undefined) return;
+  campaignRotationTimer = setTimeout(() => {
+    const next = (Math.round(track.scrollLeft / track.clientWidth) + 1) % track.children.length;
+    track.scrollTo({ left: next * track.clientWidth,
+      behavior: next === 0 || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    scheduleCampaignRotation();
+  }, (window.kioskDesign?.config?.behavior.sliderSeconds || 4) * 1000);
+}
+
 function render() {
-  if (!state.data) { root.innerHTML = welcome(); return; }
+  window.kioskDesign?.navigation(nav, originalNav);
+  if (!state.data) { root.innerHTML = welcome(); window.kioskDesign?.apply(root, "welcome"); scheduleCampaignRotation(); return; }
+  const campaignOffset = root.querySelector('.home-campaign-track')?.scrollLeft ?? 0;
   const member = state.data.member;
   const title = nav.find(item => item.id === state.page)?.label;
-  root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${n.label}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${title}</span><div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : state.page === 'games' ? kioskGames.render() : profile()}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Oturum <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
+  root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${e(n.label)}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${e(title)}</span><div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : state.page === 'games' ? kioskGames.render() : state.page === 'profile' ? profile() : ''}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Oturum <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
+  window.kioskDesign?.apply(root, state.page);
+  const campaignTrack = root.querySelector('.home-campaign-track');
+  if (campaignTrack) campaignTrack.scrollLeft = campaignOffset;
+  scheduleCampaignRotation();
   if (state.page === 'games') kioskGames.mount();
 }
 function rows(items) {
@@ -82,11 +111,18 @@ function campaignCard(p) {
   return `<article class="bonus-coupon campaign-ticket ${p.accent === 'blue' ? 'coupon-blue campaign-blue' : ''}"><div class="coupon-value"><strong>%${e(p.bonusPercent)}</strong><span>BONUS</span></div><div class="coupon-body"><span class="eyebrow">S TECH ÜYE KUPONU</span><h3>${e(p.title)}</h3><p class="ticket-description">${e(p.description)}</p><div class="coupon-bottom"><p>Alt limit<strong>${cash(p.minimumAmount)}</strong></p>${button('Kampanyayı incele ' + icon('arrow'), 'campaign:' + e(p.id), 'coupon-apply')}</div><small class="coupon-hint">Son gün: ${new Date(p.endsAt).toLocaleDateString('tr-TR')}</small></div></article>`;
 }
 
+function homeCampaigns(promotions) {
+  if (!promotions.length) return '<section class="panel no-campaign">' + icon('campaigns') + '<h2>Aktif kampanya yok.</h2></section>';
+  return `<section class="home-campaigns" aria-label="Aktif kampanyalar">
+    <div class="home-campaign-track" tabindex="0" role="region" aria-label="Kampanya kartları">${promotions.map(campaignCard).join('')}</div>
+  </section>`;
+}
+
 function home() {
   const d = state.data;
   return `<div class="page-heading"><div><span class="eyebrow">TEKRAR HOŞ GELDİN</span><h1>Merhaba, ${e(d.member.name.split(' ')[0])}<span class="orange">.</span></h1><p>Yeni bir oyun, yeni bir heyecan. Hesabın hazır.</p></div><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span></div>
   <div class="home-grid"><section class="balance-card"><div class="balance-top"><span>${icon('topup')} KULLANILABİLİR BAKİYEN</span><span class="balance-mark">S /</span></div><div class="balance-value" data-wallet-balance>${balanceText()}</div><div class="balance-caption" data-wallet-caption>${balanceCaption()}</div><div class="balance-bottom">${button('Bakiye yükle ' + icon('plus'), 'go-topup', 'primary')}<span>${icon('shield')} ${state.info.mode === 'demo' ? 'Deneme ortamı' : 'PanCafe bağlantısı'}</span></div><div class="balance-decoration"></div></section>
-  ${d.promotions[0] ? campaignCard(d.promotions[0]) : '<section class="panel no-campaign">' + icon('campaigns') + '<h2>Yeni fırsatlara yer aç.</h2><p>Aktif kampanyalar burada görünecek.</p></section>'}</div>
+  ${homeCampaigns(d.promotions)}</div>
   <div class="quick-strip"><div>${icon('nfc')}<span>Kartın yanında,<strong>hesabın elinin altında.</strong></span></div><p>Yükle, avantajları keşfet, oyuna devam et.</p>${button('Hesabımı görüntüle ' + icon('arrow'), 'go-profile', 'quiet')}</div>
   ${(d.pendingPayments || []).length ? `<section class="pending-banner">${icon('history')}<div><strong>Tamamlanmamış işlemin var</strong><span>Kaldığın yerden devam edebilirsin.</span></div>${button('İşlemi aç', 'resume:' + d.pendingPayments[0].id, 'secondary')}</section>` : ''}
   <section class="panel recent"><div class="section-heading"><h2>Son işlemler</h2>${button('Tümünü gör ' + icon('arrow'), 'go-history', 'quiet')}</div><div id="recent-transactions">${recentContent()}</div></section>`;
@@ -113,7 +149,7 @@ function topup() {
   return `<div class="page-heading"><div><span class="eyebrow">OYUNA ARA VERME</span><h1>Bir sonraki oyuna hazır ol.</h1><p>Yüklemek istediğin tutarı seç, kartınla öde, devam et.</p></div></div>
   ${state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : '<div class="notice">' + icon('info') + ' POS cihazı henüz eşleştirilmedi. Gerçek yükleme için şube yetkilisine başvur.</div>'}
   <div class="topup-grid"><section class="panel amount-panel"><div class="section-heading"><h2>Yükleme tutarı</h2><span>01 / 02</span></div><div class="amount-display"><span>₺</span><strong>${e(state.amount || '0')}</strong><span>TL</span></div><div class="amount-presets">${[100, 200, 500, 1000].map(n => button(`${n} TL`, `amount:${n}`, Number(state.amount) === n ? 'preset selected' : 'preset')).join('')}</div><div class="keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Temizle' : k === 'back' ? '⌫' : k, `key:${k}`, k === 'clear' ? 'key key-small' : 'key')).join('')}</div><p class="muted minimum">En az 50 TL · En fazla 10.000 TL</p></section>
-  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
+  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div><div class="summary-row s-coin-quote"><span>Kazanılacak S Coin</span><strong>${Number.isSafeInteger(q?.sCoinEarned) ? e(q.sCoinEarned) + ' S Coin' : '—'}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
 }
 function paymentView() {
   const p = state.payment, done = p.status === 'completed', failed = p.status === 'failed';
@@ -184,6 +220,7 @@ function resetLoginFormTimer() {
   }, 90000);
 }
 function renderModal() {
+  scheduleCampaignRotation();
   const host = $('#modal-root');
   clearTimeout(loginFormTimer);
   root.inert = state.modal === 'password-login';
@@ -260,7 +297,11 @@ async function submitPasswordLogin(form) {
   }
 }
 function openHome(data) {
-  kioskGames.startSession();
+  kioskGames.startSession(state.info.mode === 'connected' ? async (game, operationId) => {
+    const result = await call('sCoinPlay', { game, operationId });
+    void refreshSCoin();
+    return result;
+  } : undefined);
   state.data = data;
   state.seconds = 90;
   state.page = 'home';
@@ -360,6 +401,23 @@ async function go(page) {
   }
   if (page === 'history') await loadHistory();
   if (page === 'topup') await updateQuote();
+  if (page === 'games' && state.info.mode === 'connected') void refreshSCoin();
+}
+let sCoinEpoch;
+async function refreshSCoin() {
+  const epoch = state.epoch;
+  if (sCoinEpoch === epoch) return;
+  sCoinEpoch = epoch;
+  try {
+    const { units, unitsPerCoin, testOnly, playableCoins } = await call('sCoin');
+    if (!Number.isSafeInteger(units) || units < 0 || unitsPerCoin !== 10000) throw new Error('Invalid S Coin balance');
+    const value = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 4 }).format(units / unitsPerCoin);
+    if (epoch === state.epoch) kioskGames.showSCoin(`${testOnly ? 'Test S Coin' : 'S Coin'} · ${value}`, playableCoins);
+  } catch {
+    if (epoch === state.epoch) kioskGames.showSCoin('S Coin bakiyesi şu anda alınamıyor.');
+  } finally {
+    if (sCoinEpoch === epoch) sCoinEpoch = undefined;
+  }
 }
 async function action(value) {
   const [name, arg] = value.split(':');
@@ -521,6 +579,7 @@ function clockTick() {
 }
 clockTick(); setInterval(clockTick, 10000);
 setInterval(() => { if (state.info?.mode === 'connected' && state.data && !state.processing) void refreshLiveAccount(); }, 5000);
+setInterval(() => { if (state.info?.mode === 'connected' && state.data && state.page === 'games') void refreshSCoin(); }, 5000);
 setInterval(() => { if (state.info?.mode === 'demo' && state.data && state.page === 'home' && !state.processing && !state.modal) void refresh().catch(() => {}); }, 15000);
 setInterval(refreshPcAvailability, 5000);
 call('info').then(info => { state.info = info; render(); void refreshPcAvailability(); }).catch(error => { root.innerHTML = '<div class="boot-error"><h1>S TECH</h1><p>' + e(error.message) + '</p></div>'; });
@@ -528,8 +587,12 @@ call('info').then(info => { state.info = info; render(); void refreshPcAvailabil
 let couponDrag;
 document.addEventListener('pointerdown', event => {
   couponDrag = undefined;
-  const strip = event.target.closest('.coupon-list');
-  if (!strip || event.pointerType !== 'mouse' || event.button !== 0) return;
+  const strip = event.target.closest('.coupon-list, .home-campaign-track');
+  if (strip?.matches('.home-campaign-track') && event.isPrimary) {
+    campaignPointerId = event.pointerId;
+    scheduleCampaignRotation();
+  }
+  if (!strip || strip.scrollWidth <= strip.clientWidth || event.pointerType !== 'mouse' || event.button !== 0) return;
   couponDrag = { strip, x: event.clientX, left: strip.scrollLeft, moved: false };
 });
 document.addEventListener('pointermove', event => {
@@ -553,6 +616,18 @@ function endCouponDrag() {
 }
 document.addEventListener('pointerup', endCouponDrag);
 document.addEventListener('pointercancel', () => { endCouponDrag(); couponDrag = undefined; });
+function resumeCampaignRotation(event) {
+  if (event.pointerId !== campaignPointerId) return;
+  campaignPointerId = undefined;
+  scheduleCampaignRotation();
+}
+document.addEventListener('pointerup', resumeCampaignRotation);
+document.addEventListener('pointercancel', resumeCampaignRotation);
+document.addEventListener('visibilitychange', scheduleCampaignRotation);
+window.addEventListener('blur', () => {
+  campaignPointerId = undefined;
+  scheduleCampaignRotation();
+});
 
 let computerData;
 let computersError = '';

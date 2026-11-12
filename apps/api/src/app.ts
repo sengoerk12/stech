@@ -1,3 +1,5 @@
+import { KioskManagement } from './kiosk-management/service';
+import { createKioskManagementController } from './kiosk-management/controller';
 import {
   Body,
   Controller,
@@ -50,11 +52,12 @@ import { KioskCardAuth, type KioskCardMap } from "./auth/kiosk";
 import { openDatabase } from "./database/database";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { static as serveStatic } from "express";
+import { json, static as serveStatic } from "express";
 import { AdminService } from "./admin/service";
 import { createAdminController } from "./admin/controller";
 import { MemberProfileService, normalizePhone } from './profile/service';
 import { createFirebaseSync } from "./cafe/firebase-sync";
+import { SCoinService } from "./cafe/s-coin";
 import { calculateQuote } from "./payments/service";
 import { activePromotions, firestoreCampaigns, PromotionSync } from "./cafe/promotion-sync";
 import {
@@ -72,6 +75,9 @@ class KioskCardDto {
 }
 class ComputerStartDto {
   @IsUUID('4') operationId!: string;
+}
+class SCoinPlayDto extends ComputerStartDto {
+  @IsOptional() @IsIn(['wheel', 'scratch', 'slots', 'darts', 'memory', 'blocks']) game?: string;
 }
 class RegistrationDto {
   @IsString() @Matches(/^[a-zA-Z0-9_.]{3,32}$/) username!: string;
@@ -180,18 +186,25 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   if (simulation) await simulation.initialize();
   const paymentCafe = simulation ?? cafe;
   const provider = new MockPaymentProvider();
-  const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock");
+  const firebaseSync = firebaseProject && bridgeConfig && bridge
+    ? createFirebaseSync(firebaseProject, bridgeConfig.installationId, bridge, firebaseBalanceWrite)
+    : null;
+  // This runtime uses a simulated payment provider. Its awards live in a test wallet.
+  const sCoin = firebaseSync && bridgeConfig
+    ? new SCoinService(db, firebaseSync.firestore.collection("pancafeInstallations").doc(bridgeConfig.installationId)
+      .collection("sCoinTestWallets"), bridgeConfig.installationId, true)
+    : null;
+  const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock", sCoin ?? undefined);
   const admin = new AdminService(db, bridge, payments, env);
   const AdminController = createAdminController(admin);
+ const kioskManagement = new KioskManagement(db); await kioskManagement.init();
+ const KioskManagementController = createKioskManagementController(kioskManagement, admin);
   const auth = new PersistentAuthService(db, cafe);
   const profiles=new MemberProfileService(db,cafe,env.PROFILE_ENCRYPTION_KEY);
   const kioskAuth = env.KIOSK_DEVICE_KEY
     ? new KioskCardAuth(env.KIOSK_DEVICE_KEY,
         env.KIOSK_CARD_MAP_FILE ? JSON.parse(await readFile(env.KIOSK_CARD_MAP_FILE, "utf8")) as KioskCardMap : { cards: [] },
         cafe, auth)
-    : null;
-  const firebaseSync = firebaseProject && bridgeConfig && bridge
-    ? createFirebaseSync(firebaseProject, bridgeConfig.installationId, bridge, firebaseBalanceWrite)
     : null;
   const promotionSync = firebaseSync && bridgeConfig
     ? new PromotionSync(db, firestoreCampaigns(firebaseSync.firestore, env.FIREBASE_CAMPAIGN_INSTALLATION_ID ?? bridgeConfig.installationId)) : null;
@@ -216,11 +229,26 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   }
   @Controller()
   class ApiController {
+    @Get("kiosk/s-coin")
+    @Header("Cache-Control", "no-store")
+    async kioskSCoin(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined) {
+      if (!kioskAuth || !sCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
+      kioskAuth.verifyDevice(key);
+      return sCoin.balance(await user(req));
+    }
+    @Post(["kiosk/s-coin/play", "kiosk/s-coin/wheel"])
+    async kioskSCoinPlay(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined, @Body() body: unknown) {
+      if (!kioskAuth || !sCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
+      kioskAuth.verifyDevice(key);
+      const dto = parse(SCoinPlayDto, body);
+      return sCoin.playTestGame(await user(req), dto.operationId, dto.game);
+    }
     @Post("kiosk/card-login") async kioskLogin(
       @Headers("x-kiosk-key") key: string | undefined,
       @Body() body: unknown,
     ) {
       if (!kioskAuth) throw new ServiceUnavailableException("Kiosk kart bağlantısı yapılandırılmadı.");
+      const design=await kioskManagement.published(); if(design.document.behavior.maintenance)throw new ServiceUnavailableException(design.document.behavior.maintenanceMessage);
       return kioskAuth.login(key, parse(KioskCardDto, body).cardUid);
     }
     @Post("kiosk/password-login") async kioskPasswordLogin(
@@ -457,23 +485,28 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (!panCafe || simulation) payments.startWorker();
       if (env.FIREBASE_SYNC_ENABLED === "true") firebaseSync?.worker.start();
       promotionSync?.start();
+      sCoin?.start();
     }
     async onModuleDestroy() {
       await payments.stopWorker();
+      await sCoin?.stop();
       await promotionSync?.stop();
       await firebaseSync?.stop();
       await db.close();
     }
   }
-  @Module({ controllers: [ApiController, AdminController], providers: [RuntimeLifecycle] })
+  @Module({ controllers: [ApiController, AdminController, KioskManagementController], providers: [RuntimeLifecycle] })
   class AppModule {}
   const app = await NestFactory.create(AppModule, {
     rawBody: true,
+    bodyParser: false,
     logger: ["error", "warn", "log"],
   });
-  app.setGlobalPrefix("api/v1");
+  app.use(json({limit:'8mb', verify:(req:any,_res:any,buf:Buffer)=>{req.rawBody=buf;}}));
+ app.setGlobalPrefix("api/v1");
   app.use(helmet());
-  app.use('/admin', serveStatic(resolve(env.ADMIN_WEB_DIR ?? '../admin'), { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
+  app.use('/kiosk-preview', serveStatic(resolve(env.KIOSK_UI_DIR ?? '../../kiosk/ui'), { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
+ app.use('/admin', serveStatic(resolve(env.ADMIN_WEB_DIR ?? '../admin'), { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
   app.enableCors({
     origin: (env.WEB_ORIGIN ?? "http://localhost:8081")
       .split(",")

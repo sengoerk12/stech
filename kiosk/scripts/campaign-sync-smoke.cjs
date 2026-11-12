@@ -59,9 +59,43 @@ const assert = require('node:assert/strict');
     const layout = await page.evaluate(() => { const content = document.querySelector('.content'); const coupons = document.querySelector('.coupon-list'); return { fits: content.scrollHeight <= content.clientHeight + 1, horizontal: coupons.scrollWidth > coupons.clientWidth }; });
     assert.equal(layout.fits, true, 'Topup controls must fit without vertical scrolling');
     assert.equal(layout.horizontal, true, 'Extra coupons must scroll horizontally');
+    for (const key of ['clear', '4', '5', '8']) await page.locator('[data-action="key:' + key + '"]').click();
+    await page.locator('.s-coin-quote').getByText('4 S Coin', { exact: true }).waitFor();
     await page.screenshot({ path: path.join(__dirname, '../dist/coupon-preview.png'), fullPage: true });
     await page.getByRole('button', { name: '100 TL', exact: true }).click();
     await page.locator('.quote-error').waitFor();
+    await page.getByRole('button', { name: 'Ana ekran', exact: true }).click();
+    const homeTrack = page.locator('.home-campaign-track');
+    assert.equal(await homeTrack.locator('.campaign-ticket').count(), 8);
+    assert.equal(await page.locator('.home-campaign-controls').count(), 0);
+    await homeTrack.scrollIntoViewIfNeeded();
+    const box = await homeTrack.boundingBox();
+    const touch = await page.context().newCDPSession(page);
+    const point = fraction => ({ x: box.x + box.width * fraction, y: box.y + box.height / 2 });
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(.9)] });
+    for (const fraction of [.78, .64, .5, .36, .22, .1]) {
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(fraction)] });
+    }
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await touch.detach();
+    await page.waitForFunction(() => {
+      const track = document.querySelector('.home-campaign-track');
+      return Math.abs(track.scrollLeft - track.clientWidth) <= 1;
+    });
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    campaigns = campaigns.map((campaign, index) => index === 1 ? { ...campaign, title: 'Güncellenen ikinci kupon' } : campaign);
+    const secondCard = homeTrack.locator('.campaign-ticket').nth(1);
+    await secondCard.getByRole('heading', { name: 'Güncellenen ikinci kupon' }).waitFor({ timeout: 15000 });
+    assert.equal(await homeTrack.evaluate(track => Math.round(track.scrollLeft / track.clientWidth)), 1);
+    await page.mouse.up();
+    await page.waitForFunction(() => {
+      const track = document.querySelector('.home-campaign-track');
+      return Math.abs(track.scrollLeft - track.clientWidth * 2) <= 1;
+    }, null, { timeout: 6500 });
+    await secondCard.getByRole('button', { name: /Kampanyayı incele/ }).click();
+    await page.getByRole('dialog').getByRole('heading', { name: 'Güncellenen ikinci kupon' }).waitFor();
+    await page.getByRole('button', { name: 'Geri dön', exact: true }).click();
     await page.getByRole('button', { name: 'Kampanyalar', exact: true }).click();
     await page.getByRole('button', { name: /Kampanyayı incele/ }).first().click();
     campaigns = [];

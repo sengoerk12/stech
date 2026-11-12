@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { Payment, Promotion, Quote } from "@stech/contracts";
 import type { CafeSystemAdapter } from "../cafe/adapter";
 import type { PaymentProvider, VerifiedPaymentEvent } from "./provider";
+import { sCoinsForTopup } from "../cafe/s-coin";
 
 export function calculateQuote(
   amount: number,
@@ -39,7 +40,7 @@ export function calculateQuote(
     }))
     .sort((a, b) => b.bonus - a.bonus)[0];
   const bonus = best?.bonus ?? 0;
-  return { amount, bonus, total: amount + bonus, promotionId: best?.id };
+  return { amount, bonus, total: amount + bonus, sCoinEarned: sCoinsForTopup(amount), promotionId: best?.id };
 }
 type Record = Payment & { userId: string; key: string; promotionId?: string };
 /** In-memory orchestration for development. Production must use durable SQL/outbox repository. */

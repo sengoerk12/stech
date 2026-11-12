@@ -6,15 +6,16 @@ class ApiGateway {
       throw new Error('Sunucu adresi HTTPS olmalı. Yerel sunucu için localhost kullanılabilir.');
     if (typeof config.deviceKey !== 'string' || config.deviceKey.length < 40) throw new Error('Kiosk cihaz anahtarı eksik.');
   }
-  async request(endpoint, token, body) {
+  async request(endpoint, token, body, extraHeaders = {}) {
     let response;
     try {
       response = await fetch(this.config.apiBaseUrl.replace(/\/$/, '') + endpoint, {
         method: body ? 'POST' : 'GET',
-        headers: { 'Content-Type': 'application/json', 'X-Kiosk-Key': this.config.deviceKey, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json', 'X-Kiosk-Key': this.config.deviceKey, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
         body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 45000 : 12000), redirect: 'error',
       });
     } catch { throw new Error('Sunucuya ulaşılamıyor. Lütfen yetkiliden yardım iste.'); }
+    if (response.status === 304) return null;
     if (!response.ok) {
       const data = await response.json().catch(() => null);
       throw Object.assign(new Error(data?.message || 'İşlem tamamlanamadı.'), { status: response.status });
@@ -32,8 +33,11 @@ class ApiGateway {
   quote(token, payload) { return this.request('/kiosk/quote', token, { amount: payload.amount, promotionId: payload.promotionId }); }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
+  async design() { const result=await this.request('/kiosk/design',null,undefined,this.designVersion?{'If-None-Match':'"'+this.designVersion+'"'}:{});if(result?.id)this.designVersion=result.id;return result; }
   pcAvailability() { return this.read('/kiosk/pc-availability', null); }
   computers(token) { return this.read('/kiosk/computers', token); }
+  sCoin(token) { return this.read('/kiosk/s-coin', token); }
+  sCoinPlay(token, { operationId, game }) { return this.request('/kiosk/s-coin/play', token, { operationId, game }); }
   startComputer(token, payload) {
     return this.request(`/kiosk/computers/${encodeURIComponent(payload.terminalId)}/start`, token, { operationId: payload.operationId });
   }

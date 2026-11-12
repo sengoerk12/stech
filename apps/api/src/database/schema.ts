@@ -70,4 +70,12 @@ export const schema = [
       ON CONFLICT DO NOTHING;
     INSERT INTO schema_migrations(version) VALUES(8);
   END IF; END $$`,
+  `CREATE TABLE IF NOT EXISTS s_coin_awards (
+    payment_id uuid PRIMARY KEY REFERENCES payment_orders(id), installation_id text NOT NULL,
+    member_id bigint NOT NULL, units bigint NOT NULL CHECK(units>0), test_only boolean NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), synced_at timestamptz
+  )`,
+  `CREATE INDEX IF NOT EXISTS s_coin_pending ON s_coin_awards(installation_id,test_only,created_at) WHERE synced_at IS NULL`,
+  `CREATE TABLE IF NOT EXISTS kiosk_design_state(id integer PRIMARY KEY CHECK(id=1),revision integer NOT NULL,document jsonb NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS kiosk_design_versions(sequence bigserial UNIQUE,id uuid PRIMARY KEY,document jsonb NOT NULL,actor text NOT NULL,created_at timestamptz NOT NULL DEFAULT now())`,
 ];

@@ -14,5 +14,7 @@ Copy-Item -LiteralPath "$sourceRoot\apps\mobile\app.config.ts" -Destination "$pr
 Copy-Item -LiteralPath "$sourceRoot\apps\mobile\assets" -Destination "$previewRoot\apps\mobile" -Recurse -Force
 New-Item -ItemType Directory -Force "$previewRoot\apps\admin" | Out-Null
 Copy-Item "$sourceRoot\apps\admin\*" "$previewRoot\apps\admin" -Force
+New-Item -ItemType Directory -Force "$previewRoot\kiosk" | Out-Null
+Copy-Item -LiteralPath "$sourceRoot\kiosk\ui" -Destination "$previewRoot\kiosk" -Recurse -Force
 Write-Output "Preview sources synchronized to $previewRoot"
 Write-Output 'Run npm run dev:api and npm run web from that directory in separate terminals.'

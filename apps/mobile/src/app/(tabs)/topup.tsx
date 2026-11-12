@@ -319,6 +319,14 @@ export default function Topup() {
                   : "—"}
               </Label>
             </View>
+            <View style={s.summary}>
+              <Label style={{ flex: 1 }}>Kazanılacak S Coin</Label>
+              <Label style={{ fontFamily: theme.font.bold, color: theme.colors.primary }}>
+                {!quote.isFetching && Number.isSafeInteger(quote.data?.sCoinEarned)
+                  ? `${quote.data?.sCoinEarned} S Coin`
+                  : "—"}
+              </Label>
+            </View>
           </Card>
         )}
         {(quote.error || create.error) && (

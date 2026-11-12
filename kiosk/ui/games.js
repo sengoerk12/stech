@@ -100,9 +100,26 @@ window.kioskGames = (() => {
     session = undefined;
   }
 
-  function startSession() {
+  function startSession(playGiftRound) {
     endSession();
     session = { coins: 100n, stakeInput: '', game: undefined, rounds: {}, timers: new Set() };
+    if (playGiftRound) {
+      session.playGiftRound = playGiftRound;
+      session.giftOperations = {};
+      session.sCoinText = 'S Coin bakiyesi yükleniyor…';
+    }
+  }
+
+  function showSCoin(text, playable = 0) {
+    if (!session) return;
+    session.sCoinText = text;
+    session.playableCoins = playable;
+    const balance = document.querySelector('[data-s-coin-balance]');
+    if (balance) balance.textContent = text;
+    const play = document.querySelector('[data-game-action="gift-play"]');
+    if (play) play.disabled = giftPlayDisabled();
+    const hint = document.querySelector('[data-gift-hint]');
+    if (hint) hint.textContent = giftHint();
   }
 
   function later(round, callback, delay) {
@@ -117,6 +134,7 @@ window.kioskGames = (() => {
   function finish(round, multiplier) {
     if (round.phase === 'settled') return;
     round.phase = 'settled';
+    if (round.gift) { update(); return; }
     round.payout = round.stake * BigInt(multiplier);
     session.coins += round.payout;
     update();
@@ -144,8 +162,7 @@ window.kioskGames = (() => {
     return stake > 0n && stake <= coins ? stake : 0n;
   }
 
-  function startWheel(round, previousAngle) {
-    const sector = randomInt(wheelSectors.length);
+  function startWheel(round, previousAngle, sector = randomInt(wheelSectors.length)) {
     const targetAngle = 360 - (sector + 0.5) * wheelSectorAngle;
     const clockwise = (targetAngle - previousAngle + 360) % 360;
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -160,16 +177,50 @@ window.kioskGames = (() => {
     later(round, () => finish(round, wheelSectors[sector]), round.duration);
   }
 
-  function begin() {
+  function giftPlayDisabled() {
+    const round = session.rounds[session.game];
+    return session.giftBusy || (round && round.phase !== 'settled') ||
+      (!session.giftOperations[session.game] && !session.playableCoins);
+  }
+
+  function giftHint() {
+    return !session.playableCoins && !session.giftOperations[session.game]
+      ? 'Bir tur için 1 test S Coin gerekiyor. 100 TL tamamlanmış test yüklemesi 1 test S Coin kazandırır.'
+      : 'Tur ücreti 1 test S Coin.';
+  }
+
+  async function playGiftGame() {
+    const owner = session;
+    const game = owner.game;
+    if (giftPlayDisabled()) return;
+    owner.giftBusy = true;
+    owner.giftError = '';
+    owner.giftOperations[game] ??= crypto.randomUUID();
+    update();
+    try {
+      const { sector, prize } = await owner.playGiftRound(game, owner.giftOperations[game]);
+      if (session !== owner) return;
+      if (!Number.isInteger(sector) || sector < 0 || sector >= wheelSectors.length) throw new Error('Çark sonucu alınamadı.');
+      delete owner.giftOperations[game];
+      begin({ sector, prize });
+    } catch (error) {
+      if (session === owner) owner.giftError = error.message;
+    } finally {
+      if (session === owner) { owner.giftBusy = false; update(); }
+    }
+  }
+
+  function begin(gift) {
     const { game, rounds } = session;
     const previous = rounds[game];
-    const stake = readStake();
+    if (session.playGiftRound && !gift) return;
+    const stake = gift ? 1n : readStake();
     if (!game || !stake || (previous && previous.phase !== 'settled')) return;
-    const round = { game, stake, phase: 'playing' };
+    const round = { game, stake, phase: 'playing', gift: Boolean(gift), prize: gift?.prize };
     rounds[game] = round;
-    session.coins -= stake;
+    if (!gift) session.coins -= stake;
     if (game === 'wheel') {
-      startWheel(round, previous?.targetAngle ?? 0);
+      startWheel(round, previous?.targetAngle ?? 0, gift?.sector);
     } else if (game === 'scratch') {
       round.cards = shuffle(scratchDeck);
       round.opened = new Set();
@@ -362,7 +413,7 @@ window.kioskGames = (() => {
     if (game === 'wheel') {
       const sectors = wheelSectors.map((value, index) => {
         const landed = round?.phase === 'settled' && round.sector === index;
-        return `<span${landed ? ' class="is-landing"' : ''}><b>${value ? value + '×' : '·'}</b></span>`;
+        return `<span${landed ? ' class="is-landing"' : ''}><b>${session.playGiftRound ? index + 1 : value ? value + '×' : '·'}</b></span>`;
       }).join('');
       return `<div class="arcade-wheel-machine"><div class="arcade-wheel" aria-hidden="true"><div class="arcade-wheel-rim"></div>
         <div class="arcade-wheel-arrow"></div><div class="arcade-wheel-disc">${sectors}</div><i></i></div>
@@ -403,9 +454,9 @@ window.kioskGames = (() => {
 
   function gameContent() {
     const { game, coins, rounds } = session;
-    const wallet = `<div class="arcade-wallet"><span class="arcade-coin" aria-hidden="true">◈</span><div><span>Oyun bakiyesi</span><strong data-game-coins>${format(coins)}</strong><small>coin</small></div></div>`;
+    const wallet = `<div class="arcade-wallet"><span class="arcade-coin" aria-hidden="true">◈</span><div><span>Deneme oyunu bakiyesi</span><strong data-game-coins>${format(coins)}</strong><small>coin</small></div></div>`;
     if (!game) {
-      return `<header class="arcade-heading arcade-banner"><div><h1>Oyunlar</h1><p>Bir oyun seç ve oynamaya başla.</p></div>${wallet}</header>
+      return `<header class="arcade-heading arcade-banner"><div><h1>Oyunlar</h1><p>Bir oyun seç ve dene.</p>${session.sCoinText !== undefined ? '<p data-s-coin-balance></p>' : ''}</div>${session.playGiftRound ? '' : wallet}</header>
         <div class="arcade-grid">${Object.entries(games).map(([id, details]) => gameButton(
           `<span class="arcade-card-cover" aria-hidden="true"><span class="arcade-card-art">${details.symbol}</span></span>
            <span class="arcade-card-text"><strong>${details.name}</strong><span>${details.summary}</span></span><span class="arcade-card-arrow" aria-hidden="true">→</span>`,
@@ -414,6 +465,17 @@ window.kioskGames = (() => {
     const details = games[game];
     const round = rounds[game];
     const active = Boolean(round && round.phase !== 'settled');
+    if (session.playGiftRound) {
+      return `<div class="arcade-game arcade-${game}">
+        <header class="arcade-heading arcade-game-heading"><div>${gameButton('← Tüm oyunlar', 'library', '', { classes: 'arcade-button arcade-back', disabled: session.giftBusy })}<h1>${game === 'wheel' ? 'Hediye çarkı' : details.name}</h1><p>${game === 'wheel' ? 'Her dilimin gelme şansı eşit.' : 'Test hediyesi tur sonunda açılır. Hediye çekilişi oyun puanından bağımsızdır.'}</p></div><p data-s-coin-balance></p></header>
+        <div class="arcade-play-layout"><div class="arcade-stage">${boardMarkup(game, round)}</div>
+          <section class="arcade-controls" aria-label="Hediye çarkı">
+          ${round?.phase === 'settled' ? `<div class="arcade-result" role="status"><strong>${round.prize ? e('Test hediyesi · ' + round.prize.title) : 'Bu turda hediye çıkmadı'}</strong></div>` : ''}
+          ${session.giftError ? `<p role="alert">${e(session.giftError)}</p>` : ''}
+          <p data-gift-hint>${giftHint()}</p>
+          ${gameButton(active ? 'Tur devam ediyor…' : session.giftBusy ? 'Tur hazırlanıyor…' : session.giftOperations[game] ? 'Sonucu tekrar al' : details.start + ' · 1 S Coin', 'gift-play', '', { classes: 'arcade-button arcade-primary', disabled: giftPlayDisabled() })}
+          </section></div></div>`;
+    }
     let result = '';
     if (round?.phase === 'settled') {
       const difference = round.payout - round.stake;
@@ -456,6 +518,8 @@ window.kioskGames = (() => {
 
   function mount() {
     const root = document.querySelector('#games-root');
+    const sCoinBalance = root?.querySelector('[data-s-coin-balance]');
+    if (sCoinBalance) sCoinBalance.textContent = session?.sCoinText ?? '';
     const form = root?.querySelector('.arcade-stakes');
     if (form) syncStakeForm(form);
     const round = session?.rounds[session.game];
@@ -507,6 +571,7 @@ window.kioskGames = (() => {
     if (!button || button.disabled || !session) return;
     const action = button.dataset.gameAction;
     const value = button.dataset.gameValue;
+    if (action === 'gift-play') { void playGiftGame(); return; }
     if (action === 'select' || action === 'library') {
       session.game = action === 'select' ? value : undefined;
       const content = button.closest('.content');
@@ -566,5 +631,5 @@ window.kioskGames = (() => {
   });
   for (const event of ['pointerup', 'pointercancel']) document.addEventListener(event, () => { scratchPointer = undefined; });
 
-  return { startSession, endSession, render, mount };
+  return { startSession, endSession, render, mount, showSCoin };
 })();

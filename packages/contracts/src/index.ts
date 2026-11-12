@@ -69,6 +69,7 @@ export interface Quote {
   amount: Money;
   bonus: Money;
   total: Money;
+  sCoinEarned: number;
   promotionId?: string;
 }
 export interface NotificationPreferences {
