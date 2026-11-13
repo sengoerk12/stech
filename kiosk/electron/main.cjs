@@ -8,8 +8,9 @@ const { ApiGateway } = require('./gateway.cjs');
 const { KioskSession } = require('./session.cjs');
 
 let window, kiosk, config, exitAllowed = false, adminAttempts = [];
-const portraitPreview = process.argv.includes('--portrait-preview');
-const windowed = process.argv.includes('--windowed') || portraitPreview;
+// Varsayılan: monitöre sığacak şekilde ölçeklenen 1080×1920 pencere. Tam ekran kilitli kiosk için
+// `--fullscreen` argümanı veya kiosk.config.json içinde "fullscreen": true; `--windowed` serbest boyutlu penceredir.
+let portraitPreview = true, windowed = true;
 if (!app.isPackaged && process.env.STECH_KIOSK_DATA_DIR) app.setPath('userData', process.env.STECH_KIOSK_DATA_DIR);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
@@ -25,6 +26,9 @@ async function boot() {
   try { config = JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; config = { mode: 'demo', idleSeconds: 90, station: 'S TECH · Merkez' }; }
   if (!['demo', 'connected'].includes(config.mode)) throw new Error('Invalid mode');
+  const fullscreen = (process.argv.includes('--fullscreen') || config.fullscreen === true) && !process.argv.includes('--portrait-preview');
+  const freeWindow = !fullscreen && process.argv.includes('--windowed') && !process.argv.includes('--portrait-preview');
+  portraitPreview = !fullscreen && !freeWindow; windowed = !fullscreen;
   if (config.mode === 'connected' && !/^[0-9a-f]{128}$/.test(config.adminPinHash || '')) throw new Error('Admin PIN required');
   const demo = new DemoStore(path.join(app.getPath('userData'), 'demo-wallets.json'));
   if (config.mode === 'demo') await demo.initialize();

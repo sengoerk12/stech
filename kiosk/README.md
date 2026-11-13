@@ -81,6 +81,12 @@ Opsiyonel mock API kart eşlemesi için `KIOSK_CARD_MAP_FILE` mutlak JSON yolu k
 - `Ctrl+Alt+Q` yetkili PIN ekranı. Demo PIN `2026`; bağlı modda özel PIN hash zorunlu. Dakikada 5 çıkış denemesi sınırı.
 - Tam ekran uygulama düzeyindedir. Windows tuşları/oturum geçişini kilitlemek için işletim sistemi düzeyinde atanmış erişim veya Shell Launcher kurulumu ayrıca gerekir.
 
+## Bilgisayarlar ekranı
+
+Müşteri önce bilgisayar türünü seçer; her tür kartında boş / toplam sayısı görünür. Tür ekranında boş bilgisayarlar yeşil, dolular kırmızı gösterilir. Yeşil bir bilgisayara dokununca seçim sarı çerçeveyle işaretlenir; **Onayla ve oturumu başlat** ile mevcut PanCafe oturum açma işlemi çalışır. Seçilen bilgisayar bu sırada dolarsa seçim kaldırılır.
+
+Türler ve salon planı `ui/computer-zones.js` içindedir. Tür, PanCafe terminal adından bulunur: adın içinde `Beginner`, `Player`, `Gamer`, `Master` veya `Master 2` geçmeli ve ad sıra numarasıyla bitmelidir (ör. `Beginner 5`, `Player Zone 3`, `Master 2 - 4`). Eşleşmeyen terminaller **Diğer bilgisayarlar** altında listelenir. Beş türün de izometrik planı kat planına göre tanımlıdır; planı olmayan bir tür renkli düğme listesi gösterir. Yerleşim değişirse ilgili `layout` güncellenir.
+
 ## Kontroller
 
 ```sh

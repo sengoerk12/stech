@@ -24,6 +24,23 @@ işlem için `not_started` döner ve kiosk yeniden seçim yapılmasına izin ver
 PanCafe ekranına erişim açılıştan önce başarısız olursa işlem `failed` olarak
 kaydedilir ve kullanıcıya ilgili açıklama gösterilir.
 
+## Arka plan girdisi
+
+Köprü, PanCafe ekranını önce yalnızca pencere mesajlarıyla sürer: fare imleci
+oynamaz, klavye odağı ve öndeki pencere değişmez. Masa seçimi, sağ tık menüsü,
+üye araması ve onay bu yolla gönderilir. PanCafe bu mesajları kabul etmezse ve
+henüz onay gönderilmediyse açılan menü/pencere kapatılır ve işlem bir kez
+gerçek fare/klavye girdisiyle (önceki yöntem) yeniden denenir. Onay mesajı iki
+saniyede üye penceresini kapatmazsa onay gerçek Enter tuşuyla verilir.
+Kullanılan yöntem işlem kaydına `InputMode` (`background` / `foreground`)
+olarak yazılır. `STECH_PANCAFE_FOREGROUND_INPUT=1` ortam değişkeni köprüyü
+doğrudan önceki yönteme zorlar.
+
+Her iki yöntemde de PanCafe yönetim ekranında **Genel** sekmesi açık olmalıdır;
+terminal listesi ve günlük paneli yalnızca o sekmede bulunur. Arka plan
+yöntemi 13 Kasım 2026'da yazıldı; canlı PanCafe üzerinde henüz doğrulanmadı.
+`scripts/Kopru-Derle.cmd` köprüyü derler, eski exe'yi yedekler ve yenisini açar.
+
 ## Doğrulama ve tekrarlar
 
 Bridge, doluluk ve mevcut üye oturumunu kontrol eder. PanCafe'nin terminal

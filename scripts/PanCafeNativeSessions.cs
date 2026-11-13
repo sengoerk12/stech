@@ -10,11 +10,12 @@ using System.Threading;
 using System.Web.Script.Serialization;
 
 // Starts virtual member sessions through the operator's PanCafe UI, not by
-// editing TERMINALS. Only the verified Turkish v3.3.2 layout is supported.
+// editing TERMINALS. Input is sent as window messages first (no pointer or focus change). Only the verified Turkish v3.3.2 layout is supported.
 public static class PanCafeNativeSessions {
     public sealed class Receipt {
         public string OperationId, Username, TerminalName, BeforeDate, BeforeTime, CreatedAtUtc;
         public int MemberId, TerminalId, LogLength;
+        public string InputMode;
         public string Status = "pending", Message = "";
     }
 
@@ -92,12 +93,23 @@ public static class PanCafeNativeSessions {
                     Save(path, receipt);
                     bool submitted = false;
                     try {
-                        ui.Prepare(terminal["NAME"], username);
+                        try { ui.Prepare(terminal["NAME"], username); }
+                        catch (InvalidOperationException) {
+                            if (!ui.Background) throw;
+                            // PanCafe did not accept window messages. Nothing was submitted yet:
+                            // close whatever opened and retry once with real mouse/keyboard input.
+                            ui.CancelPicker();
+                            Thread.Sleep(600);
+                            ui.Background = false;
+                            ui.CheckIdle();
+                            ui.Prepare(terminal["NAME"], username);
+                        }
                         // The terminal may have become busy while the picker was opening.
                         if (Terminal(database, client, terminalId)["TERMINALSTATUS"] != "1")
                             throw new InvalidOperationException("Bu bilgisayar artık boş değil.");
                         submitted = true;
                         ui.Accept(username);
+                        receipt.InputMode = ui.Background ? "background" : "foreground";
                         for (int attempt = 0; attempt < 24; attempt++) {
                             string log = ui.ReadLog();
                             if (log.StartsWith(beforeLog, StringComparison.Ordinal) &&
@@ -184,6 +196,10 @@ public static class PanCafeNativeSessions {
         readonly IntPtr main, list, log;
         readonly uint processId;
         IntPtr picker;
+        // Background mode drives PanCafe with window messages only: the mouse pointer, keyboard
+        // focus and foreground window stay untouched. Real input remains as an automatic fallback;
+        // STECH_PANCAFE_FOREGROUND_INPUT=1 forces it.
+        public bool Background = Environment.GetEnvironmentVariable("STECH_PANCAFE_FOREGROUND_INPUT") != "1";
         public NativeUi(string database) {
             string executable = Path.Combine(Directory.GetParent(Path.GetDirectoryName(database)).FullName, "pncserver.exe");
             var candidates = Windows("TSrvMainFrm", 0, true);
@@ -197,8 +213,13 @@ public static class PanCafeNativeSessions {
             if (matches.Count != 1) throw new InvalidOperationException("PanCafe yönetim ekranını açıp tekrar dene.");
             main = matches[0];
             GetWindowThreadProcessId(main, out processId);
-            list = Child(main, "TspSkinListView", null);
-            log = Child(main, "TspSkinRichEdit", null);
+            // The terminal list and log exist only on the "Genel" tab; other tabs (e.g. Üyeler) hide them.
+            try {
+                list = Child(main, "TspSkinListView", null);
+                log = Child(main, "TspSkinRichEdit", null);
+            } catch (InvalidOperationException) {
+                throw new InvalidOperationException("PanCafe yönetim ekranında Genel sekmesi açık olmalı. Genel sekmesine geçip tekrar dene.");
+            }
             bool supported = false;
             foreach (var h in Children(main)) if (Class(h) == "TspSkinStatusPanel" && Caption(h) == "v3.3.2") supported = true;
             if (!supported) throw new InvalidOperationException("Bu PanCafe sürümü için oturum açma bağlantısı doğrulanmamış.");
@@ -206,7 +227,7 @@ public static class PanCafeNativeSessions {
         public void CheckIdle() {
             if (GetLastActivePopup(main) != main || Windows("TspSkinPopupWindow", processId, true).Count > 0)
                 throw new InvalidOperationException("PanCafe'deki açık pencereyi veya menüyü kapatıp tekrar dene.");
-            Activate(main);
+            if (!Background) Activate(main);
         }
         public string ReadLog() { return Text(log); }
         public void Prepare(string terminal, string username) {
@@ -214,7 +235,8 @@ public static class PanCafeNativeSessions {
                 int selected = items.Find(terminal);
                 items.Select(selected);
                 Rect bounds = items.Bounds(selected);
-                Click(main, list, (bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
+                if (Background) MenuClick(list, (bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
+                else Click(main, list, (bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
             }
             PostMessage(list, 0x7B, list, new IntPtr(-1));
             var context = WaitWindow("TspSkinPopupWindow", IntPtr.Zero);
@@ -230,26 +252,43 @@ public static class PanCafeNativeSessions {
             foreach (var h in Children(picker)) if (Class(h) == "TspSkinComboBox" && Caption(h) == "Kullanıcı Adı") usernameSearch = true;
             if (!usernameSearch) throw new InvalidOperationException("PanCafe arama kriterini Kullanıcı Adı olarak seç.");
             var edit = Child(picker, "TspSkinEdit", null);
-            Click(picker, edit, 10, 10);
-            CheckFocus(edit);
-            Key(17, false); Key(65, false); Key(65, true); Key(17, true);
-            Key(8, false); Key(8, true);
-            foreach (char letter in username) {
-                CheckFocus(edit);
-                var down = new KeyboardInput { Type=1, Scan=letter, Flags=4 };
-                var up = new KeyboardInput { Type=1, Scan=letter, Flags=6 };
-                if (SendInput(2,new[]{down,up},Marshal.SizeOf(typeof(KeyboardInput))) != 2)
+            if (Background) {
+                IntPtr ignored;
+                if (SendText(edit, 12, IntPtr.Zero, new StringBuilder(""), 2, 2000, out ignored) == IntPtr.Zero)
                     throw new InvalidOperationException("PanCafe üye araması yapılamadı.");
-                Thread.Sleep(40);
+                foreach (char letter in username) { Message(edit, 0x102, letter, new IntPtr(1)); Thread.Sleep(40); }
+            } else {
+                Click(picker, edit, 10, 10);
+                CheckFocus(edit);
+                Key(17, false); Key(65, false); Key(65, true); Key(17, true);
+                Key(8, false); Key(8, true);
+                foreach (char letter in username) {
+                    CheckFocus(edit);
+                    var down = new KeyboardInput { Type=1, Scan=letter, Flags=4 };
+                    var up = new KeyboardInput { Type=1, Scan=letter, Flags=6 };
+                    if (SendInput(2,new[]{down,up},Marshal.SizeOf(typeof(KeyboardInput))) != 2)
+                        throw new InvalidOperationException("PanCafe üye araması yapılamadı.");
+                    Thread.Sleep(40);
+                }
             }
             Thread.Sleep(400);
             if (Text(edit) != username) throw new InvalidOperationException("PanCafe üye araması doğrulanamadı.");
         }
         public void Accept(string username) {
-            if (!IsWindowVisible(picker) || Text(Child(picker, "TspSkinEdit", null)) != username)
-                throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
-            Activate(picker);
-            CheckFocus(Child(picker,"TspSkinEdit",null));
+            if (!IsWindowVisible(picker)) throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
+            var edit = Child(picker, "TspSkinEdit", null);
+            if (Text(edit) != username) throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
+            if (Background) {
+                PostMessage(edit, 0x100, new IntPtr(13), new IntPtr(0x001C0001));
+                PostMessage(edit, 0x101, new IntPtr(13), new IntPtr(unchecked((int)0xC01C0001)));
+                for (int i = 0; i < 20; i++) { Thread.Sleep(100); if (!IsWindowVisible(picker)) return; }
+                // The posted Enter was ignored and the picker is still open: confirm it with real input.
+                if (!IsWindowVisible(picker)) return;
+                Background = false;
+                if (Text(edit) != username) throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
+                Click(picker, edit, 10, 10);
+            } else Activate(picker);
+            CheckFocus(edit);
             Key(13,false); Key(13,true);
             Thread.Sleep(500);
         }

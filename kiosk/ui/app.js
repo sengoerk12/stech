@@ -55,7 +55,7 @@ async function call(action, payload) {
 }
 function reset() {
   kioskGames.endSession();
-  computerData = undefined; computersError = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
+  computerData = undefined; computersError = ''; computerZone = undefined; computerNotice = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
   $('#toast').hidden = true; render(); renderModal();
   void refreshPcAvailability();
 }
@@ -393,7 +393,7 @@ async function go(page) {
   if (state.processing) return;
   if (state.payment?.status === 'completed') { toast('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.'); return; }
   if (state.payment?.status === 'pending') { toast('Önce ödeme ekranındaki işlemi tamamla veya tutara geri dön.'); return; }
-  if (page === 'computers') void loadComputers();
+  if (page === 'computers') { if (!computerStart) { computerZone = undefined; selectedComputer = undefined; } computerNotice = ''; void loadComputers(); }
   state.page = page; state.payment = null; state.modal = null; renderModal(); render();
   if (state.info.mode === 'connected' && (page === 'home' || page === 'profile')) {
     void refreshLiveAccount();
@@ -464,11 +464,15 @@ async function action(value) {
     if (wasLogin) $('[data-action="open-password-login"]')?.focus();
     return;
   }
+  if (name === 'computer-zone') { if (computerStart) return; computerZone = arg; selectedComputer = undefined; computerNotice = ''; render(); return; }
+  if (name === 'computer-zones') { if (computerStart) return; computerZone = undefined; selectedComputer = undefined; computerNotice = ''; render(); return; }
+  if (name === 'computer-clear') { if (computerStart) return; selectedComputer = undefined; render(); return; }
   if (name === 'computer-select') {
-    if (computerStart || !computerData?.startSupported) return;
-    const pc = computerData.computers.find(pc => pc.id === arg && pc.available && pc.virtual);
+    if (computerStart || !computerData) return;
+    const pc = computerData.computers.find(pc => pc.id === arg && pc.available);
     if (!pc) return;
-    selectedComputer = pc; state.modal = 'computer-start'; renderModal(); return;
+    if (!computerData.startSupported || !pc.virtual) { selectedComputer = undefined; computerNotice = `${pc.name} kiosktan açılamıyor. Oturum için kasaya başvur.`; render(); return; }
+    selectedComputer = pc; computerNotice = ''; render(); return;
   }
   if (name === 'computer-confirm') return startSelectedComputer();
   if (name === 'computer-check') return startSelectedComputer(true);
@@ -633,6 +637,8 @@ let computerData;
 let computersError = '';
 let loadingComputers = false;
 let selectedComputer;
+let computerZone;
+let computerNotice = '';
 let computerStart;
 let startingComputer = false;
 async function startSelectedComputer(checkOnly = false) {
@@ -664,16 +670,40 @@ async function loadComputers() {
     if (epoch !== state.epoch) return;
     computerData = result;
     computersError = '';
+    if (selectedComputer && !computerStart) {
+      const current = result.computers.find(pc => pc.id === selectedComputer.id);
+      if (current?.available && current.virtual && result.startSupported) selectedComputer = current;
+      else { computerNotice = `${selectedComputer.name} az önce doldu. Başka bir bilgisayar seç.`; selectedComputer = undefined; }
+    }
   } catch (error) { if (epoch === state.epoch) computersError = error.message; }
   finally { loadingComputers = false; if (epoch === state.epoch && state.page === 'computers') render(); }
 }
+function computerStatusText(pc) { return pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'; }
+function computerStatusClass(pc) { return pc.available ? 'pc-free' : pc.status === 'occupied' ? 'pc-busy' : 'pc-off'; }
 function computersPage() {
-  return `<div class="page-heading"><div><span class="eyebrow">OYUN ALANIN</span><h1>Bilgisayarlar</h1><p>PanCafe terminal durumları otomatik güncellenir.</p></div></div>
-    ${computersError ? `<div role="alert" class="notice">${e(computersError)}</div>` : ''}
+  const groups = computerData ? ComputerZones.summarize(computerData.computers) : [];
+  const group = groups.find(g => g.zone.id === computerZone);
+  const alerts = `${computersError ? `<div role="alert" class="notice">${e(computersError)}</div>` : ''}
+    ${computerNotice ? `<div role="status" class="notice">${e(computerNotice)}</div>` : ''}
     ${computerStart ? `<div class="notice" role="status">${e(startingComputer ? 'PanCafe’de oturumun başlatılıyor…' : computerStart.message || 'Oturum sonucu bekleniyor.')}${!startingComputer ? button('Durumu kontrol et', 'computer-check', 'secondary') : ''}</div>` : ''}
-    <div class="computers-grid">${(computerData?.computers || []).map(pc => `<article class="panel computer-card">${icon('monitor')}<h2>${e(pc.name)}</h2><span class="computer-status ${pc.available ? 'computer-available' : pc.status === 'occupied' ? 'computer-occupied' : ''}">${pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'}</span>${computerData.startSupported && pc.virtual && pc.available ? button('Oturum aç', 'computer-select:' + pc.id, 'primary', Boolean(computerStart)) : ''}</article>`).join('')}</div>
     ${!computerData && !computersError ? '<p role="status">Bilgisayarlar alınıyor…</p>' : ''}
     ${computerData && !computerData.startSupported ? '<div class="notice">Bu şubede kiosktan oturum açma etkin değil. Şube yetkilisine başvur.</div>' : ''}`;
+  if (!group) return `<div class="page-heading"><div><span class="eyebrow">OYUN ALANIN</span><h1>Bilgisayar türünü seç</h1><p>Önce oynamak istediğin alanı seç, sonra salon planından boş bir bilgisayar belirle.</p></div></div>
+    ${alerts}
+    <div class="zone-grid">${groups.map(g => `<button class="panel zone-card ${g.available ? '' : 'zone-full'}" data-action="computer-zone:${g.zone.id}" ${computerStart ? 'disabled' : ''}>${icon('monitor')}<h2>${e(g.zone.name)}</h2><p>${e(g.zone.description)}</p><div class="zone-count"><strong>${g.available}</strong><span>/ ${g.total} boş</span></div><div class="zone-meter" aria-hidden="true"><i style="width:${g.total ? Math.round(g.available / g.total * 100) : 0}%"></i></div></button>`).join('')}</div>`;
+  const canPick = Boolean(computerData.startSupported) && !computerStart;
+  const pick = selectedComputer && group.computers.some(pc => pc.id === selectedComputer.id) ? selectedComputer : undefined;
+  const chip = pc => `<button class="pc-chip ${computerStatusClass(pc)} ${pick?.id === pc.id ? 'pc-picked' : ''}" ${pc.available && !computerStart ? `data-action="computer-select:${e(pc.id)}"` : 'disabled'} aria-pressed="${pick?.id === pc.id}" aria-label="${e(pc.name)}, ${computerStatusText(pc)}">${group.zone.layout && pc.number !== undefined ? pc.number : e(pc.name)}</button>`;
+  return `<div class="page-heading"><div><span class="eyebrow">OYUN ALANIN</span><h1>${e(group.zone.name)}</h1><p><strong class="positive">${group.available}</strong> / ${group.total} bilgisayar boş. Durumlar otomatik güncellenir.</p></div>${button(`${icon('back')}Tür seçimine dön`, 'computer-zones', 'secondary', Boolean(computerStart))}</div>
+    ${alerts}
+    <section class="panel map-panel">
+      <div class="map-legend"><span><i class="pc-free"></i>Boş</span><span><i class="pc-busy"></i>Dolu</span><span><i class="pc-picked"></i>Seçimin</span><span><i class="pc-off"></i>Kapalı</span></div>
+      ${group.zone.layout ? `<div class="map-stage">${ComputerZones.isoMap(group.zone, group.computers, pick?.id, canPick)}${group.zone.layout.hint ? `<span class="map-hint map-hint-entry">${e(group.zone.layout.hint)}</span>` : ''}</div>` : ''}
+      <div class="pc-chips ${group.zone.layout ? '' : 'pc-chips-large'}">${group.computers.map(chip).join('')}</div>
+      ${group.total ? '' : '<p class="muted">Bu türde PanCafe’de tanımlı bilgisayar bulunamadı.</p>'}
+    </section>
+    <section class="panel pick-bar ${pick ? 'pick-ready' : ''}" aria-live="polite">${pick
+      ? `<div><span class="eyebrow">SEÇİMİN</span><h2>${e(pick.name)}</h2><p>Oturum ${e(state.data.member.username)} üyeliğinle başlar. PanCafe’deki üye tarifesi ve varsa açılış ücreti uygulanır.</p></div><div class="pick-actions">${button('Onayla ve oturumu başlat', 'computer-confirm', 'primary', !canPick)}${button('Seçimi kaldır', 'computer-clear', 'secondary', Boolean(computerStart))}</div>`
+      : `<p>${canPick ? 'Yeşil bir bilgisayara dokunarak seçimini yap.' : 'Şu anda seçim yapılamıyor.'}</p>`}</section>`;
 }
-
 setInterval(() => { if (state.data && state.page === 'computers') void loadComputers(); }, 5000);
