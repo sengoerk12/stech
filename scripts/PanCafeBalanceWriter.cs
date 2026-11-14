@@ -13,7 +13,7 @@ public static class PanCafeBalanceWriter {
     public static List<Dictionary<string,string>> Credit(string database,string clientDirectory,int memberId,string username,long amount,long bonus,string operationId) {
         Guid operation;
         if(memberId<1 || !Regex.IsMatch(username ?? "",@"\A[a-zA-Z0-9_.]{1,32}\z") ||
-           !Guid.TryParse(operationId,out operation) || amount<5000 || amount>1000000 || bonus<0 || bonus>100000)
+           !Guid.TryParse(operationId,out operation) || amount<100 || amount>1000000 || bonus<0 || bonus>100000)
             throw new ArgumentException("Invalid credit request");
         string sql=@"EXECUTE BLOCK (P_OP VARCHAR(36)=?, P_ID INTEGER=?, P_USER VARCHAR(32)=?, P_AMOUNT BIGINT=?, P_BONUS BIGINT=?)
 RETURNS (RESULT_CODE VARCHAR(12), BALANCE_TL DECIMAL(18,2)) AS

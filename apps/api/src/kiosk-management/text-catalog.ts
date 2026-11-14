@@ -201,8 +201,8 @@ export const textCatalog = [
     "en": ""
   },
   {
-    "source": "En az 50 TL · En fazla 10.000 TL",
-    "tr": "En az 50 TL · En fazla 10.000 TL",
+    "source": "En az 1 TL · En fazla 10.000 TL",
+    "tr": "En az 1 TL · En fazla 10.000 TL",
     "en": ""
   },
   {

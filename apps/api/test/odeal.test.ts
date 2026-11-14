@@ -57,10 +57,12 @@ test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verifie
     const login = await post("/kiosk/password-login", { identifier: "odeal_test", password: "test-password" }, { "X-Kiosk-Key": deviceKey });
     const auth = { Authorization: "Bearer " + (await login.json()).accessToken };
     const kiosk = { ...auth, "X-Kiosk-Key": deviceKey };
-    const checkout = (key: string, headers = kiosk) => post("/kiosk/pos-payments", { amount: 20000 }, { ...headers, "Idempotency-Key": key });
+    const checkout = (key: string, headers = kiosk, amount = 20000) =>
+      post("/kiosk/pos-payments", { amount }, { ...headers, "Idempotency-Key": key });
     assert.equal((await checkout("test-order-001-unique")).status, 503);
     assert.equal(baskets.length, 0);
     configured = true;
+    assert.equal((await checkout("test-under-minimum", kiosk, 99)).status, 400);
     assert.equal((await checkout("test-order-001-unique", { ...kiosk, "X-Kiosk-Key": "wrong" })).status, 401);
     const dashboard = async () => (await realFetch(api + "/kiosk/dashboard", { headers: kiosk })).json();
     const initial = (await dashboard()).wallet.balance;
@@ -115,7 +117,9 @@ test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verifie
       assert.equal(await status(), "failed");
       assert.equal((await dashboard()).wallet.balance, initial + 20000 + first.bonus);
     }
-    const abandoned = await (await checkout("test-cancel-on-kiosk")).json();
+    const abandoned = await (await checkout("test-cancel-on-kiosk", kiosk, 100)).json();
+    assert.equal(abandoned.amount, 100);
+    assert.deepEqual(baskets.at(-1).paymentOptions, [{ type: "CREDITCARD", amount: 1 }]);
     const cancel = (headers = kiosk) => post("/kiosk/pos-payments/" + abandoned.id + "/cancel", {}, headers);
     assert.equal((await cancel({ ...kiosk, "X-Kiosk-Key": "wrong" })).status, 401);
     assert.equal((await cancel()).status, 409);

@@ -78,7 +78,7 @@ test('quotes use integer kurus, threshold, cap and expiration', () => {
   assert.equal(quote(23456, promotions, now).bonus, 2345);
   assert.equal(quote(1000000, promotions, now).bonus, 100000);
   assert.equal(quote(20000, promotions, Date.parse('2027-01-01')).bonus, 0);
-  for (const amount of [4999, 1000001, 5000.5, NaN]) assert.throws(() => quote(amount, promotions, now));
+  for (const amount of [99, 1000001, 100.5, NaN]) assert.throws(() => quote(amount, promotions, now));
 });
 test('concurrent POS approvals credit once and survive restart', async t => {
   const demo = await fixture(t); const before = (await demo.dashboard('DEMO0001')).wallet.balance;
@@ -114,27 +114,38 @@ test('idle clears customer and blocks API calls', async t => {
   await assert.rejects(() => kiosk.run('dashboard'));
   assert.equal((await kiosk.scan('DEMO0002')).member.name, 'Deniz');
 });
-test('activity cannot extend five minute hard limit', async t => {
-  const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
-  await kiosk.scan('DEMO0001'); const start = kiosk.session.started;
-  kiosk.touch(start + 299000); kiosk.tick(start + 300001); assert.equal(kiosk.session, null);
+test('active connected sessions stay open and renew the server token', async t => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  const renewed = [];
+  const gateway = {
+    login: async () => ({ accessToken: 'opaque' }),
+    dashboard: async () => ({ member: { id: '1' }, features: {} }),
+    keepKioskAlive: async token => { renewed.push(token); },
+  };
+  const kiosk = new KioskSession({ gateway, mode: 'connected' });
+  await kiosk.scan('001234');
+  for (let i = 0; i < 12; i++) {
+    now += 60000;
+    assert.equal((await kiosk.run('activity')).remaining, 90);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(renewed.length, 12);
+  assert.ok(renewed.every(token => token === 'opaque'));
+  assert.ok(kiosk.session);
 });
-test('idle confirmation renews the idle timer and distinguishes the hard deadline', async t => {
+test('only an explicit confirmation renews the idle timer during a warning', async t => {
   const kiosk = new KioskSession({ demo: await fixture(t), mode: 'demo', idleSeconds: 30 });
   await kiosk.scan('DEMO0001');
   kiosk.session.activity = Date.now() - 25000;
   const warning = kiosk.countdown();
-  assert.equal(warning.canContinue, true);
   assert.ok(warning.remaining <= 5);
+  assert.ok((await kiosk.run('activity')).remaining <= 5);
   const renewed = await kiosk.run('keepAlive');
   assert.equal(renewed.remaining, 30);
   assert.ok(renewed.revision > warning.revision);
-  kiosk.session.started = Date.now() - 290000;
-  const activity = kiosk.session.activity;
-  const expired = await kiosk.run('keepAlive');
-  assert.equal(expired.canContinue, false);
-  assert.ok(expired.remaining <= 10);
-  assert.equal(kiosk.session.activity, activity);
+  kiosk.session.activity = Date.now() - 31000;
+  await assert.rejects(() => kiosk.run('keepAlive'), /tekrar giriş/);
 });
 test('late response cannot reopen locked session', async () => {
   let finish; const demo = { dashboard: () => new Promise(resolve => finish = resolve) };
@@ -177,7 +188,7 @@ test('configured Ödeal sessions use the authenticated gateway and cannot simula
   await assert.rejects(() => kiosk.run('settle', { id: pending.id, outcome: 'approved' }), /POS cihazından/);
   const finished = await kiosk.run('payment', { id: pending.id });
   assert.equal(finished.status, 'completed');
-  assert.ok(finished.completionSeconds > 0);
+  assert.equal(kiosk.session.awaitingCompletionChoice, true);
   kiosk.lock();
 });
 test('unknown and overlapping cards cannot switch customers', async t => {
@@ -214,53 +225,46 @@ test('only the current card suffix is hidden; real surnames remain intact', asyn
   kiosk.lock();
 });
 
-test('completed topup starts a fixed 20s deadline; touches and repeated approval cannot extend it', async t => {
+test('completed topup uses the regular idle warning and repeated approval does not reset it', async t => {
   const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
   await kiosk.scan('DEMO0001');
   const payment = await kiosk.run('create', { amount:20000, key:'completion-test-unique' });
   const result = await kiosk.run('settle', { id:payment.id, outcome:'approved' });
-  assert.equal(result.completionSeconds, 20);
-  const deadline = kiosk.session.completionDeadline;
-  kiosk.touch(deadline - 1000);
+  assert.equal(result.status, 'completed');
+  const activity = Date.now() - 80000;
+  kiosk.session.activity = activity;
   await kiosk.run('settle', { id:payment.id, outcome:'approved' });
-  assert.equal(kiosk.session.completionDeadline, deadline);
-  assert.equal(kiosk.remaining(deadline - 1000), 1);
-  kiosk.tick(deadline); assert.equal(kiosk.session, null);
+  assert.equal(kiosk.session.activity, activity);
+  await assert.rejects(() => kiosk.run('continueSession'), /onayla/);
+  assert.equal((await kiosk.run('keepAlive')).remaining, 90);
+  kiosk.tick(kiosk.session.activity + 90000);
+  assert.equal(kiosk.session, null);
   await assert.rejects(() => kiosk.run('continueSession'));
   assert.equal((await kiosk.scan('DEMO0002')).member.name, 'Deniz');
 });
-test('only explicit continue restores normal navigation and a later topup starts a new countdown', async t => {
+test('only explicit continue restores normal navigation and a later topup offers the choice again', async t => {
   const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
   await kiosk.scan('DEMO0001');
   const p = await kiosk.run('create', { amount:20000, key:'continue-test-first' });
   await kiosk.run('settle', { id:p.id, outcome:'approved' });
   await assert.rejects(() => kiosk.run('transactions'), /Başka bir işlem yap/);
   await kiosk.run('continueSession');
-  assert.equal(kiosk.session.completionDeadline, undefined);
+  assert.equal(kiosk.session.awaitingCompletionChoice, false);
   assert.equal(kiosk.session.card, 'DEMO0001');
   await kiosk.run('transactions');
   const next = await kiosk.run('create', { amount:5000, key:'continue-test-second' });
   await kiosk.run('settle', { id:next.id, outcome:'approved' });
   assert.equal(kiosk.session.completionPaymentId, next.id);
-  assert.equal(kiosk.remaining(), 20);
+  assert.equal(kiosk.remaining(), 90);
 });
-test('finish immediately clears session, while declined payments do not start a completion countdown', async t => {
+test('finish immediately clears session, while declined payments do not require a completion choice', async t => {
   const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
   await kiosk.scan('DEMO0001');
   const p = await kiosk.run('create', { amount:20000, key:'finish-test-unique' });
   await kiosk.run('settle', { id:p.id, outcome:'declined' });
-  assert.equal(kiosk.session.completionDeadline, undefined);
+  assert.equal(kiosk.session.awaitingCompletionChoice, undefined);
   const next = await kiosk.run('create', { amount:5000, key:'finish-test-second' });
   await kiosk.run('settle', { id:next.id, outcome:'approved' });
   await kiosk.run('logout'); assert.equal(kiosk.session, null);
   await assert.rejects(() => kiosk.run('dashboard'));
-});
-test('completion deadline is configurable and hard session expiry remains authoritative', async t => {
-  const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo', completionSeconds:10 });
-  await kiosk.scan('DEMO0001');
-  const p = await kiosk.run('create', { amount:5000, key:'config-test-unique' });
-  const done = await kiosk.run('settle', { id:p.id, outcome:'approved' });
-  assert.equal(done.completionSeconds, 10);
-  kiosk.session.started = kiosk.session.completionDeadline - 311000;
-  kiosk.tick(); assert.equal(kiosk.session, null);
 });

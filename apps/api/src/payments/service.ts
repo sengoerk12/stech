@@ -15,9 +15,9 @@ export function calculateQuote(
   now = Date.now(),
   promotionId?: string,
 ): Quote {
-  if (!Number.isSafeInteger(amount) || amount < 5000 || amount > 1000000)
+  if (!Number.isSafeInteger(amount) || amount < 100 || amount > 1000000)
     throw new BadRequestException(
-      "50 TL ile 10.000 TL arasında bir tutar gir.",
+      "1 TL ile 10.000 TL arasında bir tutar gir.",
     );
   const eligible = promotions.filter(
     (p) =>

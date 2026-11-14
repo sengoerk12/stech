@@ -2,9 +2,9 @@ const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const money = amount => Number.isSafeInteger(amount) && amount >= 5000 && amount <= 1000000;
+const money = amount => Number.isSafeInteger(amount) && amount >= 100 && amount <= 1000000;
 function quote(amount, promotions, now = Date.now(), promotionId) {
-  if (!money(amount)) throw new Error('50 TL ile 10.000 TL arasında bir tutar seç.');
+  if (!money(amount)) throw new Error('1 TL ile 10.000 TL arasında bir tutar seç.');
   const eligible = promotions.filter(p => now >= Date.parse(p.startsAt) && now < Date.parse(p.endsAt) && amount >= p.minimumAmount);
   if (promotionId && !eligible.some(p => p.id === promotionId)) throw new Error('Seçilen kampanya bu tutar için geçerli değil.');
   const best = eligible.filter(p => !promotionId || p.id === promotionId)

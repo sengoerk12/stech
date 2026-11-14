@@ -18,12 +18,12 @@ async function services(db: Database) {
     auth: new PersistentAuthService(db, cafe),
   };
 }
-test("SQL: 50 TL minimum and 200 TL bonus threshold apply to stored payments", async () => {
+test("SQL: 1 TL minimum and 200 TL bonus threshold apply to stored payments", async () => {
   const db = await openDatabase();
   try {
     const { cafe, payments } = await services(db);
-    await assert.rejects(() => payments.create("demo-member", 4999, "too-low"));
-    const minimum = await payments.create("demo-member", 5000, "minimum-50");
+    await assert.rejects(() => payments.create("demo-member", 99, "too-low"));
+    const minimum = await payments.create("demo-member", 100, "minimum-1");
     assert.equal(minimum.bonus, 0);
     assert.equal((await payments.quote("demo-member", 19999)).bonus, 0);
     const bonusPayment = await payments.create(
@@ -37,7 +37,7 @@ test("SQL: 50 TL minimum and 200 TL bonus threshold apply to stored payments", a
     await payments.accept({
       eventId: "minimum-paid",
       paymentId: minimum.id,
-      amount: 5000,
+      amount: 100,
       currency: "TRY",
       status: "succeeded",
     });
@@ -48,7 +48,7 @@ test("SQL: 50 TL minimum and 200 TL bonus threshold apply to stored payments", a
       currency: "TRY",
       status: "succeeded",
     });
-    assert.equal((await cafe.getBalance("demo-member")).balance, 101250);
+    assert.equal((await cafe.getBalance("demo-member")).balance, 96350);
   } finally {
     await db.close();
   }

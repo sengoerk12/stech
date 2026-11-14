@@ -96,7 +96,7 @@ function render() {
   const campaignOffset = root.querySelector('.home-campaign-track')?.scrollLeft ?? 0;
   const member = state.data.member;
   const title = nav.find(item => item.id === state.page)?.label;
-  root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${e(n.label)}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${e(title)}</span><div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : state.page === 'games' ? kioskGames.render() : state.page === 'profile' ? profile() : ''}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Oturum <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
+  root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${e(n.label)}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${e(title)}</span><div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : state.page === 'games' ? kioskGames.render() : state.page === 'profile' ? profile() : ''}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Hareketsizlik <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
   window.kioskDesign?.apply(root, state.page);
   const campaignTrack = root.querySelector('.home-campaign-track');
   if (campaignTrack) campaignTrack.scrollLeft = campaignOffset;
@@ -148,8 +148,8 @@ function topup() {
   const q = state.quote;
   return `<div class="page-heading"><div><span class="eyebrow">OYUNA ARA VERME</span><h1>Bir sonraki oyuna hazır ol.</h1><p>Yüklemek istediğin tutarı seç, kartınla öde, devam et.</p></div></div>
   ${state.data.features.odealStage ? '<div class="notice">Ödeal test ortamı · Deneme bakiyesi</div>' : state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : state.data.features.topup ? '' : '<div class="notice">' + icon('info') + ' POS ile yükleme şu anda kapalı.</div>'}
-  <div class="topup-grid"><section class="panel amount-panel"><div class="section-heading"><h2>Yükleme tutarı</h2><span>01 / 02</span></div><div class="amount-display"><span>₺</span><strong>${e(state.amount || '0')}</strong><span>TL</span></div><div class="amount-presets">${[100, 200, 500, 1000].map(n => button(`${n} TL`, `amount:${n}`, Number(state.amount) === n ? 'preset selected' : 'preset')).join('')}</div><div class="keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Temizle' : k === 'back' ? '⌫' : k, `key:${k}`, k === 'clear' ? 'key key-small' : 'key')).join('')}</div><p class="muted minimum">En az 50 TL · En fazla 10.000 TL</p></section>
-  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div>${state.data.features.odealPos ? '' : `<div class="summary-row s-coin-quote"><span>Kazanılacak S Coin</span><strong>${Number.isSafeInteger(q?.sCoinEarned) ? e(q.sCoinEarned) + ' S Coin' : '—'}</strong></div>`}<div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
+  <div class="topup-grid"><section class="panel amount-panel"><div class="section-heading"><h2>Yükleme tutarı</h2><span>01 / 02</span></div><div class="amount-display"><span>₺</span><strong>${e(state.amount || '0')}</strong><span>TL</span></div><div class="amount-presets">${[100, 200, 500, 1000].map(n => button(`${n} TL`, `amount:${n}`, Number(state.amount) === n ? 'preset selected' : 'preset')).join('')}</div><div class="keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Temizle' : k === 'back' ? '⌫' : k, `key:${k}`, k === 'clear' ? 'key key-small' : 'key')).join('')}</div><p class="muted minimum">En az 1 TL · En fazla 10.000 TL</p></section>
+  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div><div class="summary-row s-coin-quote"><span>Kazanılacak S Coin</span><strong>${Number.isSafeInteger(q?.sCoinEarned) ? e(q.sCoinEarned) + ' S Coin' : '—'}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
 }
 async function checkPosStatus(showError = false) {
   const current = state.payment;
@@ -162,11 +162,6 @@ async function checkPosStatus(showError = false) {
     if (epoch !== state.epoch || state.processing || state.payment !== current) return;
     if (payment.status === current.status && payment.awaitingTerminal === current.awaitingTerminal) return;
     state.payment = payment;
-    if (payment.completionSeconds !== undefined) {
-      state.seconds = payment.completionSeconds;
-      state.modal = null;
-      renderModal();
-    }
     render();
     if (payment.status === 'completed' || payment.status === 'failed') await refresh();
   } catch (error) {
@@ -187,7 +182,7 @@ function paymentView() {
   const title = done ? 'Hazırsın. İyi oyunlar!' : failed ? 'Ödeme tamamlanmadı.' : transferring ? 'Bakiye yükleniyor…' : waiting ? 'POS işlemi kontrol ediliyor…' : 'Kartını POS cihazına okut.';
   const detail = done ? (p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
   return `<div class="payment-page">${!state.processing && !done && (!physical || failed) ? button(icon('back') + ' Tutara geri dön', 'payment-back', 'quiet') : ''}<div class="payment-steps"><span class="finished">1 <b>Tutar seçimi</b></span><i></i><span class="${done ? 'finished' : 'current'}">2 <b>POS ile ödeme</b></span><i></i><span class="${done ? 'finished' : ''}">3 <b>Bakiye onayı</b></span></div><section class="panel payment-panel"><div class="payment-illustration ${done ? 'success' : failed ? 'failure' : ''}">${icon(done ? 'check' : failed ? 'close' : 'topup')}</div><span class="eyebrow">${done ? 'İŞLEM TAMAMLANDI' : failed ? 'ÖDEME ONAYLANMADI' : 'POS İLE ÖDEME'}</span><h1>${title}</h1><p>${detail}</p><div class="payment-value">${cash(p.amount)}</div><div class="payment-receipt"><span>Yükleme <b>${cash(p.amount)}</b></span><span>Bonus <b class="positive">+${cash(p.bonus)}</b></span>${done ? '<span>Yeni bakiye <b>' + cash(p.balanceAfter) + '</b></span>' : ''}</div>
-  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div><p class="completion-countdown">Seçim yapmazsan <b id="completion-seconds">' + Math.ceil(state.seconds) + '</b> saniye sonra oturumun kapanacak.</p></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + button('Durumu kontrol et', 'pos-status', 'secondary', state.processing) + cancel + '</div>' : `<div class="pos-demo"><span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span><div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
+  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + button('Durumu kontrol et', 'pos-status', 'secondary', state.processing) + cancel + '</div>' : `<div class="pos-demo"><span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span><div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
   <div class="receipt-id">İşlem no: ${e(p.id)}</div></section></div>`;
 }
 function campaigns() {
@@ -274,7 +269,6 @@ function renderModal() {
       </form>`;
     resetLoginFormTimer();
   } else if (state.modal === 'idle') content = `<div class="modal-symbol">${icon('history')}</div><h2>Hâlâ burada mısın?</h2><p>Gizliliğin için oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak.</p>${button('Buradayım, devam et', 'continue', 'primary wide')}${button('Oturumu bitir', 'logout', 'quiet wide')}`;
-  else if (state.modal === 'expiry') content = `<div class="modal-symbol">${icon('history')}</div><h2>Oturum süren doluyor</h2><p>Oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak. Devam etmek için yeniden giriş yapabilirsin.</p>${button('Oturumu bitir', 'confirm-logout', 'primary wide')}`;
   else if (state.modal === 'logout') content = `<div class="modal-symbol">${icon('logout')}</div><h2>İşlemlerin tamam mı?</h2><p>Oturumun kapanacak ve ekran yeni müşteri için hazırlanacak.</p>${button('Evet, oturumu bitir', 'confirm-logout', 'primary wide')}${button('Hesabıma dön', 'close-modal', 'secondary wide')}`;
   else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   else if (state.modal === 'computer-start' && selectedComputer) {
@@ -423,7 +417,7 @@ async function updateQuote() {
   const version = ++state.quoteVersion, epoch = state.epoch;
   state.quote = null; state.quoteError = ''; render();
   const amount = Number(state.amount || 0) * 100;
-  if (amount < 5000 || amount > 1000000) return;
+  if (amount < 100 || amount > 1000000) return;
   try { const q = await call('quote', { amount, promotionId: state.promotionId });
   if (version === state.quoteVersion && epoch === state.epoch) { state.quote = q; render(); }
   } catch (error) { if (version === state.quoteVersion && epoch === state.epoch) { state.quoteError = error.message; render(); } }
@@ -448,10 +442,10 @@ async function refreshSCoin() {
   if (sCoinEpoch === epoch) return;
   sCoinEpoch = epoch;
   try {
-    const { units, unitsPerCoin, testOnly, playableCoins } = await call('sCoin');
+    const { units, unitsPerCoin, testOnly, playableCoins, testPlayableCoins } = await call('sCoin');
     if (!Number.isSafeInteger(units) || units < 0 || unitsPerCoin !== 10000) throw new Error('Invalid S Coin balance');
     const value = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 4 }).format(units / unitsPerCoin);
-    if (epoch === state.epoch) kioskGames.showSCoin(`${testOnly ? 'Test S Coin' : 'S Coin'} · ${value}`, playableCoins);
+    if (epoch === state.epoch) kioskGames.showSCoin(`${testOnly ? 'Test S Coin' : 'S Coin'} · ${value}`, testOnly ? playableCoins : testPlayableCoins);
   } catch {
     if (epoch === state.epoch) kioskGames.showSCoin('S Coin bakiyesi şu anda alınamıyor.');
   } finally {
@@ -483,13 +477,13 @@ async function action(value) {
   if (name === 'logout') { state.modal = 'logout'; renderModal(); return; }
   if (name === 'confirm-logout') { reset(); await call('logout'); return; }
   if (name === 'continue') {
-    if (state.payment?.status === 'completed' || confirmingEpoch === state.epoch) return;
+    if (confirmingEpoch === state.epoch) return;
     const epoch = state.epoch;
     confirmingEpoch = epoch;
     try {
       const countdown = await call('keepAlive');
       if (epoch !== state.epoch) return;
-      if (state.modal === 'idle' && countdown.canContinue) { state.modal = null; renderModal(); }
+      if (state.modal === 'idle') { state.modal = null; renderModal(); }
       showCountdown(countdown);
     } finally { if (confirmingEpoch === epoch) confirmingEpoch = undefined; }
     return;
@@ -538,7 +532,6 @@ async function action(value) {
       const payment = await call('cancel-payment', { id: current.id });
       if (epoch !== state.epoch) return;
       state.payment = payment;
-      if (payment.completionSeconds !== undefined) state.seconds = payment.completionSeconds;
       await refresh();
     } finally {
       if (epoch === state.epoch) { state.processing = false; render(); }
@@ -563,11 +556,11 @@ async function action(value) {
     finally { if (epoch === state.epoch) { state.processing = false; render(); } }
     return;
   }
-  if (name === 'resume') { const epoch = state.epoch; const payment = await call('payment', { id: arg }); if (epoch !== state.epoch) return; state.payment = payment; if (payment.completionSeconds !== undefined) state.seconds = payment.completionSeconds; state.page = 'topup'; render(); return; }
+  if (name === 'resume') { const epoch = state.epoch; const payment = await call('payment', { id: arg }); if (epoch !== state.epoch) return; state.payment = payment; state.page = 'topup'; render(); return; }
   if ((name === 'approve' || name === 'decline') && state.info.mode === 'demo') {
     if (state.processing || !state.payment || state.payment.status !== 'pending') return;
     const epoch = state.epoch; state.processing = true; render();
-    try { const payment = await call('settle', { id: state.payment.id, outcome: name === 'approve' ? 'approved' : 'declined' }); if (epoch !== state.epoch) return; state.payment = payment; if (payment.completionSeconds !== undefined) { state.seconds = payment.completionSeconds; state.modal = null; renderModal(); } await refresh(); }
+    try { const payment = await call('settle', { id: state.payment.id, outcome: name === 'approve' ? 'approved' : 'declined' }); if (epoch !== state.epoch) return; state.payment = payment; await refresh(); }
     finally { if (epoch === state.epoch) { state.processing = false; render(); } }
     return;
   }
@@ -595,10 +588,10 @@ document.addEventListener('submit', event => {
   void submitPasswordLogin(event.target);
 });
 let lastActivity = 0;
-for (const event of ['pointerdown','keydown']) document.addEventListener(event, () => {
+for (const event of ['pointerdown', 'keydown', 'wheel']) document.addEventListener(event, () => {
   if (state.modal === 'password-login' && !state.loading) resetLoginFormTimer();
-  if (state.data && !['idle', 'expiry'].includes(state.modal) && Date.now() - lastActivity > 1000) { lastActivity = Date.now(); void call('activity').catch(() => {}); }
-});
+  if (state.data && state.modal !== 'idle' && Date.now() - lastActivity > 1000) { lastActivity = Date.now(); void call('activity').then(showCountdown).catch(() => {}); }
+}, { capture: true, passive: true });
 let cardBuffer = '', lastKey = 0;
 document.addEventListener('keydown', event => {
   if (state.modal) {
@@ -624,17 +617,16 @@ document.addEventListener('keydown', event => {
 });
 let confirmingEpoch;
 let countdownRevision = 0;
-function showCountdown({ remaining, canContinue, revision }) {
+function showCountdown({ remaining, revision }) {
   if (revision <= countdownRevision) return;
   countdownRevision = revision ?? countdownRevision;
   state.seconds = remaining;
-  for (const id of ['seconds', 'completion-seconds', 'idle-seconds']) {
+  for (const id of ['seconds', 'idle-seconds']) {
     const element = $('#' + id);
     if (element) element.textContent = remaining;
   }
-  if (!state.data || state.payment?.status === 'completed' || remaining > 15) return;
-  const modal = canContinue ? 'idle' : 'expiry';
-  if (state.modal !== modal) { state.modal = modal; renderModal(); }
+  if (!state.data || remaining > 15) return;
+  if (state.modal !== 'idle') { state.modal = 'idle'; renderModal(); }
 }
 if (window.stech) {
   window.stech.on('locked', reset);

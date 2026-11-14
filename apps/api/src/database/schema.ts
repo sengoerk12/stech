@@ -2,6 +2,7 @@
 export const schema = [
   `CREATE TABLE IF NOT EXISTS app_users (id text PRIMARY KEY, cafe_member_id text NOT NULL UNIQUE, created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS auth_families (id uuid PRIMARY KEY, user_id text NOT NULL REFERENCES app_users(id), revoked boolean NOT NULL DEFAULT false)`,
+  `ALTER TABLE auth_families ADD COLUMN IF NOT EXISTS is_kiosk boolean NOT NULL DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS auth_sessions (
     token_hash text PRIMARY KEY, user_id text NOT NULL REFERENCES app_users(id), family_id uuid NOT NULL,
     kind text NOT NULL CHECK(kind IN ('access','refresh')), expires_at timestamptz NOT NULL, revoked boolean NOT NULL DEFAULT false)`,
@@ -84,4 +85,9 @@ export const schema = [
   `CREATE INDEX IF NOT EXISTS s_coin_pending ON s_coin_awards(installation_id,test_only,created_at) WHERE synced_at IS NULL`,
   `CREATE TABLE IF NOT EXISTS kiosk_design_state(id integer PRIMARY KEY CHECK(id=1),revision integer NOT NULL,document jsonb NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS kiosk_design_versions(sequence bigserial UNIQUE,id uuid PRIMARY KEY,document jsonb NOT NULL,actor text NOT NULL,created_at timestamptz NOT NULL DEFAULT now())`,
+  `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=9) THEN
+    ALTER TABLE payment_orders DROP CONSTRAINT payment_orders_amount_check;
+    ALTER TABLE payment_orders ADD CONSTRAINT payment_orders_amount_check CHECK(amount BETWEEN 100 AND 1000000);
+    INSERT INTO schema_migrations(version) VALUES(9);
+  END IF; END $$`,
 ];

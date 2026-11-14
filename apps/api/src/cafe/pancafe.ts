@@ -361,7 +361,7 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   async addBalance(userId: string, amount: number, bonus: number, operationId: string): Promise<Wallet> {
     if (!this.config.allowBalanceCredit)
       throw new ServiceUnavailableException("PanCafe bakiye yükleme entegrasyonu henüz etkin değil.");
-    if (!Number.isSafeInteger(amount) || amount < 5000 || amount > 1000000 ||
+    if (!Number.isSafeInteger(amount) || amount < 100 || amount > 1000000 ||
         !Number.isSafeInteger(bonus) || bonus < 0 || bonus > 100000 ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId))
       throw new BadRequestException("Geçersiz bakiye yükleme bilgisi.");

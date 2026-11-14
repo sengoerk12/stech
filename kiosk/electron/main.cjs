@@ -33,7 +33,7 @@ async function boot() {
   const demo = new DemoStore(path.join(app.getPath('userData'), 'demo-wallets.json'));
   if (config.mode === 'demo') await demo.initialize();
   kiosk = new KioskSession({ demo, gateway: config.mode === 'connected' ? new ApiGateway(config) : null,
-    mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)), completionSeconds: config.completionSeconds,
+    mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)),
     onLock: () => {
       if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
         window.webContents.send('kiosk:locked');

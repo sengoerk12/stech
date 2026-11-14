@@ -1,24 +1,31 @@
 const { normalizeCard, quote } = require('./core.cjs');
 
+const idleWarningSeconds = 15;
+const leaseRenewalMs = 45000;
+
 class KioskSession {
-  constructor({ demo, gateway, mode, idleSeconds = 90, completionSeconds = 20, onLock = () => {} }) {
+  constructor({ demo, gateway, mode, idleSeconds = 90, onLock = () => {} }) {
     this.demo = demo; this.gateway = gateway; this.mode = mode; this.idleMs = idleSeconds * 1000; this.onLock = onLock;
     this.generation = 0; this.session = null; this.busy = false;
     this.countdownRevision = 0;
-    this.completionMs = Math.max(5, Math.min(60, Number(completionSeconds) || 20)) * 1000;
   }
-  touch(now = Date.now()) { if (this.session) this.session.activity = now; }
+  markActivity(session, now) {
+    session.activity = now;
+    if (!session.token || session.renewing || now - session.renewedAt < leaseRenewalMs) return;
+    session.renewing = true;
+    void this.gateway.keepKioskAlive(session.token).then(() => {
+      session.renewedAt = now;
+    }).catch(error => {
+      if (error.status === 401 && this.session === session) this.lock();
+    }).finally(() => { session.renewing = false; });
+  }
   remaining(now = Date.now()) {
-    return this.session ? Math.max(0, Math.ceil((Math.min(
-      this.session.completionDeadline ?? this.session.activity + this.idleMs,
-      this.session.started + 300000,
-    ) - now) / 1000)) : 0;
+    return this.session ? Math.max(0, Math.ceil((this.session.activity + this.idleMs - now) / 1000)) : 0;
   }
   countdown(now = Date.now()) {
     return {
       revision: ++this.countdownRevision,
       remaining: this.remaining(now),
-      canContinue: Boolean(this.session && !this.session.completionDeadline && this.session.started + 300000 - now > 15000),
     };
   }
   tick(now = Date.now()) { if (this.session && this.remaining(now) <= 0) this.lock(); }
@@ -49,7 +56,7 @@ class KioskSession {
       if (this.mode === 'connected') token = (await authenticate()).accessToken;
       const data = this.mode === 'demo' ? await this.demo.dashboard(card) : await this.gateway.dashboard(token);
       if (epoch !== this.generation) throw new Error('Oturum kapandı. Tekrar giriş yap.');
-      this.session = { card, token, started, activity: Date.now() };
+      this.session = { card, token, renewedAt: started, activity: Date.now() };
       this.session.odealPos = data.features?.odealPos === true;
       return this.publicDashboard(data);
     } catch (error) {
@@ -77,20 +84,22 @@ class KioskSession {
     if (action === 'logout') { this.lock(); return { ok: true }; }
     const session = this.session, epoch = this.generation;
     if (!session) throw new Error('Devam etmek için tekrar giriş yap.');
-    if (action === 'activity') { this.touch(now); return this.countdown(now); }
+    if (action === 'activity') {
+      if (this.remaining(now) > idleWarningSeconds) this.markActivity(session, now);
+      return this.countdown(now);
+    }
     if (action === 'keepAlive') {
-      const status = this.countdown(now);
-      if (!status.canContinue) return status;
-      this.touch(now);
+      this.markActivity(session, now);
       return this.countdown(now);
     }
     if (action === 'continueSession') {
-      if (!session.completionDeadline) throw new Error('Tamamlanmış işlem bulunamadı.');
-      delete session.completionDeadline;
-      this.touch();
+      if (!session.awaitingCompletionChoice) throw new Error('Tamamlanmış işlem bulunamadı.');
+      if (this.remaining(now) <= idleWarningSeconds) throw new Error('Önce oturumuna devam etmek istediğini onayla.');
+      session.awaitingCompletionChoice = false;
+      this.markActivity(session, now);
       return { remaining: this.remaining() };
     }
-    if (session.completionDeadline && !['dashboard', 'payment', 'settle'].includes(action))
+    if (session.awaitingCompletionChoice && !['dashboard', 'payment', 'settle'].includes(action))
       throw new Error('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.');
     let result;
     if (action === 'dashboard') result = this.publicDashboard(this.mode === 'demo' ? await this.demo.dashboard(session.card) : await this.gateway.dashboard(session.token));
@@ -110,7 +119,6 @@ class KioskSession {
         throw new Error('Önce devam eden oturum açma işlemini kontrol et.');
       session.startInFlight = true;
       session.unresolvedStart = { terminalId: payload.terminalId, operationId: payload.operationId };
-      this.touch();
       try {
         result = await this.gateway[action](session.token, session.unresolvedStart);
         if (result.status !== 'pending') delete session.unresolvedStart;
@@ -141,12 +149,10 @@ class KioskSession {
     this.tick();
     if (epoch !== this.generation) throw new Error('Oturum kapandı. Tekrar giriş yap.');
     if (action === 'dashboard') session.odealPos = result.features?.odealPos === true;
-    if (['settle', 'payment', 'cancel-payment'].includes(action) && result.status === 'completed') {
-      if (session.completionPaymentId !== result.id) {
-        session.completionPaymentId = result.id;
-        session.completionDeadline = Date.now() + this.completionMs;
-      }
-      if (session.completionDeadline) return { ...result, completionSeconds: this.remaining() };
+    if (['settle', 'payment', 'cancel-payment'].includes(action) && result.status === 'completed'
+        && session.completionPaymentId !== result.id) {
+      session.completionPaymentId = result.id;
+      session.awaitingCompletionChoice = true;
     }
     return result;
   }

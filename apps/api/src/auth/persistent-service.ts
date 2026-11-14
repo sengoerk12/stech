@@ -3,6 +3,7 @@ import { UnauthorizedException } from "@nestjs/common";
 import type { AuthTokens } from "@stech/contracts";
 import type { Database, SqlExecutor } from "../database/database";
 import type { CafeSystemAdapter } from "../cafe/adapter";
+const KIOSK_LEASE_SECONDS = 600;
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 interface SessionRow {
@@ -22,18 +23,31 @@ export class PersistentAuthService {
       throw new UnauthorizedException("Kullanıcı adı veya şifre hatalı.");
     return this.db.transaction((tx) => this.issue(tx, member.id, randomUUID()));
   }
-  /** Kiosk sessions have no refresh token and expire after five minutes. */
+  /** Kiosk credentials renew in place when the device reports customer activity. */
   async kioskAccess(userId: string) {
     return this.db.transaction(async tx => {
       const family = randomUUID();
       const accessToken = randomBytes(32).toString("base64url");
-      await tx.query("INSERT INTO auth_families(id,user_id) VALUES($1,$2)", [family, userId]);
+      await tx.query("INSERT INTO auth_families(id,user_id,is_kiosk) VALUES($1,$2,true)", [family, userId]);
       await tx.query(
         "INSERT INTO auth_sessions(token_hash,user_id,family_id,kind,expires_at) VALUES($1,$2,$3,'access',$4)",
-        [hash(accessToken), userId, family, new Date(Date.now() + 300000)],
+        [hash(accessToken), userId, family, new Date(Date.now() + KIOSK_LEASE_SECONDS * 1000)],
       );
-      return { accessToken, expiresIn: 300 };
+      return { accessToken, expiresIn: KIOSK_LEASE_SECONDS };
     });
+  }
+
+  async keepKioskAlive(token: string) {
+    const renewed = await this.db.query(
+      `UPDATE auth_sessions AS s SET expires_at=$2
+       FROM auth_families AS f
+       WHERE s.family_id=f.id AND f.is_kiosk AND NOT f.revoked AND NOT s.revoked
+         AND s.token_hash=$1 AND s.kind='access' AND s.expires_at>now()
+       RETURNING s.token_hash`,
+      [hash(token), new Date(Date.now() + KIOSK_LEASE_SECONDS * 1000)],
+    );
+    if (!renewed.rows.length) throw new UnauthorizedException("Oturumun sona erdi. Tekrar giriş yap.");
+    return { expiresIn: KIOSK_LEASE_SECONDS };
   }
   private async issue(
     tx: SqlExecutor,

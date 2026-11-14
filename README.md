@@ -46,7 +46,7 @@ npm run build:api
 npm run lint -w @stech/mobile
 ```
 
-26 kritik test; bonus sınırları, tekrar webhook, tutar manipülasyonu, başarısız ödeme, uzaktan aktarım sonrası timeout, refresh replay, HTTP akışı, SQL rollback, veritabanı yeniden başlatma, kalıcı kuyruk, işleyici lease kurtarma, yeni hesapların veri ayrımı, 50 TL minimum / 200 TL bonus eşiği ve PanCafe kimlik/parola aktarımını kapsar.
+26 kritik test; bonus sınırları, tekrar webhook, tutar manipülasyonu, başarısız ödeme, uzaktan aktarım sonrası timeout, refresh replay, HTTP akışı, SQL rollback, veritabanı yeniden başlatma, kalıcı kuyruk, işleyici lease kurtarma, yeni hesapların veri ayrımı, 1 TL minimum / 200 TL bonus eşiği ve PanCafe kimlik/parola aktarımını kapsar.
 ## Kayıt ol
 
 Giriş ekranındaki “Kayıt ol” bağlantısı kayıt formunu açar. Yeni hesaplar geliştirme adaptöründe kalıcı olarak saklanır; bakiye 0 TL, işlem geçmişi boştur. Telefon ve e-posta isteğe bağlıdır; girilmeyen alanlara örnek bilgi eklenmez. İletişim bilgileri henüz SMS/e-posta ile doğrulanmaz. Kayıt sonrası otomatik giriş yapılır; oturum cihazda kalıcı olarak hatırlanmaz. Gerçek kafe sisteminde hesap açma entegrasyonu sonraya bırakılmıştır. Ek veritabanı şeması: `database/002_registration.sql`.

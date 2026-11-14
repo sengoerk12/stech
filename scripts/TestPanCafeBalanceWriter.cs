@@ -28,6 +28,11 @@ public static class TestPanCafeBalanceWriter {
             Expect(rollback,"Injected history failure accepted");
             Expect(PanCafeReadOnly.Query(copy,client,"SELECT CAST(BAKIYE AS DECIMAL(18,2)) AS BALANCE FROM MEMBERS WHERE ID="+memberId)[0]["BALANCE"]=="220.00","Failed transaction changed balance");
             Expect(PanCafeReadOnly.Query(copy,client,"SELECT COUNT(*) AS N FROM STECH_MOBILE_CREDITS WHERE OPID='"+failedOperation+"'")[0]["N"]=="0","Failed transaction retained receipt");
+            bool belowMinimum=false;
+            try{PanCafeBalanceWriter.Credit(copy,client,memberId,username,99,0,Guid.NewGuid().ToString());}catch(ArgumentException){belowMinimum=true;}
+            Expect(belowMinimum,"Credit below 1 TL accepted");
+            var minimum=PanCafeBalanceWriter.Credit(copy,client,memberId,username,100,0,Guid.NewGuid().ToString());
+            Expect(minimum[0]["BALANCE_TL"]=="221.00","1 TL credit mismatch");
             Console.WriteLine("Database copy: native credit, bonus, history, duplicate prevention, member identity, conflict and atomic rollback passed.");return 0;
         } catch(Exception error){Console.Error.WriteLine(error.Message);return 1;}
     }

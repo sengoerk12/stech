@@ -28,7 +28,7 @@ export default function Topup() {
   const [showMethod, setShowMethod] = useState(false);
   const attempt = useRef({ amount: 0, key: "" });
   const valid =
-    Number.isSafeInteger(amount) && amount >= 5000 && amount <= 1000000;
+    Number.isSafeInteger(amount) && amount >= 100 && amount <= 1000000;
   const quote = useQuery({
     queryKey: ["quote", amount],
     queryFn: () => api.quote(amount),
@@ -296,7 +296,7 @@ export default function Topup() {
         )}
         {customMode && !!custom && !valid && (
           <Label style={{ color: theme.colors.error, fontSize: 12 }}>
-            50 TL ile 10.000 TL arasında bir tutar gir.
+            1 TL ile 10.000 TL arasında bir tutar gir.
           </Label>
         )}
         {valid && (

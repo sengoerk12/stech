@@ -48,12 +48,12 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => !document.querySelector('[data-action="pay"]').disabled);
     await page.getByRole('button', { name:'POS ile ödemeye geç' }).click();
     await page.getByRole('button', { name:'Ödemeyi reddet' }).click();
-    await page.getByRole('heading', { name:'Tekrar deneyebilirsin.' }).waitFor();
+    await page.getByRole('heading', { name:'Ödeme tamamlanmadı.' }).waitFor();
     await page.getByRole('button', { name:'Yeni işlem başlat' }).click();
     await page.getByRole('button', { name:'Ana ekran', exact:true }).click();
     assert.match(await page.locator('.balance-value').innerText(), /125,00/);
-    // Exercise idle warning/expiry without waiting in real time.
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('kiosk:countdown', { remaining: 10, canContinue: true }));
+    // Trigger the warning with a later revision than previous activity updates.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('kiosk:countdown', { remaining: 10 }));
     await page.getByRole('heading', { name:'Hâlâ burada mısın?' }).waitFor();
     await page.screenshot({ path:path.join(output,'08-idle.png') });
     await page.getByRole('button', { name:'Buradayım, devam et' }).click();
@@ -78,18 +78,13 @@ const assert = require('node:assert/strict');
     await page.getByRole('button', { name:'POS ile ödemeye geç' }).click();
     await page.getByRole('button', { name:'Ödemeyi onayla' }).click();
     await page.getByRole('heading', { name:'Başka bir işlem yapmak ister misin?' }).waitFor();
-    await page.waitForTimeout(6500);
-    assert.equal(await page.getByRole('heading', { name:'Hâlâ burada mısın?' }).count(), 0);
-    // Touching unrelated parts of the success screen must not extend the fixed timer.
-    await page.locator('.payment-value').click();
-    await page.getByRole('heading', { name:'Üye kartını okut' }).waitFor({ timeout:18000 });
+    await page.getByRole('heading', { name:'Hâlâ burada mısın?' }).waitFor({ timeout:20000 });
+    await page.getByRole('button', { name:'Buradayım, devam et' }).click();
+    await page.getByRole('heading', { name:'Hâlâ burada mısın?' }).waitFor({ state:'hidden' });
+    await page.getByRole('button', { name:'İşlemleri bitir', exact:true }).click();
+    await page.getByRole('heading', { name:'Üye kartını okut' }).waitFor();
     assert.equal(await page.locator('.member-mini').count(), 0);
-    await page.getByRole('button', { name:'Kaan olarak dene' }).click();
-    await page.getByRole('heading', { name:'Merhaba, Kaan.' }).waitFor();
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('kiosk:countdown', { remaining: 10, canContinue: false }));
-    await page.getByRole('heading', { name:'Oturum süren doluyor' }).waitFor();
-    assert.equal(await page.getByRole('button', { name:'Buradayım, devam et' }).count(), 0);
     assert.deepEqual(errors, []);
-    console.log('Electron UI verified: NFC keyboard login, topup, approval, decline, history, campaign, profile, account isolation, idle modal, 1024px layout, ATM continue/finish, fixed completion timeout and fresh customer entry.');
+    console.log('Electron UI verified: NFC keyboard login, topup, approval, decline, history, campaign, profile, account isolation, idle modal, 1024px layout, ATM continue/finish and confirmation on the payment result.');
   } finally { await app.close(); await rm(dataDir, { recursive:true, force:true }); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

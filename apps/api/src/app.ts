@@ -105,7 +105,7 @@ class RefreshDto {
   @IsString() @MinLength(32) @MaxLength(200) refreshToken!: string;
 }
 class AmountDto {
-  @IsInt() @Min(5000) @Max(1000000) amount!: number;
+  @IsInt() @Min(100) @Max(1000000) amount!: number;
 }
 class KioskQuoteDto extends AmountDto {
   @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9_-]{1,80}$/) promotionId?: string;
@@ -197,12 +197,13 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const firebaseSync = firebaseProject && bridgeConfig && bridge
     ? createFirebaseSync(firebaseProject, bridgeConfig.installationId, bridge, firebaseBalanceWrite)
     : null;
-  // This runtime uses a simulated payment provider. Its awards live in a test wallet.
-  const sCoin = firebaseSync && bridgeConfig
-    ? new SCoinService(db, firebaseSync.firestore.collection("pancafeInstallations").doc(bridgeConfig.installationId)
-      .collection("sCoinTestWallets"), bridgeConfig.installationId, true)
-    : null;
-  const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock", sCoin ?? undefined);
+  const installation = firebaseSync && bridgeConfig
+    ? firebaseSync.firestore.collection("pancafeInstallations").doc(bridgeConfig.installationId) : null;
+  const testSCoin = installation && bridgeConfig
+    ? new SCoinService(db, installation.collection("sCoinTestWallets"), bridgeConfig.installationId, true) : undefined;
+  const liveSCoin = installation && bridgeConfig && odeal?.mode === "live"
+    ? new SCoinService(db, installation.collection("sCoinWallets"), bridgeConfig.installationId, false) : undefined;
+  const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock", testSCoin);
   const posCafe = odeal?.mode === "stage" && panCafe
     ? new PanCafeSimulationAdapter(db, cafe, false) : cafe;
   const odealProvider = odeal ? new OdealPaymentProvider(odeal, async id => {
@@ -210,7 +211,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     return { ...member, address: (await cafe.getProfile?.(id))?.address };
   }) : null;
   const posPayments = odeal && odealProvider
-    ? new PersistentPaymentService(db, posCafe, odealProvider, odeal.mode === "live" ? "pancafe" : "mock", undefined, odeal.deviceCode)
+    ? new PersistentPaymentService(db, posCafe, odealProvider, odeal.mode === "live" ? "pancafe" : "mock", liveSCoin, odeal.deviceCode)
     : null;
   const admin = new AdminService(db, bridge, payments, env, posPayments ?? undefined);
   const AdminController = createAdminController(admin);
@@ -246,19 +247,28 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   }
   @Controller()
   class ApiController {
+    @Post("kiosk/session/keep-alive")
+    async kioskKeepAlive(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined) {
+      if (!kioskAuth) throw new ServiceUnavailableException("Kiosk bağlantısı yapılandırılmadı.");
+      kioskAuth.verifyDevice(key);
+      return auth.keepKioskAlive(token(req));
+    }
     @Get("kiosk/s-coin")
     @Header("Cache-Control", "no-store")
     async kioskSCoin(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined) {
-      if (!kioskAuth || !sCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
+      if (!kioskAuth || !testSCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
       kioskAuth.verifyDevice(key);
-      return sCoin.balance(await user(req));
+      const id = await user(req);
+      if (!liveSCoin) return testSCoin.balance(id);
+      const [balance, testBalance] = await Promise.all([liveSCoin.balance(id), testSCoin.balance(id)]);
+      return { ...balance, testPlayableCoins: testBalance.playableCoins };
     }
     @Post(["kiosk/s-coin/play", "kiosk/s-coin/wheel"])
     async kioskSCoinPlay(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined, @Body() body: unknown) {
-      if (!kioskAuth || !sCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
+      if (!kioskAuth || !testSCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
       kioskAuth.verifyDevice(key);
       const dto = parse(SCoinPlayDto, body);
-      return sCoin.playTestGame(await user(req), dto.operationId, dto.game);
+      return testSCoin.playTestGame(await user(req), dto.operationId, dto.game);
     }
     @Post("kiosk/card-login") async kioskLogin(
       @Headers("x-kiosk-key") key: string | undefined,
@@ -574,12 +584,13 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       posPayments?.startWorker();
       if (env.FIREBASE_SYNC_ENABLED === "true") firebaseSync?.worker.start();
       promotionSync?.start();
-      sCoin?.start();
+      testSCoin?.start();
+      liveSCoin?.start();
     }
     async onModuleDestroy() {
       await payments.stopWorker();
       await posPayments?.stopWorker();
-      await sCoin?.stop();
+      await Promise.all([testSCoin?.stop(), liveSCoin?.stop()]);
       await promotionSync?.stop();
       await firebaseSync?.stop();
       await db.close();

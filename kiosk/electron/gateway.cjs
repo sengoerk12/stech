@@ -42,6 +42,7 @@ class ApiGateway {
   }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
+  keepKioskAlive(token) { return this.request('/kiosk/session/keep-alive', token, {}); }
   async design() { const result=await this.request('/kiosk/design',null,undefined,this.designVersion?{'If-None-Match':'"'+this.designVersion+'"'}:{});if(result?.id)this.designVersion=result.id;return result; }
   pcAvailability() { return this.read('/kiosk/pc-availability', null); }
   computers(token) { return this.read('/kiosk/computers', token); }

@@ -27,7 +27,7 @@ test("bonus thresholds, cap, expiration and integer rounding", async () => {
     0,
   );
   assert.throws(() => calculateQuote(10000.5, promotions, now));
-  assert.throws(() => calculateQuote(4999, promotions, now));
+  assert.throws(() => calculateQuote(99, promotions, now));
   assert.throws(() => calculateQuote(1000001, promotions, now));
 });
 test("duplicate and concurrent callbacks credit exactly once", async () => {

@@ -165,7 +165,7 @@ test("PanCafe simulation credits only isolated test wallets, with bonus and idem
     assert.equal((await payments.quote(member.id, 5000)).bonus, 0);
     assert.equal((await payments.quote(member.id, 19999)).bonus, 0);
     assert.equal((await payments.quote(member.id, 23456)).bonus, 2345);
-    await assert.rejects(() => payments.create(member.id, 4999, "too-low"));
+    await assert.rejects(() => payments.create(member.id, 99, "too-low"));
     const payment = await payments.create(member.id, 20000, "test-payment-unique");
     assert.equal(payment.simulation, true);
     assert.equal(payment.bonus, 2000);
@@ -267,13 +267,22 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     const other = await source.authenticate("first", "PanCafePassword!");
     assert(other);
     await assert.rejects(() => sCoin.playTestGame(other.id, playId), /1 S Coin/);
-    assert.equal((await payments.quote(member.id, 45800)).sCoinEarned, 4);
-    const rounded = await payments.create(member.id, 45800, "rounded-s-coin-payment");
-    await payments.accept({ ...event, eventId: "rounded-s-coin", paymentId: rounded.id, amount: 45800 });
-    const small = await payments.create(member.id, 9999, "under-one-s-coin-payment");
-    await payments.accept({ ...event, eventId: "under-one-s-coin", paymentId: small.id, amount: 9999 });
+    const liveSCoin = new SCoinService(db, collection("live-wallets") as unknown as CollectionReference, config.installationId, false);
+    const live = new PersistentPaymentService(db, source, new MockPaymentProvider(), "pancafe", liveSCoin, "KIOSK1");
+    assert.equal((await live.quote(member.id, 45800)).sCoinEarned, 4);
+    const rounded = await live.create(member.id, 45800, "rounded-s-coin-payment");
+    const roundedEvent = { ...event, eventId: "rounded-s-coin", paymentId: rounded.id, amount: 45800 };
+    await live.accept(roundedEvent);
+    await live.accept({ ...roundedEvent, eventId: "rounded-s-coin-duplicate" });
+    const small = await live.create(member.id, 9999, "under-one-s-coin-payment");
+    await live.accept({ ...event, eventId: "under-one-s-coin", paymentId: small.id, amount: 9999 });
     await sCoin.drain();
-    assert.equal((await sCoin.balance(member.id)).units, 40000);
+    assert.equal((await sCoin.balance(member.id)).units, 0);
+    await liveSCoin.drain();
+    assert.deepEqual(await liveSCoin.balance(member.id), { units: 40000, unitsPerCoin: 10000, playableCoins: 4, testOnly: false });
+    await db.query("UPDATE s_coin_awards SET synced_at=NULL WHERE test_only=false");
+    await liveSCoin.drain();
+    assert.equal((await liveSCoin.balance(member.id)).units, 40000);
   } finally { await db.close(); }
 });
 

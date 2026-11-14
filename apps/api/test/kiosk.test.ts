@@ -20,11 +20,21 @@ test('kiosk device auth, card isolation, short session, revocation', async () =>
     await assert.rejects(() => kiosk.login(key, '999999'));
     await assert.rejects(() => kiosk.login(key, "1234' OR true"));
     const tokens = await kiosk.login(key, ' 001234 ');
-    assert.equal(tokens.expiresIn, 300); assert.equal('refreshToken' in tokens, false);
+    assert.equal(tokens.expiresIn, 600); assert.equal('refreshToken' in tokens, false);
     assert.equal(await auth.user(tokens.accessToken), 'demo-member');
     const sessions = await db.query<{ kind:string }>('SELECT kind FROM auth_sessions');
     assert.deepEqual(sessions.rows.map(s => s.kind), ['access']);
+    await db.query("UPDATE auth_sessions SET expires_at=$1", [new Date(Date.now() + 30000)]);
+    assert.equal((await auth.keepKioskAlive(tokens.accessToken)).expiresIn, 600);
+    const [renewed] = (await db.query<{ expires_at: Date }>("SELECT expires_at FROM auth_sessions")).rows;
+    assert.ok(new Date(renewed.expires_at).getTime() > Date.now() + 590000);
     await auth.logout(tokens.accessToken); await assert.rejects(() => auth.user(tokens.accessToken));
+    await assert.rejects(() => auth.keepKioskAlive(tokens.accessToken));
+    const expired = await kiosk.login(key, '001234');
+    await db.query("UPDATE auth_sessions SET expires_at=$1", [new Date(Date.now() - 1000)]);
+    await assert.rejects(() => auth.keepKioskAlive(expired.accessToken));
+    const mobile = await auth.login('demo', 'secret');
+    await assert.rejects(() => auth.keepKioskAlive(mobile.accessToken));
     assert.throws(() => new KioskCardAuth(key, { cards:[{ cardHash:hash('001234'), userId:'demo-member' },{ cardHash:hash('001234'), userId:'other' }] }, cafe, auth));
   } finally { await db.close(); }
 });
@@ -61,8 +71,11 @@ test('HTTP configured kiosk issues a usable session only to its device key', asy
     assert.equal((await login({ cardUid:'999999' })).status, 401);
     const response = await login({ cardUid:'001234' }); assert.equal(response.status, 201);
     const tokens = await response.json() as { accessToken:string; expiresIn:number };
-    assert.equal(tokens.expiresIn, 300); assert.equal('refreshToken' in tokens, false);
+    assert.equal(tokens.expiresIn, 600); assert.equal('refreshToken' in tokens, false);
     const headers = { Authorization:`Bearer ${tokens.accessToken}` };
+    const keepAlive = (deviceKey: string) => fetch(base + '/kiosk/session/keep-alive', { method:'POST', headers:{ ...headers, 'X-Kiosk-Key':deviceKey } });
+    assert.equal((await keepAlive('wrong')).status, 401);
+    assert.equal((await keepAlive(key)).status, 201);
     const dashboard = await fetch(base + '/me/dashboard', { headers });
     assert.equal(dashboard.status, 200); assert.equal((await dashboard.json() as any).member.username, 'demo');
     await fetch(base + '/auth/logout', { method:'POST', headers });
@@ -77,7 +90,7 @@ test('HTTP configured kiosk issues a usable session only to its device key', asy
     const passwordResponse = await passwordLogin('test-member-password');
     assert.equal(passwordResponse.status, 201);
     const passwordTokens = await passwordResponse.json() as { accessToken:string; expiresIn:number };
-    assert.equal(passwordTokens.expiresIn, 300);
+    assert.equal(passwordTokens.expiresIn, 600);
     assert.equal('refreshToken' in passwordTokens, false);
     const passwordHeaders = { Authorization:`Bearer ${passwordTokens.accessToken}` };
     const passwordDashboard = await fetch(base + '/me/dashboard', { headers:passwordHeaders });

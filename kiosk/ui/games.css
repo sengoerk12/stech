@@ -152,7 +152,7 @@
   background: radial-gradient(ellipse at 50% 20%, color-mix(in srgb, var(--game-glow) 84%, #131723), transparent 74%), repeating-linear-gradient(135deg, #121923 0 17px, #151b25 18px 20px);
   box-shadow: inset 0 1px 0 #fff1, 0 12px 30px #07090f80;
 }
-.arcade-back.arcade-button { min-height: 39px; margin-bottom: 12px; padding: 7px 12px; color: var(--game-accent); background: #0e1422a0; border-color: #ffffff32; font-size: 13px; }
+.arcade-back.arcade-button { min-height: 58px; min-width: 156px; margin-bottom: 12px; padding: 10px 20px; color: var(--game-accent); background: #0e1422a0; border-color: #ffffff32; font-size: 17px; }
 .arcade-controls {
   display: grid;
   align-content: start;
