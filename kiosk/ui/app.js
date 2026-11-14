@@ -442,10 +442,10 @@ async function refreshSCoin() {
   if (sCoinEpoch === epoch) return;
   sCoinEpoch = epoch;
   try {
-    const { units, unitsPerCoin, testOnly, playableCoins, testPlayableCoins } = await call('sCoin');
+    const { units, unitsPerCoin, testOnly, playableCoins } = await call('sCoin');
     if (!Number.isSafeInteger(units) || units < 0 || unitsPerCoin !== 10000) throw new Error('Invalid S Coin balance');
     const value = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 4 }).format(units / unitsPerCoin);
-    if (epoch === state.epoch) kioskGames.showSCoin(`${testOnly ? 'Test S Coin' : 'S Coin'} · ${value}`, testOnly ? playableCoins : testPlayableCoins);
+    if (epoch === state.epoch) kioskGames.showSCoin(`${testOnly ? 'Test S Coin' : 'S Coin'} · ${value}`, playableCoins);
   } catch {
     if (epoch === state.epoch) kioskGames.showSCoin('S Coin bakiyesi şu anda alınamıyor.');
   } finally {

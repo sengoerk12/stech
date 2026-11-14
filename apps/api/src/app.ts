@@ -259,17 +259,14 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     async kioskSCoin(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined) {
       if (!kioskAuth || !testSCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
       kioskAuth.verifyDevice(key);
-      const id = await user(req);
-      if (!liveSCoin) return testSCoin.balance(id);
-      const [balance, testBalance] = await Promise.all([liveSCoin.balance(id), testSCoin.balance(id)]);
-      return { ...balance, testPlayableCoins: testBalance.playableCoins };
+      return (liveSCoin ?? testSCoin).balance(await user(req));
     }
     @Post(["kiosk/s-coin/play", "kiosk/s-coin/wheel"])
     async kioskSCoinPlay(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined, @Body() body: unknown) {
       if (!kioskAuth || !testSCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
       kioskAuth.verifyDevice(key);
       const dto = parse(SCoinPlayDto, body);
-      return testSCoin.playTestGame(await user(req), dto.operationId, dto.game);
+      return (liveSCoin ?? testSCoin).playGame(await user(req), dto.operationId, dto.game);
     }
     @Post("kiosk/card-login") async kioskLogin(
       @Headers("x-kiosk-key") key: string | undefined,

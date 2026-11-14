@@ -118,8 +118,6 @@ window.kioskGames = (() => {
     if (balance) balance.textContent = text;
     const play = document.querySelector('[data-game-action="gift-play"]');
     if (play) play.disabled = giftPlayDisabled();
-    const hint = document.querySelector('[data-gift-hint]');
-    if (hint) hint.textContent = giftHint();
   }
 
   function later(round, callback, delay) {
@@ -183,12 +181,6 @@ window.kioskGames = (() => {
       (!session.giftOperations[session.game] && !session.playableCoins);
   }
 
-  function giftHint() {
-    return !session.playableCoins && !session.giftOperations[session.game]
-      ? 'Bir tur için 1 test S Coin gerekiyor. 100 TL tamamlanmış test yüklemesi 1 test S Coin kazandırır.'
-      : 'Tur ücreti 1 test S Coin.';
-  }
-
   async function playGiftGame() {
     const owner = session;
     const game = owner.game;
@@ -198,11 +190,11 @@ window.kioskGames = (() => {
     owner.giftOperations[game] ??= crypto.randomUUID();
     update();
     try {
-      const { sector, prize } = await owner.playGiftRound(game, owner.giftOperations[game]);
+      const { sector, prize, testOnly } = await owner.playGiftRound(game, owner.giftOperations[game]);
       if (session !== owner) return;
       if (!Number.isInteger(sector) || sector < 0 || sector >= wheelSectors.length) throw new Error('Çark sonucu alınamadı.');
       delete owner.giftOperations[game];
-      begin({ sector, prize });
+      begin({ sector, prize, testOnly });
     } catch (error) {
       if (session === owner) owner.giftError = error.message;
     } finally {
@@ -216,7 +208,7 @@ window.kioskGames = (() => {
     if (session.playGiftRound && !gift) return;
     const stake = gift ? 1n : readStake();
     if (!game || !stake || (previous && previous.phase !== 'settled')) return;
-    const round = { game, stake, phase: 'playing', gift: Boolean(gift), prize: gift?.prize };
+    const round = { game, stake, phase: 'playing', gift: Boolean(gift), prize: gift?.prize, testOnly: gift?.testOnly };
     rounds[game] = round;
     if (!gift) session.coins -= stake;
     if (game === 'wheel') {
@@ -467,12 +459,11 @@ window.kioskGames = (() => {
     const active = Boolean(round && round.phase !== 'settled');
     if (session.playGiftRound) {
       return `<div class="arcade-game arcade-${game}">
-        <header class="arcade-heading arcade-game-heading"><div>${gameButton('← Tüm oyunlar', 'library', '', { classes: 'arcade-button arcade-back', disabled: session.giftBusy })}<h1>${game === 'wheel' ? 'Hediye çarkı' : details.name}</h1><p>${game === 'wheel' ? 'Her dilimin gelme şansı eşit.' : 'Test hediyesi tur sonunda açılır. Hediye çekilişi oyun puanından bağımsızdır.'}</p></div><p data-s-coin-balance></p></header>
+        <header class="arcade-heading arcade-game-heading"><div>${gameButton('← Tüm oyunlar', 'library', '', { classes: 'arcade-button arcade-back', disabled: session.giftBusy })}<h1>${game === 'wheel' ? 'Hediye çarkı' : details.name}</h1><p>${game === 'wheel' ? 'Her dilimin gelme şansı eşit.' : 'Hediye tur sonunda açılır. Hediye çekilişi oyun puanından bağımsızdır.'}</p></div><p data-s-coin-balance></p></header>
         <div class="arcade-play-layout"><div class="arcade-stage">${boardMarkup(game, round)}</div>
           <section class="arcade-controls" aria-label="Hediye çarkı">
-          ${round?.phase === 'settled' ? `<div class="arcade-result" role="status"><strong>${round.prize ? e('Test hediyesi · ' + round.prize.title) : 'Bu turda hediye çıkmadı'}</strong></div>` : ''}
+          ${round?.phase === 'settled' ? `<div class="arcade-result" role="status"><strong>${round.prize ? e((round.testOnly ? 'Test hediyesi · ' : 'Kazandın · ') + round.prize.title) : 'Bu turda hediye çıkmadı'}</strong>${round.prize && !round.testOnly ? '<p>Hediyen için şube yetkilisine başvur.</p>' : ''}</div>` : ''}
           ${session.giftError ? `<p role="alert">${e(session.giftError)}</p>` : ''}
-          <p data-gift-hint>${giftHint()}</p>
           ${gameButton(active ? 'Tur devam ediyor…' : session.giftBusy ? 'Tur hazırlanıyor…' : session.giftOperations[game] ? 'Sonucu tekrar al' : details.start + ' · 1 S Coin', 'gift-play', '', { classes: 'arcade-button arcade-primary', disabled: giftPlayDisabled() })}
           </section></div></div>`;
     }

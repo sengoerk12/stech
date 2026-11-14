@@ -256,17 +256,17 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     await sCoin.drain();
     assert.deepEqual(await sCoin.balance(member.id), { units: 20000, unitsPerCoin: 10000, playableCoins: 2, testOnly: true });
     const playId = "4702edba-3e4a-4487-9a6f-b3cc0c9262ec";
-    const play = await sCoin.playTestGame(member.id, playId);
-    assert.deepEqual(await sCoin.playTestGame(member.id, playId), play);
+    const play = await sCoin.playGame(member.id, playId);
+    assert.deepEqual(await sCoin.playGame(member.id, playId), play);
     assert.equal((await sCoin.balance(member.id)).playableCoins, 1);
-    await assert.rejects(() => sCoin.playTestGame(member.id, playId, "scratch"), /başka bir oyuna ait/);
+    await assert.rejects(() => sCoin.playGame(member.id, playId, "scratch"), /başka bir oyuna ait/);
     const scratchId = "cf4ce669-41cc-4bbb-98e8-e984651f20dd";
-    const scratch = await sCoin.playTestGame(member.id, scratchId, "scratch");
+    const scratch = await sCoin.playGame(member.id, scratchId, "scratch");
     assert.equal(scratch.game, "scratch");
     assert.equal((await sCoin.balance(member.id)).playableCoins, 0);
     const other = await source.authenticate("first", "PanCafePassword!");
     assert(other);
-    await assert.rejects(() => sCoin.playTestGame(other.id, playId), /1 S Coin/);
+    await assert.rejects(() => sCoin.playGame(other.id, playId), /1 S Coin/);
     const legacyWallets = collection("live-wallets") as unknown as CollectionReference;
     const liveSCoin = new SCoinService(db, collection("members") as unknown as CollectionReference, config.installationId, false, legacyWallets);
     documents.set("live-wallets/2", { units: 10000000 });
@@ -288,6 +288,11 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     await db.query("UPDATE s_coin_awards SET synced_at=NULL WHERE test_only=false");
     await liveSCoin.drain();
     assert.equal((await liveSCoin.balance(member.id)).units, 10040000);
+    const livePlay = await liveSCoin.playGame(member.id, playId);
+    assert.equal(livePlay.testOnly, false);
+    assert.equal((await liveSCoin.playGame(member.id, playId)).sector, livePlay.sector);
+    assert.equal((await liveSCoin.balance(member.id)).playableCoins, 1003);
+    assert.equal(documents.get("members/2")?.username, "kaan2");
   } finally { await db.close(); }
 });
 

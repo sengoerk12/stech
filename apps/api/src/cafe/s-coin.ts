@@ -5,7 +5,7 @@ import { randomInt } from "node:crypto";
 
 export const S_COIN_UNITS = 10000;
 export const sCoinsForTopup = (paidKurus: number) => Math.floor(paidKurus / S_COIN_UNITS);
-const testWheel = [
+const prizes = [
   null, { kind: "product", title: "1 Red Bull" },
   null, { kind: "playtime", title: "1 saat oyun süresi" },
   null, null, { kind: "balance", title: "10 TL oyun bakiyesi" },
@@ -69,12 +69,12 @@ export class SCoinService {
     return { units, unitsPerCoin: S_COIN_UNITS, playableCoins: Math.floor(units / S_COIN_UNITS), testOnly: this.testOnly };
   }
 
-  async playTestGame(userId: string, operationId: string, game = "wheel") {
-    if (!this.testOnly) throw new ServiceUnavailableException("Hediye çarkı henüz hazır değil.");
+  async playGame(userId: string, operationId: string, game = "wheel") {
     const wallet = await this.wallet(userId);
-    const play = wallet.collection("wheelPlays").doc(operationId);
-    const sector = randomInt(testWheel.length);
-    const result = { game, sector, prize: testWheel[sector], testOnly: true };
+    const play = wallet.collection(this.testOnly ? "wheelPlays" : "sCoinPlays").doc(operationId);
+    const legacy = this.legacyWallets?.doc(wallet.id);
+    const sector = randomInt(prizes.length);
+    const result = { game, sector, prize: prizes[sector], testOnly: this.testOnly };
     return this.wallets.firestore.runTransaction(async tx => {
       const previous = await tx.get(play);
       if (previous.exists) {
@@ -82,12 +82,13 @@ export class SCoinService {
         if ((saved.game ?? "wheel") !== game) throw new ConflictException("Bu işlem başka bir oyuna ait.");
         return saved;
       }
-      const current = await tx.get(wallet);
-      const units = current.exists ? current.get("units") : 0;
-      if (!Number.isSafeInteger(units) || units < S_COIN_UNITS)
+      const current = (await tx.get(wallet)).get(this.unitsField);
+      const previousWallet = current === undefined && legacy ? await tx.get(legacy) : undefined;
+      const units = this.validateUnits(current === undefined ? (previousWallet?.exists ? previousWallet.get("units") : 0) : current);
+      if (units < S_COIN_UNITS)
         throw new ConflictException("Oyunu başlatmak için 1 S Coin gerekiyor.");
-      tx.set(wallet, { units: units - S_COIN_UNITS }, { merge: true });
-      tx.create(play, result);
+      tx.set(wallet, { [this.unitsField]: units - S_COIN_UNITS }, { merge: true });
+      tx.create(play, result.prize && !this.testOnly ? { ...result, fulfillment: "pending" } : result);
       return result;
     });
   }
