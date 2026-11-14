@@ -10,6 +10,7 @@ export interface PaymentProvider {
   createCheckout(
     paymentId: string,
     amount: number,
+    userId?: string,
   ): Promise<{ reference: string; checkoutUrl?: string }>;
   verifyWebhook(
     rawBody: Buffer,

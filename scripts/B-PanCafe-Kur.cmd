@@ -143,20 +143,24 @@ $version = 'kiosk-v0.1.8'
 $kioskUrl = "$repository/releases/download/$version/kiosk.exe"
 $kioskSha256 = '2025A90F000CF4CED20A261857E7F436A960DFE9ACDC4963FD528BEE1297A8E5'
 $here = Split-Path -Parent $env:STECH_SETUP_SELF
+$managed = $env:STECH_SETUP_MODE -in @('local', 'lan')
+$network = !$managed -or $env:STECH_SETUP_MODE -eq 'lan'
 $work = "$env:LOCALAPPDATA\STech-Kiosk-Sunucu"
-$source = "$work\surumler\$version"
+$source = if ($managed) { Split-Path -Parent $here } else { "$work\surumler\$version" }
 $bridge = "$work\Bridge"
 $transfer = Join-Path $here 'A-Bilgisayarina-Kopyala'
 [void][IO.Directory]::CreateDirectory($work)
 $pairingPath = "$work\pairing.json"
 $pairing = if (Test-Path -LiteralPath $pairingPath) { Get-Content -LiteralPath $pairingPath -Raw | ConvertFrom-Json } else { $null }
 
-Write-Host "S TECH | B bilgisayarı kurulumu ($version)" -ForegroundColor Cyan
+if ($managed) { Write-Host 'S TECH | PanCafe sunucusu kurulumu' -ForegroundColor Cyan }
+else { Write-Host "S TECH | B bilgisayarı kurulumu ($version)" -ForegroundColor Cyan }
 Update-SetupPath
-$git = Require-Command git.exe Git.Git
 $node = Require-Command node.exe OpenJS.NodeJS.LTS
-$caddy = Require-Command caddy.exe CaddyServer.Caddy
 if ([int](& $node -p "process.versions.node.split('.')[0]") -lt 22) { throw 'Node.js 22 veya üstü gerekli.' }
+if (!$managed) {
+$git = Require-Command git.exe Git.Git
+$caddy = Require-Command caddy.exe CaddyServer.Caddy
 
 if (!(Test-Path -LiteralPath "$source\.git")) {
     Write-Host "S TECH sunucusu GitHub üzerinden indiriliyor ($version)..."
@@ -189,6 +193,8 @@ if (!(Test-Path -LiteralPath $appModule) -or !(Test-Path -LiteralPath $buildMark
         if ($LASTEXITCODE -ne 0) { throw 'API derlenemedi.' }
         [IO.File]::WriteAllText($buildMarker, $releaseId)
     } finally { Pop-Location }
+}
+
 }
 
 $firebase = "$work\firebase.json"
@@ -236,27 +242,36 @@ if (Test-Path -LiteralPath $bridgeConfig) {
         allowRegistration = $false; allowBalanceCredit = $false; allowAdminAdjustments = $false
         allowFirebaseSync = $true; allowFirebaseBalanceWrite = $true; firebaseAddressColumn = 'ADDRESS'
     }
+    if ($managed) {
+        $enableSessions = (Read-Host 'PanCafe sanal masalarında kiosktan oturum açmayı etkinleştir? (E/H, Enter = H)').Trim()
+        $config | Add-Member -NotePropertyName allowVirtualSessionStart -NotePropertyValue ($enableSessions -ieq 'E')
+    }
     Write-Json $bridgeConfig $config
 }
 
 Start-PanCafeIfNeeded (Split-Path -Parent (Split-Path -Parent $config.databasePath))
-Update-PanCafeBridge $source $bridge $releaseId
+if (!$managed) { Update-PanCafeBridge $source $bridge $releaseId }
+$bIp = $pairing.bIp
+$aIp = $pairing.aIp
+if ($network) {
 $localIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.AddressState -eq 'Preferred' -and $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
     Select-Object -ExpandProperty IPAddress)
-if (!$localIps.Count) { throw 'B bilgisayarını kiosk ile aynı yerel ağa bağla ve kurucuyu tekrar aç.' }
+if (!$localIps.Count) { throw 'PanCafe bilgisayarını kiosk ile aynı yerel ağa bağla ve kurucuyu tekrar aç.' }
 $bIp = if ($pairing.bIp -in $localIps) { $pairing.bIp } elseif ($localIps.Count -eq 1) { $localIps[0] }
 if (!$bIp) {
     Write-Host ('Bu bilgisayarın IPv4 adresleri: ' + ($localIps -join ', '))
-    $bIp = Read-IPv4 'B bilgisayarının yerel IPv4 adresi' $null
+    $bIp = Read-IPv4 'PanCafe bilgisayarının yerel IPv4 adresi' $null
 }
-if ($bIp -notin $localIps) { throw 'Girilen B adresi bu bilgisayara ait değil.' }
-Write-Host "B bilgisayarının adresi $bIp"
+if ($bIp -notin $localIps) { throw 'Girilen PanCafe adresi bu bilgisayara ait değil.' }
+Write-Host "PanCafe bilgisayarının adresi $bIp"
 $aPrompt = 'Kiosk bilgisayarının IPv4 adresi (A bilgisayarında Komut İstemi açıp ipconfig yaz)'
-if ($pairing) { $aPrompt = "Kiosk IPv4 adresi değiştiyse yeni adresi gir (Enter = $($pairing.aIp))" }
+if ($managed) { $aPrompt = 'B (kiosk) bilgisayarının IPv4 adresi (B üzerinde ipconfig yaz)' }
+if ($pairing.aIp) { $aPrompt = "Kiosk IPv4 adresi değiştiyse yeni adresi gir (Enter = $($pairing.aIp))" }
 $aIp = Read-IPv4 $aPrompt $pairing.aIp
 if ($aIp -eq $bIp) { throw 'İki bilgisayarın IPv4 adresleri farklı olmalı.' }
-if (!$pairing -or $pairing.bIp -ne $bIp -or $pairing.aIp -ne $aIp) {
+}
+if (!$pairing -or $pairing.bIp -ne $bIp -or $pairing.aIp -ne $aIp -or ($managed -and $network)) {
     if ($pairing) { $key = $pairing.deviceKey; $pinHash = $pairing.adminPinHash } else {
         $key = & $node "$source\kiosk\scripts\provision.cjs" device-key
         $pin = Read-Host 'Kiosk çıkışı için 6–16 rakamlık yönetici PIN kodu' -AsSecureString
@@ -285,9 +300,9 @@ if (!`$columns) { throw 'PanCafe MEMBERS tablosunda sütun bulunamadı.' }
 `$ErrorActionPreference = 'Stop'
 try {
     $schema
-    if (Get-NetFirewallRule -Name 'STech-Kiosk-8443' -ErrorAction SilentlyContinue) {
+    if ($([int]$network) -eq 1 -and (Get-NetFirewallRule -Name 'STech-Kiosk-8443' -ErrorAction SilentlyContinue)) {
         Set-NetFirewallRule -Name 'STech-Kiosk-8443' -Direction Inbound -Protocol TCP -LocalPort 8443 -LocalAddress '$bIp' -RemoteAddress '$aIp','$bIp' -Action Allow -Enabled True
-    } else {
+    } elseif ($([int]$network) -eq 1) {
         New-NetFirewallRule -Name 'STech-Kiosk-8443' -DisplayName 'S TECH Kiosk HTTPS' -Direction Inbound -Protocol TCP -LocalPort 8443 -LocalAddress '$bIp' -RemoteAddress '$aIp','$bIp' -Action Allow | Out-Null
     }
 } catch {
@@ -296,7 +311,7 @@ try {
 }
 "@
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($adminActions))
-    Write-Host 'Windows, PanCafe kontrolü ve HTTPS güvenlik duvarı için yönetici onayı isteyecek.'
+    Write-Host 'Windows kurulum için yönetici onayı isteyecek.'
     $admin = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-EncodedCommand', $encoded -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     if ($admin.ExitCode -ne 0) { throw "PanCafe veya güvenlik duvarı adımı tamamlanamadı. Günlük: $work\setup-admin-error.log" }
     if (!$pairing) {
@@ -314,6 +329,8 @@ try {
     $pairing = [pscustomobject]@{ bIp = $bIp; aIp = $aIp; deviceKey = $key; adminPinHash = $pinHash }
     Write-Json $pairingPath $pairing
 }
+
+if ($managed) { return }
 
 $bridgeUrl = "http://127.0.0.1:$($config.port)/health"
 if (!(Health $bridgeUrl $config.apiKey).connected) {

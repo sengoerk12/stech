@@ -2,7 +2,11 @@
 
 S TECH marka kimliğine uygun iOS/Android uygulaması ve NestJS geliştirme API'si.
 
-## Çalıştırma
+## Kiosk ve PanCafe
+
+Windows’ta proje ana klasöründeki **S-TECH-Baslat.cmd** dosyasını aç. **1** aynı bilgisayarda PanCafe ve kiosk, **2** A bilgisayarında sunucuyu başlatma, **3** B bilgisayarı için ilk kurulum paketini oluşturma. [Kurulum ve günlük kullanım](docs/CALISTIRMA.md).
+
+## Mobil geliştirme
 Node.js 22.13+ kullanın.
 
 ```sh
@@ -50,4 +54,4 @@ Giriş ekranındaki “Kayıt ol” bağlantısı kayıt formunu açar. Yeni hes
 
 ## Windows müşteri kiosku
 
-Ortak bilgisayarda tam ekran çalışan sürüm `kiosk/` klasöründedir. Ana ekran, NFC kart girişi, bakiye yükleme, kampanyalar, işlem geçmişi ve profil içerir. PanCafe kart kimlikleri mevcut `MEMBERS.LASTNAME` alanından doğrulanır. PAX 910S / İş Bankası USB ödeme entegrasyonu için alt bağlantı ünitesi ve üretici sürücüsü/SDK'sı bekleniyor; gerçek POS tahsilatı henüz etkin değildir. Geliştirme ve kurulum: [Kiosk README](kiosk/README.md).
+Kiosk kaynak kodu `kiosk/` klasöründedir. PanCafe kart kimlikleri `MEMBERS.LASTNAME` alanından doğrulanır. PAX A910S için [Ödeal D2D ödeme bağlantısı](kiosk/docs/POS_INTEGRATION.md) ayrı kurulur. [Kiosk geliştirme](kiosk/README.md).

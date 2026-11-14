@@ -18,6 +18,7 @@ playwright-report/
 *.key
 .expo/
 dist/
+/Kurulum-Ciktisi/
 coverage/
 *.log
 .DS_Store

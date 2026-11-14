@@ -50,6 +50,7 @@ class KioskSession {
       const data = this.mode === 'demo' ? await this.demo.dashboard(card) : await this.gateway.dashboard(token);
       if (epoch !== this.generation) throw new Error('Oturum kapandı. Tekrar giriş yap.');
       this.session = { card, token, started, activity: Date.now() };
+      this.session.odealPos = data.features?.odealPos === true;
       return this.publicDashboard(data);
     } catch (error) {
       if (token && this.session?.token !== token) void this.gateway.logout(token).catch(() => {});
@@ -57,12 +58,11 @@ class KioskSession {
     } finally { if (epoch === this.generation) this.busy = false; }
   }
   publicDashboard(data) {
-    // The existing payment provider is a mobile simulation, never a POS authorization.
     const nameParts = data.member.name?.trim().split(/\s+/) || [];
     if (nameParts.length > 1 && nameParts.at(-1).toUpperCase() === this.session?.card) nameParts.pop();
     return { ...data, member: { ...data.member, name: nameParts.join(' ') || data.member.username },
-      pendingPayments: this.mode === 'demo' ? data.pendingPayments : [],
-      features: { ...data.features, topup: this.mode === 'demo' }, kioskMode: this.mode };
+      pendingPayments: this.mode === 'demo' || data.features?.odealPos === true ? data.pendingPayments : [],
+      features: { ...data.features, topup: this.mode === 'demo' || (data.features?.odealPos === true && data.features.topup === true) }, kioskMode: this.mode };
   }
   async run(action, payload = {}) {
     const now = Date.now();
@@ -121,18 +121,27 @@ class KioskSession {
     else if (action === 'quote') result = this.mode === 'demo'
       ? quote(payload.amount, (await this.demo.dashboard(session.card)).promotions, Date.now(), payload.promotionId)
       : await this.gateway.quote(session.token, payload);
-    else if (['create', 'settle', 'payment'].includes(action)) {
-      if (this.mode !== 'demo') throw new Error('POS bağlantısı henüz etkin değil. Yükleme için S TECH yetkilisine başvur.');
-      if (action === 'create') {
-        if (typeof payload.key !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(payload.key)) throw new Error('Geçersiz işlem anahtarı.');
-        result = await this.demo.create(session.card, payload.amount, payload.key, payload.promotionId);
+    else if (['create', 'settle', 'payment', 'cancel-payment'].includes(action)) {
+      if (this.mode === 'connected') {
+        if (!session.odealPos) throw new Error('POS bağlantısı henüz etkin değil. Yükleme için S TECH yetkilisine başvur.');
+        if (action === 'settle') throw new Error('Ödeme sonucu POS cihazından alınır.');
+        if (action === 'create') result = await this.gateway.createPosPayment(session.token, payload);
+        else if (action === 'cancel-payment') result = await this.gateway.cancelPosPayment(session.token, payload.id);
+        else result = await this.gateway.posPayment(session.token, payload.id);
+      } else {
+        if (action === 'cancel-payment') throw new Error('POS bağlantısı açık değil.');
+        if (action === 'create') {
+          if (typeof payload.key !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(payload.key)) throw new Error('Geçersiz işlem anahtarı.');
+          result = await this.demo.create(session.card, payload.amount, payload.key, payload.promotionId);
+        }
+        if (action === 'payment') result = this.demo.get(session.card, payload.id);
+        if (action === 'settle') result = await this.demo.settle(session.card, payload.id, payload.outcome);
       }
-      if (action === 'payment') result = this.demo.get(session.card, payload.id);
-      if (action === 'settle') result = await this.demo.settle(session.card, payload.id, payload.outcome);
     } else throw new Error('Geçersiz işlem.');
     this.tick();
     if (epoch !== this.generation) throw new Error('Oturum kapandı. Tekrar giriş yap.');
-    if (['settle', 'payment'].includes(action) && result.status === 'completed') {
+    if (action === 'dashboard') session.odealPos = result.features?.odealPos === true;
+    if (['settle', 'payment', 'cancel-payment'].includes(action) && result.status === 'completed') {
       if (session.completionPaymentId !== result.id) {
         session.completionPaymentId = result.id;
         session.completionDeadline = Date.now() + this.completionMs;

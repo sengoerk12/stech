@@ -46,6 +46,7 @@ import { PanCafeSimulationAdapter } from "./cafe/pancafe-simulation";
 import { pageTransactions } from "./cafe/transaction-page";
 import type { CafeSystemAdapter } from "./cafe/adapter";
 import { MockPaymentProvider } from "./payments/provider";
+import { OdealPaymentProvider, odealSettings } from "./payments/odeal";
 import { PersistentPaymentService } from "./payments/persistent-service";
 import { PersistentAuthService } from "./auth/persistent-service";
 import { KioskCardAuth, type KioskCardMap } from "./auth/kiosk";
@@ -157,6 +158,13 @@ class SafeErrors implements ExceptionFilter {
 export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   assertDevelopment(env);
   const panCafe = env.CAFE_ADAPTER === "pancafe";
+  const odeal = odealSettings(env);
+  if (odeal && !env.KIOSK_DEVICE_KEY)
+    throw new Error("Ödeal requires kiosk device authentication.");
+  if (odeal?.mode === "live" && (!panCafe || env.PANCAFE_BALANCE_CREDIT !== "true"))
+    throw new Error("Live Ödeal requires native PanCafe balance credit.");
+  if (odeal?.mode === "live" && env.PANCAFE_PAYMENT_SIMULATION === "true")
+    throw new Error("Disable simulated credits before activating live Ödeal.");
   const firebaseEnabled = env.FIREBASE_SYNC_ENABLED === "true" || env.FIREBASE_CAMPAIGN_SYNC_ENABLED === "true";
   const firebaseProject = firebaseEnabled ? env.FIREBASE_PROJECT_ID : undefined;
   const firebaseBalanceWrite = env.FIREBASE_BALANCE_WRITE_ENABLED === "true";
@@ -195,7 +203,16 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       .collection("sCoinTestWallets"), bridgeConfig.installationId, true)
     : null;
   const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock", sCoin ?? undefined);
-  const admin = new AdminService(db, bridge, payments, env);
+  const posCafe = odeal?.mode === "stage" && panCafe
+    ? new PanCafeSimulationAdapter(db, cafe, false) : cafe;
+  const odealProvider = odeal ? new OdealPaymentProvider(odeal, async id => {
+    const member = await posCafe.getUser(id);
+    return { ...member, address: (await cafe.getProfile?.(id))?.address };
+  }) : null;
+  const posPayments = odeal && odealProvider
+    ? new PersistentPaymentService(db, posCafe, odealProvider, odeal.mode === "live" ? "pancafe" : "mock", undefined, odeal.deviceCode)
+    : null;
+  const admin = new AdminService(db, bridge, payments, env, posPayments ?? undefined);
   const AdminController = createAdminController(admin);
  const kioskManagement = new KioskManagement(db); await kioskManagement.init();
  const KioskManagementController = createKioskManagementController(kioskManagement, admin);
@@ -260,9 +277,80 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       return kioskAuth.loginWithPassword(key, dto.identifier.trim(), dto.password);
     }
     @Get("kiosk/dashboard") async kioskDashboard(@Req() req: Request) {
-      if (!(cafe instanceof PanCafeSystemAdapter)) return this.dashboard(req);
-      const account = await cafe.getKioskAccount(await user(req));
-      return { ...account, promotions: await activePromotions(db), transactions: [], pendingPayments: [], features: { topup: false } };
+      if (!(cafe instanceof PanCafeSystemAdapter) && !posPayments) return this.dashboard(req);
+      const id = await user(req);
+      const pos = posPayments != null && kioskAuth?.isDevice(req.headers["x-kiosk-key"]) === true;
+      const stage = pos && odeal?.mode === "stage";
+      const account = stage
+        ? { member: await posCafe.getUser(id), wallet: await posCafe.getBalance(id) }
+        : cafe instanceof PanCafeSystemAdapter
+        ? await cafe.getKioskAccount(id)
+        : { member: await cafe.getUser(id), wallet: await cafe.getBalance(id) };
+      return {
+        ...account, promotions: await activePromotions(db), transactions: [],
+        pendingPayments: pos ? await posPayments!.pending(id) : [],
+        features: { topup: pos && await admin.topupEnabled(), odealPos: pos, odealStage: stage },
+      };
+    }
+    @Post("kiosk/pos-payments") async kioskPosCreate(
+      @Req() req: Request, @Headers("x-kiosk-key") device: string | undefined,
+      @Headers("idempotency-key") key: string | undefined, @Body() body: unknown,
+    ) {
+      if (!kioskAuth || !posPayments || !odealProvider || !(await admin.topupEnabled()))
+        throw new ServiceUnavailableException("POS ile yükleme şu anda kapalı.");
+      kioskAuth.verifyDevice(device);
+      const id = await user(req);
+      if (!key || !/^[a-zA-Z0-9_-]{16,100}$/.test(key))
+        throw new BadRequestException("Geçerli işlem anahtarı gerekli.");
+      const dto = parse(KioskQuoteDto, body);
+      const quote = calculateQuote(dto.amount, await activePromotions(db), Date.now(), dto.promotionId);
+      await odealProvider.checkConfiguration();
+      return posPayments.create(id, dto.amount, "pos_" + key, quote);
+    }
+    @Get("kiosk/pos-payments/:id") @Header("Cache-Control", "no-store")
+    async kioskPosPayment(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
+      if (!kioskAuth || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
+      kioskAuth.verifyDevice(device);
+      return posPayments.get(await user(req), id);
+    }
+    @Post("kiosk/pos-payments/:id/cancel")
+    async kioskPosCancel(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
+      if (!kioskAuth || !posPayments || !odealProvider) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
+      kioskAuth.verifyDevice(device);
+      const userId = await user(req);
+      await posPayments.deleteOdealUnpaidBasket(id, ref => odealProvider.deleteUnpaidBasket(ref), { userId });
+      return posPayments.get(userId, id);
+    }
+    @Post("webhooks/odeal/payment-succeeded")
+    async odealSucceeded(@Req() req: RawBodyRequest<Request>, @Headers("x-odeal-request-key") key: string | undefined) {
+      if (!odealProvider || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
+      const event = odealProvider.verifyWebhook(req.rawBody ?? Buffer.alloc(0), key ?? "");
+      await posPayments.accept(event, true);
+      return { received: true };
+    }
+    @Post(["webhooks/odeal/basket-cancelled", "webhooks/odeal/payment-cancelled", "webhooks/odeal/payment-failed"])
+    async odealCancelled(@Req() req: Request, @Headers("x-odeal-request-key") key: string | undefined, @Body() body: any) {
+      if (!odealProvider || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
+      odealProvider.checkRequestKey(key);
+      const failed = req.path.endsWith("/payment-failed");
+      const paid = req.path.endsWith("/payment-cancelled");
+      const basket = paid || failed ? body?.BasketDetail : (body?.Basket ?? body);
+      if (failed && !basket) return { received: true };
+      const total = paid || failed ? body?.PaymentDetail?.Amount : basket?.GrossPrice;
+      if (basket?.ExternalDeviceKey != null && basket.ExternalDeviceKey !== odeal?.deviceCode)
+        throw new BadRequestException("Ödeal cihaz kodu eşleşmedi.");
+      const cents = typeof total === "number" ? Math.round(total * 100) : NaN;
+      if (typeof basket?.BasketRefCode !== "string" || !Number.isSafeInteger(cents) ||
+          cents <= 0 || Math.abs(total * 100 - cents) > 0.000001)
+        throw new BadRequestException("Geçersiz Ödeal iptal bildirimi.");
+      if (failed) {
+        if (body?.PaymentDetail?.AuthCode)
+          throw new BadRequestException("Geçersiz Ödeal başarısız ödeme bildirimi.");
+        await posPayments.deleteOdealUnpaidBasket(basket.BasketRefCode, ref => odealProvider.deleteUnpaidBasket(ref), { amount: cents });
+      } else {
+        await posPayments.cancelOdealBasket(basket.BasketRefCode, cents, paid);
+      }
+      return { received: true };
     }
     @Post("kiosk/quote") async kioskQuote(@Req() req: Request, @Body() body: unknown) {
       await user(req);
@@ -483,12 +571,14 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   class RuntimeLifecycle {
     onModuleInit() {
       if (!panCafe || simulation) payments.startWorker();
+      posPayments?.startWorker();
       if (env.FIREBASE_SYNC_ENABLED === "true") firebaseSync?.worker.start();
       promotionSync?.start();
       sCoin?.start();
     }
     async onModuleDestroy() {
       await payments.stopWorker();
+      await posPayments?.stopWorker();
       await sCoin?.stop();
       await promotionSync?.stop();
       await firebaseSync?.stop();

@@ -4,14 +4,19 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
-import type { Payment } from "@stech/contracts";
+import type { Payment, Quote } from "@stech/contracts";
 import type { Database, SqlExecutor } from "../database/database";
 import type { CafeSystemAdapter } from "../cafe/adapter";
 import type { PaymentProvider, VerifiedPaymentEvent } from "./provider";
 import { calculateQuote } from "./service";
 import type { SCoinService } from "../cafe/s-coin";
+import { OdealCheckoutRejected } from "./odeal";
 
 interface PaymentRow {
+  payment_provider: "mock" | "odeal";
+  pos_device_code: string | null;
+  checkout_started: boolean;
+  pos_cancelled_at: Date | null;
   transfer_target: "mock" | "pancafe";
   id: string;
   user_id: string;
@@ -24,12 +29,15 @@ interface PaymentRow {
 }
 function publicPayment(row: PaymentRow): Payment {
   return {
-    simulation: true,
+    simulation: row.transfer_target === "mock" || row.payment_provider === "mock",
     creditedToCafe: row.transfer_target === "pancafe",
     id: row.id,
     amount: row.amount,
     bonus: row.bonus,
     status: row.status,
+    ...(row.payment_provider === "odeal" && row.status === "pending"
+      ? { awaitingTerminal: row.provider_reference !== null }
+      : {}),
     createdAt: new Date(row.created_at).toISOString(),
     ...(row.balance_after === null
       ? {}
@@ -52,21 +60,25 @@ export class PersistentPaymentService {
     private provider: PaymentProvider,
     private target: "mock" | "pancafe" = "mock",
     private sCoin?: Pick<SCoinService, "enqueue">,
+    private posDevice?: string,
   ) {}
+  private get providerName() {
+    return this.posDevice ? "odeal" : "mock";
+  }
   async quote(userId: string, amount: number) {
     return calculateQuote(
       amount,
       await this.cafe.getAvailablePromotions(userId),
     );
   }
-  async create(userId: string, amount: number, key: string): Promise<Payment> {
-    const quote = await this.quote(userId, amount);
+  async create(userId: string, amount: number, key: string, kioskQuote?: Quote): Promise<Payment> {
+    const quote = kioskQuote ?? await this.quote(userId, amount);
     const id = randomUUID();
     const row = await this.db.transaction(async (tx) => {
       const inserted = await tx.query<PaymentRow>(
-        `INSERT INTO payment_orders(id,user_id,idempotency_key,amount,bonus,promotion_id,status,transfer_target)
-        VALUES($1,$2,$3,$4,$5,$6,'pending',$7) ON CONFLICT(user_id,idempotency_key) DO NOTHING RETURNING *`,
-        [id, userId, key, amount, quote.bonus, quote.promotionId ?? null, this.target],
+        `INSERT INTO payment_orders(id,user_id,idempotency_key,amount,bonus,promotion_id,status,transfer_target,payment_provider,pos_device_code)
+        VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9) ON CONFLICT DO NOTHING RETURNING *`,
+        [id, userId, key, amount, quote.bonus, quote.promotionId ?? null, this.target, this.providerName, this.posDevice ?? null],
       );
       const p =
         inserted.rows[0] ??
@@ -76,30 +88,54 @@ export class PersistentPaymentService {
             [userId, key],
           )
         ).rows[0];
-      if (p.amount !== amount || p.transfer_target !== this.target)
+      if (!p) throw new ConflictException("POS'ta önceki işlem sürüyor. Önce o işlemi tamamla veya yetkiliye başvur.");
+      if (p.amount !== amount || p.transfer_target !== this.target || p.payment_provider !== this.providerName ||
+          p.pos_device_code !== (this.posDevice ?? null))
         throw new ConflictException(
           "Bu işlem anahtarı farklı bir tutarla kullanılmış.",
         );
       if (inserted.rows.length) await audit(tx, p.id, "pending");
       return p;
     });
-    if (!row.provider_reference) {
-      // PaymentProvider must make repeated calls with this payment ID idempotent.
-      const checkout = await this.provider.createCheckout(row.id, row.amount);
-      await this.db.query(
-        "UPDATE payment_orders SET provider_reference=$2 WHERE id=$1 AND provider_reference IS NULL",
-        [row.id, checkout.reference],
+    let dispatch = row.status === "pending" && !row.provider_reference;
+    if (dispatch && this.posDevice) {
+      const claim = await this.db.query(
+        "UPDATE payment_orders SET checkout_started=true WHERE id=$1 AND status='pending' AND NOT checkout_started RETURNING id",
+        [row.id],
       );
+      dispatch = claim.rows.length > 0;
+    }
+    if (dispatch) {
+      // PaymentProvider must make repeated calls with this payment ID idempotent.
+      try {
+        const checkout = await this.provider.createCheckout(row.id, row.amount, userId);
+        await this.db.query(
+          "UPDATE payment_orders SET provider_reference=$2 WHERE id=$1 AND provider_reference IS NULL",
+          [row.id, checkout.reference],
+        );
+      } catch (error) {
+        if (!(error instanceof OdealCheckoutRejected || (this.posDevice && error instanceof BadRequestException))) {
+          if (!this.posDevice) throw error;
+          return this.get(userId, row.id);
+        }
+        await this.db.transaction(async (tx) => {
+          const rejected = await tx.query(
+            "UPDATE payment_orders SET status='failed' WHERE id=$1 AND status='pending' RETURNING id",
+            [row.id],
+          );
+          if (rejected.rows.length) await audit(tx, row.id, "failed");
+        });
+      }
     }
     return this.get(userId, row.id);
   }
   async get(userId: string, id: string): Promise<Payment> {
-    if (!/^[0-9a-f-]{36}$/i.test(id))
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id))
       throw new NotFoundException("İşlem bulunamadı.");
     const row = (
       await this.db.query<PaymentRow>(
-        "SELECT * FROM payment_orders WHERE id=$1 AND user_id=$2 AND transfer_target=$3",
-        [id, userId, this.target],
+        "SELECT * FROM payment_orders WHERE id=$1 AND user_id=$2 AND transfer_target=$3 AND payment_provider=$4",
+        [id, userId, this.target, this.providerName],
       )
     ).rows[0];
     if (!row) throw new NotFoundException("İşlem bulunamadı.");
@@ -107,12 +143,38 @@ export class PersistentPaymentService {
   }
   async pending(userId: string): Promise<Payment[]> {
     const result = await this.db.query<PaymentRow>(
-      `SELECT * FROM payment_orders WHERE user_id=$1 AND transfer_target=$2 AND (status='transferring' OR (status='pending' AND created_at>now()-interval '24 hours')) ORDER BY created_at DESC LIMIT 5`,
-      [userId, this.target],
+      `SELECT * FROM payment_orders WHERE user_id=$1 AND transfer_target=$2 AND payment_provider=$3
+        AND (status='transferring' OR (status='pending' AND (payment_provider='odeal' OR created_at>now()-interval '24 hours')))
+        ORDER BY created_at DESC LIMIT 5`,
+      [userId, this.target, this.providerName],
     );
     return result.rows.map(publicPayment);
   }
-  async accept(event: VerifiedPaymentEvent): Promise<Payment> {
+  async deleteOdealUnpaidBasket(
+    id: string,
+    deleteBasket: (id: string) => Promise<boolean>,
+    expected: { userId: string } | { amount: number },
+  ): Promise<void> {
+    if (!this.posDevice || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id))
+      throw new NotFoundException("İşlem bulunamadı.");
+    const { rows: [row] } = await this.db.query<PaymentRow>(
+      "SELECT * FROM payment_orders WHERE id=$1 AND payment_provider='odeal' AND transfer_target=$2 AND pos_device_code=$3",
+      [id, this.target, this.posDevice],
+    );
+    if (!row || ("userId" in expected && row.user_id !== expected.userId))
+      throw new NotFoundException("İşlem bulunamadı.");
+    if ("amount" in expected && row.amount !== expected.amount)
+      throw new BadRequestException("Payment mismatch");
+    if (row.status !== "pending") return;
+    if (!row.provider_reference || !await deleteBasket(id)) {
+      const current = await this.get(row.user_id, id);
+      if (current.status === "pending")
+        throw new ConflictException("Ödeal iptali henüz doğrulamadı. POS ekranını kontrol edip tekrar dene.");
+      return;
+    }
+    await this.cancelOdealBasket(id, row.amount, false);
+  }
+  async accept(event: VerifiedPaymentEvent, deferTransfer = false): Promise<Payment> {
     const fingerprint = createHash("sha256")
       .update(
         JSON.stringify([
@@ -130,22 +192,24 @@ export class PersistentPaymentService {
           [event.paymentId],
         )
       ).rows[0];
-      if (!row || row.transfer_target !== this.target) throw new NotFoundException("İşlem bulunamadı.");
+      if (!row || row.transfer_target !== this.target || row.payment_provider !== this.providerName ||
+          (this.posDevice && (row.pos_device_code !== this.posDevice || !row.checkout_started)))
+        throw new NotFoundException("İşlem bulunamadı.");
       if (row.amount !== event.amount || event.currency !== "TRY")
         throw new BadRequestException("Payment mismatch");
       await tx.query(
-        `INSERT INTO payment_events(provider,event_id,fingerprint,payment_id) VALUES('mock',$1,$2,$3) ON CONFLICT DO NOTHING`,
-        [event.eventId, fingerprint, row.id],
+        `INSERT INTO payment_events(provider,event_id,fingerprint,payment_id) VALUES($4,$1,$2,$3) ON CONFLICT DO NOTHING`,
+        [event.eventId, fingerprint, row.id, this.providerName],
       );
       const previous = (
         await tx.query<{ fingerprint: string }>(
-          `SELECT fingerprint FROM payment_events WHERE provider='mock' AND event_id=$1`,
-          [event.eventId],
+          `SELECT fingerprint FROM payment_events WHERE provider=$2 AND event_id=$1`,
+          [event.eventId, this.providerName],
         )
       ).rows[0];
       if (previous.fingerprint !== fingerprint)
         throw new ConflictException("Event conflict");
-      if (row.status === "completed" || row.status === "failed")
+      if (row.status === "completed" || row.status === "failed" || row.pos_cancelled_at)
         return row.user_id;
       if (event.status === "failed") {
         if (row.status === "transferring")
@@ -171,9 +235,30 @@ export class PersistentPaymentService {
     });
     // The event and outbox are durable BEFORE attempting the external system.
     // A timeout never turns a paid order into a failed charge.
-    if (event.status === "succeeded")
+    if (event.status === "succeeded" && !deferTransfer)
       await this.processPayment(event.paymentId);
     return this.get(owner, event.paymentId);
+  }
+  async cancelOdealBasket(id: string, amount: number, paidCancellation: boolean) {
+    if (!this.posDevice || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) return;
+    await this.db.transaction(async (tx) => {
+      const row = (await tx.query<PaymentRow>(
+        "SELECT * FROM payment_orders WHERE id=$1 AND payment_provider='odeal' AND transfer_target=$2 AND pos_device_code=$3 FOR UPDATE",
+        [id, this.target, this.posDevice],
+      )).rows[0];
+      if (!row || row.pos_cancelled_at || !row.checkout_started) return;
+      if (row.amount !== amount) throw new BadRequestException("Payment mismatch");
+      if (!paidCancellation && row.status !== "pending") return;
+      await tx.query(
+        "UPDATE payment_orders SET pos_cancelled_at=now(), status=CASE WHEN status='pending' THEN 'failed' ELSE status END WHERE id=$1",
+        [id],
+      );
+      await audit(tx, id, paidCancellation ? "odeal.cancelled_review" : "odeal.basket_cancelled");
+      await tx.query(
+        "UPDATE transfer_jobs SET status='reconciliation' WHERE payment_id=$1 AND status IN ('queued','retry')",
+        [id],
+      );
+    });
   }
   async processPayment(paymentId: string): Promise<void> {
     const leaseToken = randomUUID();
@@ -181,8 +266,8 @@ export class PersistentPaymentService {
       `UPDATE transfer_jobs SET status='processing',lease_token=$2,
       lease_until=now()+interval '30 seconds', attempts=attempts+1 WHERE payment_id=$1 AND
       ((status IN ('queued','retry') AND next_attempt_at<=now()) OR (status='processing' AND lease_until<now()))
-      AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=transfer_jobs.payment_id AND p.transfer_target=$3) RETURNING attempts`,
-      [paymentId, leaseToken, this.target],
+      AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=transfer_jobs.payment_id AND p.transfer_target=$3 AND p.payment_provider=$4 AND p.status='transferring' AND p.pos_cancelled_at IS NULL) RETURNING attempts`,
+      [paymentId, leaseToken, this.target, this.providerName],
     );
     if (!claimed.rows.length) return;
     const attempts = claimed.rows[0].attempts;
@@ -245,8 +330,8 @@ export class PersistentPaymentService {
     if (this.draining) return this.draining;
     this.draining = (async () => {
       const jobs = await this.db.query<{ payment_id: string }>(
-        `SELECT j.payment_id FROM transfer_jobs j JOIN payment_orders p ON p.id=j.payment_id WHERE p.transfer_target=$1 AND ((j.status IN ('queued','retry') AND j.next_attempt_at<=now()) OR (j.status='processing' AND j.lease_until<now())) ORDER BY j.next_attempt_at LIMIT 25`,
-        [this.target],
+        `SELECT j.payment_id FROM transfer_jobs j JOIN payment_orders p ON p.id=j.payment_id WHERE p.transfer_target=$1 AND p.payment_provider=$2 AND p.status='transferring' AND p.pos_cancelled_at IS NULL AND ((j.status IN ('queued','retry') AND j.next_attempt_at<=now()) OR (j.status='processing' AND j.lease_until<now())) ORDER BY j.next_attempt_at LIMIT 25`,
+        [this.target, this.providerName],
       );
       for (const job of jobs.rows) await this.processPayment(job.payment_id);
     })().finally(() => {

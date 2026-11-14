@@ -151,6 +151,35 @@ test('connected mode never enables POS simulation or topup', async () => {
   for (const action of ['create','settle','payment']) await assert.rejects(() => kiosk.run(action, { amount:20000 }), /POS bağlantısı/);
   kiosk.lock();
 });
+test('configured Ödeal sessions use the authenticated gateway and cannot simulate approval', async () => {
+  const payload = { amount: 20000, key: 'odeal-checkout-unique' };
+  const pending = { id: 'server-pos-order', status: 'pending' };
+  const gateway = {
+    login: async () => ({ accessToken: 'opaque' }),
+    dashboard: async () => ({ member: { id: '1' }, pendingPayments: [pending], features: { topup: true, odealPos: true } }),
+    logout: async () => {},
+    createPosPayment: async (token, request) => {
+      assert.equal(token, 'opaque');
+      assert.deepEqual(request, payload);
+      return pending;
+    },
+    posPayment: async (token, id) => {
+      assert.equal(token, 'opaque');
+      assert.equal(id, pending.id);
+      return { ...pending, status: 'completed' };
+    },
+  };
+  const kiosk = new KioskSession({ gateway, mode: 'connected' });
+  const account = await kiosk.scan('001234');
+  assert.equal(account.features.topup, true);
+  assert.deepEqual(account.pendingPayments, [pending]);
+  assert.deepEqual(await kiosk.run('create', payload), pending);
+  await assert.rejects(() => kiosk.run('settle', { id: pending.id, outcome: 'approved' }), /POS cihazından/);
+  const finished = await kiosk.run('payment', { id: pending.id });
+  assert.equal(finished.status, 'completed');
+  assert.ok(finished.completionSeconds > 0);
+  kiosk.lock();
+});
 test('unknown and overlapping cards cannot switch customers', async t => {
   const demo = await fixture(t); const kiosk = new KioskSession({ demo, mode:'demo' });
   await assert.rejects(() => kiosk.scan('UNKNOWN1')); assert.equal(kiosk.session, null);

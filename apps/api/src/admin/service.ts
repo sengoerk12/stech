@@ -82,6 +82,7 @@ export class AdminService {
     private bridge: PanCafeBridgeClient | null,
     private payments: PersistentPaymentService,
     private env: NodeJS.ProcessEnv,
+    private posPayments?: PersistentPaymentService,
   ) {}
   async status() {
     return {
@@ -565,7 +566,7 @@ export class AdminService {
     uuid(id);
     const result = await this.db.transaction(async (tx) => {
       const claimed = await tx.query(
-        "UPDATE transfer_jobs SET status='retry',next_attempt_at=now() WHERE payment_id=$1 AND status IN ('retry','reconciliation') AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=$1 AND p.status='transferring' AND p.transfer_target=$2) RETURNING payment_id",
+        "UPDATE transfer_jobs SET status='retry',next_attempt_at=now() WHERE payment_id=$1 AND status IN ('retry','reconciliation') AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=$1 AND p.status='transferring' AND p.transfer_target=$2 AND p.pos_cancelled_at IS NULL) RETURNING payment_id",
         [id, this.bridge ? "pancafe" : "mock"],
       );
       if (!claimed.rows.length)
@@ -574,6 +575,7 @@ export class AdminService {
       return { ok: true };
     });
     await this.payments.processPayment(id);
+    await this.posPayments?.processPayment(id);
     return result;
   }
   async audit(before = "") {

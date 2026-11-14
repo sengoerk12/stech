@@ -1,5 +1,7 @@
 # PanCafe ve kiosk kurulumu
 
+Güncel akış [S TECH nasıl açılır?](CALISTIRMA.md) sayfasında. Aşağıdaki eski GitHub kurucularında A ve B adları ters kullanılır. Güncel akışta **A = PanCafe**, **B = kiosk**.
+
 ## A ve B için Windows kurulumu
 
 1. A ve B bilgisayarlarını aynı yerel ağa bağla. Yeni B'de mevcut PanCafe üyelerini kullanacaksan önce PanCafe veritabanını taşı ve PanCafe Server'ı aç.

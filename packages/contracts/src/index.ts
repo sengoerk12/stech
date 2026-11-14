@@ -56,6 +56,7 @@ export interface Promotion {
   accent: "orange" | "blue";
 }
 export interface Payment {
+  awaitingTerminal?: boolean;
   simulation?: boolean;
   creditedToCafe?: boolean;
   id: string;

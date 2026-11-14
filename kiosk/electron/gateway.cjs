@@ -12,7 +12,7 @@ class ApiGateway {
       response = await fetch(this.config.apiBaseUrl.replace(/\/$/, '') + endpoint, {
         method: body ? 'POST' : 'GET',
         headers: { 'Content-Type': 'application/json', 'X-Kiosk-Key': this.config.deviceKey, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
-        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 45000 : 12000), redirect: 'error',
+        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 45000 : endpoint === '/kiosk/pos-payments' ? 25000 : 12000), redirect: 'error',
       });
     } catch { throw new Error('Sunucuya ulaşılamıyor. Lütfen yetkiliden yardım iste.'); }
     if (response.status === 304) return null;
@@ -31,6 +31,15 @@ class ApiGateway {
     }
   }
   quote(token, payload) { return this.request('/kiosk/quote', token, { amount: payload.amount, promotionId: payload.promotionId }); }
+  createPosPayment(token, { amount, promotionId, key }) {
+    return this.request('/kiosk/pos-payments', token, { amount, promotionId }, { 'Idempotency-Key': key });
+  }
+  posPayment(token, id) {
+    return this.read('/kiosk/pos-payments/' + encodeURIComponent(id), token);
+  }
+  cancelPosPayment(token, id) {
+    return this.request('/kiosk/pos-payments/' + encodeURIComponent(id) + '/cancel', token, {});
+  }
   login(cardUid) { return this.request('/kiosk/card-login', null, { cardUid }); }
   loginWithPassword(identifier, password) { return this.request('/kiosk/password-login', null, { identifier, password }); }
   async design() { const result=await this.request('/kiosk/design',null,undefined,this.designVersion?{'If-None-Match':'"'+this.designVersion+'"'}:{});if(result?.id)this.designVersion=result.id;return result; }

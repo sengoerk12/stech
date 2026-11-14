@@ -55,7 +55,7 @@ async function call(action, payload) {
 }
 function reset() {
   kioskGames.endSession();
-  computerData = undefined; computersError = ''; computerZone = undefined; computerNotice = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
+  computerData = undefined; computersError = ''; computerZone = undefined; computerNotice = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.posAttempt = undefined; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
   $('#toast').hidden = true; render(); renderModal();
   void refreshPcAvailability();
 }
@@ -147,14 +147,47 @@ function topup() {
   const amount = Number(state.amount || 0) * 100;
   const q = state.quote;
   return `<div class="page-heading"><div><span class="eyebrow">OYUNA ARA VERME</span><h1>Bir sonraki oyuna hazır ol.</h1><p>Yüklemek istediğin tutarı seç, kartınla öde, devam et.</p></div></div>
-  ${state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : '<div class="notice">' + icon('info') + ' POS cihazı henüz eşleştirilmedi. Gerçek yükleme için şube yetkilisine başvur.</div>'}
+  ${state.data.features.odealStage ? '<div class="notice">Ödeal test ortamı · Deneme bakiyesi</div>' : state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : state.data.features.topup ? '' : '<div class="notice">' + icon('info') + ' POS ile yükleme şu anda kapalı.</div>'}
   <div class="topup-grid"><section class="panel amount-panel"><div class="section-heading"><h2>Yükleme tutarı</h2><span>01 / 02</span></div><div class="amount-display"><span>₺</span><strong>${e(state.amount || '0')}</strong><span>TL</span></div><div class="amount-presets">${[100, 200, 500, 1000].map(n => button(`${n} TL`, `amount:${n}`, Number(state.amount) === n ? 'preset selected' : 'preset')).join('')}</div><div class="keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Temizle' : k === 'back' ? '⌫' : k, `key:${k}`, k === 'clear' ? 'key key-small' : 'key')).join('')}</div><p class="muted minimum">En az 50 TL · En fazla 10.000 TL</p></section>
-  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div><div class="summary-row s-coin-quote"><span>Kazanılacak S Coin</span><strong>${Number.isSafeInteger(q?.sCoinEarned) ? e(q.sCoinEarned) + ' S Coin' : '—'}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
+  <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div>${state.data.features.odealPos ? '' : `<div class="summary-row s-coin-quote"><span>Kazanılacak S Coin</span><strong>${Number.isSafeInteger(q?.sCoinEarned) ? e(q.sCoinEarned) + ' S Coin' : '—'}</strong></div>`}<div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
 }
+async function checkPosStatus(showError = false) {
+  const current = state.payment;
+  if (state.info?.mode !== 'connected' || posStatusInFlight || state.processing ||
+      !['pending', 'transferring'].includes(current?.status)) return;
+  const epoch = state.epoch;
+  posStatusInFlight = true;
+  try {
+    const payment = await call('payment', { id: current.id });
+    if (epoch !== state.epoch || state.processing || state.payment !== current) return;
+    if (payment.status === current.status && payment.awaitingTerminal === current.awaitingTerminal) return;
+    state.payment = payment;
+    if (payment.completionSeconds !== undefined) {
+      state.seconds = payment.completionSeconds;
+      state.modal = null;
+      renderModal();
+    }
+    render();
+    if (payment.status === 'completed' || payment.status === 'failed') await refresh();
+  } catch (error) {
+    if (showError && epoch === state.epoch) toast(error.message);
+  } finally {
+    posStatusInFlight = false;
+  }
+}
+setInterval(() => void checkPosStatus(), 3000);
 function paymentView() {
   const p = state.payment, done = p.status === 'completed', failed = p.status === 'failed';
-  return `<div class="payment-page">${!state.processing && !done ? button(icon('back') + ' Tutara geri dön', 'payment-back', 'quiet') : ''}<div class="payment-steps"><span class="finished">1 <b>Tutar seçimi</b></span><i></i><span class="${done ? 'finished' : 'current'}">2 <b>POS ile ödeme</b></span><i></i><span class="${done ? 'finished' : ''}">3 <b>Bakiye onayı</b></span></div><section class="panel payment-panel"><div class="payment-illustration ${done ? 'success' : failed ? 'failure' : ''}">${icon(done ? 'check' : failed ? 'close' : 'topup')}</div><span class="eyebrow">${done ? 'İŞLEM TAMAMLANDI' : failed ? 'ÖDEME ONAYLANMADI' : 'POS İLE ÖDEME'}</span><h1>${done ? 'Hazırsın. İyi oyunlar!' : failed ? 'Tekrar deneyebilirsin.' : state.processing ? 'İşlemin kontrol ediliyor…' : 'Kartını POS cihazına okut.'}</h1><p>${done ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : failed ? 'Hesabından tahsilat yapılmadı ve bakiye eklenmedi.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.'}</p><div class="payment-value">${cash(p.amount)}</div><div class="payment-receipt"><span>Yükleme <b>${cash(p.amount)}</b></span><span>Bonus <b class="positive">+${cash(p.bonus)}</b></span>${done ? '<span>Yeni bakiye <b>' + cash(p.balanceAfter) + '</b></span>' : ''}</div>
-  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div><p class="completion-countdown">Seçim yapmazsan <b id="completion-seconds">' + Math.ceil(state.seconds) + '</b> saniye sonra oturumun kapanacak.</p></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : `<div class="pos-demo"><span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span><div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
+  const physical = state.info.mode === 'connected';
+  const transferring = p.status === 'transferring';
+  const waiting = physical && p.awaitingTerminal === false;
+  const cancel = physical && p.status === 'pending' && p.awaitingTerminal === true
+    ? button('Ödemeyi iptal et', 'pos-cancel', 'secondary', state.processing)
+    : '';
+  const title = done ? 'Hazırsın. İyi oyunlar!' : failed ? 'Ödeme tamamlanmadı.' : transferring ? 'Bakiye yükleniyor…' : waiting ? 'POS işlemi kontrol ediliyor…' : 'Kartını POS cihazına okut.';
+  const detail = done ? (p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
+  return `<div class="payment-page">${!state.processing && !done && (!physical || failed) ? button(icon('back') + ' Tutara geri dön', 'payment-back', 'quiet') : ''}<div class="payment-steps"><span class="finished">1 <b>Tutar seçimi</b></span><i></i><span class="${done ? 'finished' : 'current'}">2 <b>POS ile ödeme</b></span><i></i><span class="${done ? 'finished' : ''}">3 <b>Bakiye onayı</b></span></div><section class="panel payment-panel"><div class="payment-illustration ${done ? 'success' : failed ? 'failure' : ''}">${icon(done ? 'check' : failed ? 'close' : 'topup')}</div><span class="eyebrow">${done ? 'İŞLEM TAMAMLANDI' : failed ? 'ÖDEME ONAYLANMADI' : 'POS İLE ÖDEME'}</span><h1>${title}</h1><p>${detail}</p><div class="payment-value">${cash(p.amount)}</div><div class="payment-receipt"><span>Yükleme <b>${cash(p.amount)}</b></span><span>Bonus <b class="positive">+${cash(p.bonus)}</b></span>${done ? '<span>Yeni bakiye <b>' + cash(p.balanceAfter) + '</b></span>' : ''}</div>
+  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div><p class="completion-countdown">Seçim yapmazsan <b id="completion-seconds">' + Math.ceil(state.seconds) + '</b> saniye sonra oturumun kapanacak.</p></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + button('Durumu kontrol et', 'pos-status', 'secondary', state.processing) + cancel + '</div>' : `<div class="pos-demo"><span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span><div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
   <div class="receipt-id">İşlem no: ${e(p.id)}</div></section></div>`;
 }
 function campaigns() {
@@ -329,22 +362,28 @@ async function loadRecent() {
   }
 }
 let walletEpoch;
+let posStatusInFlight = false;
 async function refreshLiveAccount() {
   const epoch = state.epoch;
   if (!state.data || walletEpoch === epoch) return;
   walletEpoch = epoch;
   try {
-    const { member, wallet, promotions } = await call('dashboard');
+    const { member, wallet, promotions, pendingPayments, features } = await call('dashboard');
     if (epoch !== state.epoch || !state.data) return;
     if (!Number.isSafeInteger(wallet?.balance)) throw new Error('PanCafe bakiyesi doğrulanamadı.');
     const balanceChanged = state.data.wallet?.balance !== wallet.balance;
     const memberChanged = JSON.stringify(state.data.member) !== JSON.stringify(member);
     const promotionsChanged = Array.isArray(promotions) && JSON.stringify(state.data.promotions) !== JSON.stringify(promotions);
     if (Array.isArray(promotions)) state.data.promotions = promotions;
+    const posChanged = features?.odealPos === true && (JSON.stringify(state.data.pendingPayments) !== JSON.stringify(pendingPayments) || state.data.features.topup !== features.topup);
+    if (features?.odealPos === true) {
+      state.data.pendingPayments = pendingPayments;
+      state.data.features = features;
+    }
     state.data.member = member;
     state.data.wallet = wallet;
     state.walletStale = false;
-    if ((memberChanged || promotionsChanged) && !state.modal && !state.processing && !state.payment) render();
+    if ((memberChanged || promotionsChanged || posChanged) && !state.modal && !state.processing && !state.payment) render();
     if (promotionsChanged && state.page === 'topup' && !state.payment) void updateQuote();
     if (promotionsChanged && state.modal && !['idle', 'logout', 'admin', 'password-login'].includes(state.modal)) { render(); renderModal(); }
     if (state.page === 'home' && (balanceChanged || state.recentState === 'error')) void loadRecent();
@@ -392,7 +431,7 @@ async function updateQuote() {
 async function go(page) {
   if (state.processing) return;
   if (state.payment?.status === 'completed') { toast('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.'); return; }
-  if (state.payment?.status === 'pending') { toast('Önce ödeme ekranındaki işlemi tamamla veya tutara geri dön.'); return; }
+  if (['pending', 'transferring'].includes(state.payment?.status)) { toast(state.info.mode === 'connected' ? 'Önce POS işleminin sonucunu bekle.' : 'Önce ödeme ekranındaki işlemi tamamla veya tutara geri dön.'); return; }
   if (page === 'computers') { if (!computerStart) { computerZone = undefined; selectedComputer = undefined; } computerNotice = ''; void loadComputers(); }
   state.page = page; state.payment = null; state.modal = null; renderModal(); render();
   if (state.info.mode === 'connected' && (page === 'home' || page === 'profile')) {
@@ -489,22 +528,50 @@ async function action(value) {
     state.amount = arg === 'clear' ? '' : arg === 'back' ? state.amount.slice(0,-1) : (state.amount === '0' ? arg : (state.amount + arg).slice(0,5));
     return updateQuote();
   }
+  if (name === 'pos-status') return checkPosStatus(true);
+  if (name === 'pos-cancel') {
+    const current = state.payment;
+    if (state.processing || current?.status !== 'pending' || !current.awaitingTerminal) return;
+    const epoch = state.epoch;
+    state.processing = true; render();
+    try {
+      const payment = await call('cancel-payment', { id: current.id });
+      if (epoch !== state.epoch) return;
+      state.payment = payment;
+      if (payment.completionSeconds !== undefined) state.seconds = payment.completionSeconds;
+      await refresh();
+    } finally {
+      if (epoch === state.epoch) { state.processing = false; render(); }
+    }
+    return;
+  }
   if (name === 'pay') {
-    if (state.processing || !state.quote) return;
+    if (state.processing || !state.quote || !state.data.features.topup) return;
+    if (state.info.mode === 'connected' && state.data.pendingPayments?.length) return action('resume:' + state.data.pendingPayments[0].id);
     const epoch = state.epoch; state.processing = true; render();
-    try { const payment = await call('create', { amount: Number(state.amount) * 100, key: crypto.randomUUID(), promotionId: state.promotionId }); if (epoch !== state.epoch) return; state.payment = payment; }
+    const amount = Number(state.amount) * 100;
+    const promotionId = state.promotionId;
+    const attempt = state.posAttempt;
+    const key = attempt?.amount === amount && attempt.promotionId === promotionId ? attempt.key : crypto.randomUUID();
+    state.posAttempt = { amount, promotionId, key };
+    try {
+      const payment = await call('create', { amount, key, promotionId });
+      if (epoch !== state.epoch) return;
+      state.posAttempt = undefined;
+      state.payment = payment;
+    }
     finally { if (epoch === state.epoch) { state.processing = false; render(); } }
     return;
   }
   if (name === 'resume') { const epoch = state.epoch; const payment = await call('payment', { id: arg }); if (epoch !== state.epoch) return; state.payment = payment; if (payment.completionSeconds !== undefined) state.seconds = payment.completionSeconds; state.page = 'topup'; render(); return; }
-  if (name === 'approve' || name === 'decline') {
+  if ((name === 'approve' || name === 'decline') && state.info.mode === 'demo') {
     if (state.processing || !state.payment || state.payment.status !== 'pending') return;
     const epoch = state.epoch; state.processing = true; render();
     try { const payment = await call('settle', { id: state.payment.id, outcome: name === 'approve' ? 'approved' : 'declined' }); if (epoch !== state.epoch) return; state.payment = payment; if (payment.completionSeconds !== undefined) { state.seconds = payment.completionSeconds; state.modal = null; renderModal(); } await refresh(); }
     finally { if (epoch === state.epoch) { state.processing = false; render(); } }
     return;
   }
-  if (name === 'payment-back' && state.payment?.status !== 'completed') { state.payment = null; return updateQuote(); }
+  if (name === 'payment-back' && state.payment?.status !== 'completed' && (state.info.mode === 'demo' || state.payment?.status === 'failed')) { state.payment = null; return updateQuote(); }
   if (name === 'pin') { state.pin = arg === 'clear' ? '' : arg === 'back' ? state.pin.slice(0,-1) : (state.pin + arg).slice(0,16); renderModal(); return; }
   if (name === 'admin-exit') { await call('adminExit', { pin: state.pin }); return; }
 }

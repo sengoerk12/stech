@@ -1,5 +1,7 @@
 # S TECH Kiosk
 
+Günlük kullanım için proje kökündeki **S-TECH-Baslat.cmd** dosyasını aç. [Aynı bilgisayar ve iki bilgisayar kurulumu](../docs/CALISTIRMA.md).
+
 Windows müşteri noktası. `kiosk.exe` açılınca tam ekran başlar. NFC kart girişi, ana ekran, bakiye yükleme, kampanya koşulları, sayfalı işlem/PC oturum geçmişi ve profil ekranları içerir. Mobil uygulamanın koyu tema, turuncu/mavi vurgu ve marka logosu korunmuştur. Ana hedef 1080×1920 dikey dokunmatik ekrandır; 720×1280 dikey ve önceki 1024×768 / 1440×900 yatay yerleşimler de desteklenir.
 
 ## Dikey ekran
@@ -14,7 +16,7 @@ Windows ekran yönü dikey ve çözünürlüğü 1080×1920 olduğunda uygulama 
 
 - **Demo:** İki ayrı müşteri, kalıcı deneme bakiyeleri, POS onay/red senaryoları, bonus, tekrar onay koruması ve yarım kalan yüklemeye dönüş. Gerçek tahsilat / PanCafe yazımı yapılmaz. Kartlar `DEMO0001`, `DEMO0002`; ekrandaki demo butonları da aynı akışı açar.
 - **PanCafe bağlantısı:** USB klavye modundaki okuyucu kimliği ve Enter gönderir. Backend cihaz anahtarını doğrular; Windows köprüsü kimliği `MEMBERS.LASTNAME` (soyadı) alanında arar. Tam bir eşleşme, aktif üyelik ve kaynak kimlik doğrulaması gerekir. Başta sıfırlar korunur. Birden fazla eşleşme veya bağlantı hatasında giriş verilmez. Bakiye, hareketler ve tamamlanmış PC oturumları mevcut API'den okunur. Soyadı sayısal/hex kart kimliği ise müşteri adına eklenmez.
-- **Gerçek POS ödemesi henüz bağlı değildir.** Kullanıcının bildirdiği cihaz PAX 910S, ödeme uygulaması İş Bankası. USB bağlantısı planlanıyor; alt bağlantı ünitesi henüz yok. Uyumlu iletişim ünitesi, üretici sürücüsü/SDK ve eşleşme erişimi bekleniyor. İlk Hugin marka bilgisi, bu model bilgisiyle güncellenmiştir. Bağlı modda para yükleme kapalıdır. Mevcut mobil `mock` ödeme sağlayıcısı POS onayı olarak kullanılmaz; POS simülasyonu gerçek PanCafe bakiyesine ulaşamaz.
+- **PAX A910S ödemeleri Ödeal D2D üzerinden çalışır.** Sunucu ayarları ve Ödeal bildirim adresleri için [POS entegrasyonuna](docs/POS_INTEGRATION.md) bak.
 
 Bu sürüm cihazlarla sahada doğrulanmış bir üretim yayını değildir. API'nin mevcut development/staging/production korumaları korunur.
 
@@ -97,8 +99,6 @@ npm run test:ui
 
 UI testi gerçek Electron açar ve geçici verilerle kart girişi, ödeme onay/red, bonus, geçmiş, kampanya, profil, müşteri ayrımı ve dar ekranı kontrol eder. Görseller `docs/screenshots` altına yazılır. Root API testlerinde cihaz anahtarı, kısa oturum, iptal ve PanCafe kart eşleşmesi kontrol edilir. C# köprüsü / gerçek okuyucu / PAX donanımı bu Mac üzerinde çalıştırılarak doğrulanmamıştır.
 
-## PAX 910S / USB bağlantısında tamamlanacak işler
+## Ödeal POS
 
-Resmî cihaz kaynağı: https://www.paxtechnology.com/a910s . USB portunun varlığı bir ödeme protokolünü belirlemez. Cihaz üzerinde çalışan banka/ödeme uygulamasına ait Windows ECR/USB sürücüsü, SDK/protokol ve aktivasyon bilgileri sağlanmalıdır. A910S ile mali A910SF aynı entegrasyon varsayımıyla ele alınmaz. İlk araştırılan Hugin PC Link API, bu PAX cihazında doğrulanmadan kullanılmaz. Ayrıntılar `docs/POS_INTEGRATION.md` içinde.
-
-Ödeme bağlandığında tutar ve bonus sunucudan alınmalı, sipariş önce kalıcı kaydedilmeli, terminalin doğrulanmış sonucu tutar/para birimi/işlem referansıyla eşleştirilmeli, yalnızca kesin onaydan sonra mevcut kalıcı PanCafe aktarım kuyruğuna bırakılmalıdır. Timeout ödeme reddi değildir: aynı terminal referansı sorgulanmadan ikinci tahsilat başlatılmamalı. Yeniden başlatma, ağ kesilmesi, mükerrer onay, iade ve mutabakat gerçek cihazla test edilmelidir. Kart/PIN verisi uygulamaya alınmaz.
+Kurulum ve test adımları [POS entegrasyonu](docs/POS_INTEGRATION.md) belgesinde.

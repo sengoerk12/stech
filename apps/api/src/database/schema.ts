@@ -47,6 +47,12 @@ export const schema = [
   `CREATE TABLE IF NOT EXISTS cafe_member_links (user_id text PRIMARY KEY REFERENCES app_users(id), installation_id text NOT NULL, member_id bigint NOT NULL, member_username text NOT NULL, UNIQUE(installation_id,member_username))`,
   `INSERT INTO schema_migrations(version) VALUES(4) ON CONFLICT DO NOTHING`,
   `ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS transfer_target text NOT NULL DEFAULT 'mock' CHECK(transfer_target IN ('mock','pancafe'))`,
+  `ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS payment_provider text NOT NULL DEFAULT 'mock' CHECK(payment_provider IN ('mock','odeal'))`,
+  `ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS pos_device_code text`,
+  `ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS checkout_started boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS pos_cancelled_at timestamptz`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS odeal_active_device ON payment_orders(pos_device_code)
+    WHERE payment_provider='odeal' AND status IN ('pending','transferring')`,
   `INSERT INTO schema_migrations(version) VALUES(5) ON CONFLICT DO NOTHING`,
   `CREATE TABLE IF NOT EXISTS admin_accounts (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, salt text NOT NULL, role text NOT NULL CHECK(role IN ('owner','operator','viewer')), active boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS admin_sessions (token_hash text PRIMARY KEY, admin_id uuid NOT NULL REFERENCES admin_accounts(id), expires_at timestamptz NOT NULL)`,

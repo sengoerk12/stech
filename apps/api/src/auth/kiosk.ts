@@ -19,10 +19,14 @@ export class KioskCardAuth {
     if (new Set(map.cards.map(c => c.cardHash)).size !== map.cards.length)
       throw new Error("Duplicate kiosk card mapping");
   }
-  verifyDevice(key: string | undefined) {
-    const actual = createHash("sha256").update(key ?? "").digest();
+  isDevice(key: string | string[] | undefined) {
+    if (typeof key !== "string") return false;
+    const actual = createHash("sha256").update(key).digest();
     const expected = createHash("sha256").update(this.deviceKey).digest();
-    if (!timingSafeEqual(actual, expected)) throw new UnauthorizedException("Kiosk cihazı doğrulanamadı.");
+    return timingSafeEqual(actual, expected);
+  }
+  verifyDevice(key: string | undefined) {
+    if (!this.isDevice(key)) throw new UnauthorizedException("Kiosk cihazı doğrulanamadı.");
   }
 
   async loginWithPassword(key: string | undefined, username: string, password: string) {
