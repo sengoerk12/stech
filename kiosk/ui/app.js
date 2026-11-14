@@ -527,6 +527,7 @@ async function action(value) {
     const current = state.payment;
     if (state.processing || current?.status !== 'pending' || !current.awaitingTerminal) return;
     const epoch = state.epoch;
+    toast("pos cihazında da iptal'e basın");
     state.processing = true; render();
     try {
       const payment = await call('cancel-payment', { id: current.id });
