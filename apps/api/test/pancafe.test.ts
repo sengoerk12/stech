@@ -216,12 +216,12 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     const collection = (prefix: string) => ({
       doc: (id: string) => {
         const path = prefix + "/" + id;
-        return { path, get: async () => snapshot({ path }), collection: (name: string) => collection(path + "/" + name) };
+        return { id, path, get: async () => snapshot({ path }), collection: (name: string) => collection(path + "/" + name) };
       },
       firestore: {
         runTransaction: async (work: (tx: object) => Promise<unknown>) => work({
           get: async (ref: Ref) => snapshot(ref),
-          set: (ref: Ref, data: Record<string, unknown>) => documents.set(ref.path, data),
+          set: (ref: Ref, data: Record<string, unknown>) => documents.set(ref.path, { ...documents.get(ref.path), ...data }),
           create: (ref: Ref, data: Record<string, unknown>) => {
             assert(!documents.has(ref.path));
             documents.set(ref.path, data);
@@ -267,7 +267,12 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     const other = await source.authenticate("first", "PanCafePassword!");
     assert(other);
     await assert.rejects(() => sCoin.playTestGame(other.id, playId), /1 S Coin/);
-    const liveSCoin = new SCoinService(db, collection("live-wallets") as unknown as CollectionReference, config.installationId, false);
+    const legacyWallets = collection("live-wallets") as unknown as CollectionReference;
+    const liveSCoin = new SCoinService(db, collection("members") as unknown as CollectionReference, config.installationId, false, legacyWallets);
+    documents.set("live-wallets/2", { units: 10000000 });
+    documents.set("members/2", { username: "kaan2" });
+    assert.equal((await liveSCoin.balance(member.id)).playableCoins, 1000);
+    assert.deepEqual(documents.get("members/2"), { username: "kaan2", sCoinUnits: 10000000 });
     const live = new PersistentPaymentService(db, source, new MockPaymentProvider(), "pancafe", liveSCoin, "KIOSK1");
     assert.equal((await live.quote(member.id, 45800)).sCoinEarned, 4);
     const rounded = await live.create(member.id, 45800, "rounded-s-coin-payment");
@@ -279,10 +284,10 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     await sCoin.drain();
     assert.equal((await sCoin.balance(member.id)).units, 0);
     await liveSCoin.drain();
-    assert.deepEqual(await liveSCoin.balance(member.id), { units: 40000, unitsPerCoin: 10000, playableCoins: 4, testOnly: false });
+    assert.deepEqual(await liveSCoin.balance(member.id), { units: 10040000, unitsPerCoin: 10000, playableCoins: 1004, testOnly: false });
     await db.query("UPDATE s_coin_awards SET synced_at=NULL WHERE test_only=false");
     await liveSCoin.drain();
-    assert.equal((await liveSCoin.balance(member.id)).units, 40000);
+    assert.equal((await liveSCoin.balance(member.id)).units, 10040000);
   } finally { await db.close(); }
 });
 

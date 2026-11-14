@@ -16,7 +16,21 @@ export class SCoinService {
   private timer?: ReturnType<typeof setInterval>;
   private running?: Promise<void>;
 
-  constructor(private db: Database, private wallets: CollectionReference, private installationId: string, private testOnly: boolean) {}
+  constructor(
+    private db: Database,
+    private wallets: CollectionReference,
+    private installationId: string,
+    private testOnly: boolean,
+    private legacyWallets?: CollectionReference,
+  ) {}
+
+  private get unitsField() { return this.testOnly ? "units" : "sCoinUnits"; }
+
+  private validateUnits(units: unknown): number {
+    if (typeof units !== "number" || !Number.isSafeInteger(units) || units < 0)
+      throw new ServiceUnavailableException("S Coin bakiyesi doğrulanamadı.");
+    return units;
+  }
 
   async enqueue(tx: SqlExecutor, payment: { id: string; user_id: string; amount: number }) {
     const units = sCoinsForTopup(payment.amount) * S_COIN_UNITS;
@@ -39,9 +53,19 @@ export class SCoinService {
   }
 
   async balance(userId: string) {
-    const wallet = await (await this.wallet(userId)).get();
-    const units = wallet.exists ? wallet.get("units") : 0;
-    if (!Number.isSafeInteger(units) || units < 0) throw new ServiceUnavailableException("S Coin bakiyesi doğrulanamadı.");
+    const wallet = await this.wallet(userId);
+    const current = (await wallet.get()).get(this.unitsField);
+    const legacy = this.legacyWallets?.doc(wallet.id);
+    const units = current !== undefined || !legacy
+      ? this.validateUnits(current === undefined ? 0 : current)
+      : await this.wallets.firestore.runTransaction(async tx => {
+        const existing = (await tx.get(wallet)).get(this.unitsField);
+        if (existing !== undefined) return this.validateUnits(existing);
+        const previous = await tx.get(legacy);
+        const migrated = this.validateUnits(previous.exists ? previous.get("units") : 0);
+        if (previous.exists) tx.set(wallet, { [this.unitsField]: migrated }, { merge: true });
+        return migrated;
+      });
     return { units, unitsPerCoin: S_COIN_UNITS, playableCoins: Math.floor(units / S_COIN_UNITS), testOnly: this.testOnly };
   }
 
@@ -75,15 +99,18 @@ export class SCoinService {
     )).rows;
     for (const job of jobs) {
       const wallet = this.wallets.doc(String(job.member_id));
-      const receipt = wallet.collection("topups").doc(job.payment_id);
+      const receipt = wallet.collection(this.testOnly ? "topups" : "sCoinTopups").doc(job.payment_id);
+      const legacy = this.legacyWallets?.doc(wallet.id);
       const earned = Number(job.units);
       await this.wallets.firestore.runTransaction(async tx => {
         if ((await tx.get(receipt)).exists) return;
-        const current = await tx.get(wallet);
-        const units = current.exists ? current.get("units") : 0;
-        if (!Number.isSafeInteger(units) || units < 0 || !Number.isSafeInteger(earned) || earned <= 0 || !Number.isSafeInteger(units + earned))
+        if (legacy && (await tx.get(legacy.collection("topups").doc(job.payment_id))).exists) return;
+        const current = (await tx.get(wallet)).get(this.unitsField);
+        const previous = current === undefined && legacy ? await tx.get(legacy) : undefined;
+        const units = this.validateUnits(current === undefined ? (previous?.exists ? previous.get("units") : 0) : current);
+        if (!Number.isSafeInteger(earned) || earned <= 0 || !Number.isSafeInteger(units + earned))
           throw new Error("Invalid S Coin balance");
-        tx.set(wallet, { units: units + earned }, { merge: true });
+        tx.set(wallet, { [this.unitsField]: units + earned }, { merge: true });
         tx.create(receipt, { units: earned });
       });
       await this.db.query("UPDATE s_coin_awards SET synced_at=now() WHERE payment_id=$1", [job.payment_id]);

@@ -156,7 +156,7 @@ export function createFirebaseSync(projectId: string, installationId: string, br
     }
     const batch = firestore.batch();
     for (const member of page)
-      batch.set(members.doc(String(member.memberId)), { ...member, updatedAt: FieldValue.serverTimestamp() });
+      batch.set(members.doc(String(member.memberId)), { ...member, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     await batch.commit();
   }, balanceWrite);
   return {

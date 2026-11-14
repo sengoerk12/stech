@@ -202,7 +202,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const testSCoin = installation && bridgeConfig
     ? new SCoinService(db, installation.collection("sCoinTestWallets"), bridgeConfig.installationId, true) : undefined;
   const liveSCoin = installation && bridgeConfig && odeal?.mode === "live"
-    ? new SCoinService(db, installation.collection("sCoinWallets"), bridgeConfig.installationId, false) : undefined;
+    ? new SCoinService(db, installation.collection("members"), bridgeConfig.installationId, false,
+      installation.collection("sCoinWallets")) : undefined;
   const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock", testSCoin);
   const posCafe = odeal?.mode === "stage" && panCafe
     ? new PanCafeSimulationAdapter(db, cafe, false) : cafe;
