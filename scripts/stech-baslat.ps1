@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Menu', 'Local', 'Server', 'Pair', 'Status')]
+    [ValidateSet('Menu', 'Local', 'Server', 'Pair', 'Admin', 'Status')]
     [string]$Mode = 'Menu'
 )
 
@@ -14,6 +14,7 @@ $firebaseFile = Join-Path $serverHome 'firebase.json'
 $activeKiosk = Join-Path $project 'kiosk\dist\current'
 $port = 3091
 $healthUrl = "http://127.0.0.1:$port/api/v1/health"
+$adminUrl = "http://127.0.0.1:$port/admin/"
 $env:Path += ";$env:LOCALAPPDATA\Microsoft\WinGet\Links"
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
@@ -121,6 +122,9 @@ function Get-ServerEnvironment($Config, $Pairing) {
     $installedEnv = Join-Path $serverHome 'api.env'
     if (Test-Path -LiteralPath $installedEnv) { return $installedEnv }
     $envFile = Join-Path $serverHome 'launcher-api.env'
+    $adminSetupSetting = if (Test-Path -LiteralPath $envFile) {
+        Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*ADMIN_SETUP_TOKEN\s*=' } | Select-Object -Last 1
+    }
     $folder = $serverHome.Replace('\', '/')
     Write-Text $envFile @"
 ENVIRONMENT=development
@@ -135,6 +139,7 @@ FIREBASE_SYNC_ENABLED=true
 FIREBASE_BALANCE_WRITE_ENABLED=$(([bool]$Config.allowFirebaseBalanceWrite).ToString().ToLowerInvariant())
 FIREBASE_PROJECT_ID=wallet-stech
 GOOGLE_APPLICATION_CREDENTIALS="$folder/firebase.json"
+$adminSetupSetting
 "@
     return $envFile
 }
@@ -322,9 +327,17 @@ try {
         Write-Host '1  PanCafe ve kiosk bu bilgisayarda'
         Write-Host '2  A bilgisayari: PanCafe sunucusunu baslat'
         Write-Host '3  A bilgisayari: Ilk kurulum / B kiosk paketini olustur'
-        Write-Host '4  Durumu goster'
-        $Mode = @{ '1' = 'Local'; '2' = 'Server'; '3' = 'Pair'; '4' = 'Status' }[(Read-Host 'Secim').Trim()]
+        Write-Host '4  Admin panelini ac'
+        Write-Host '5  Durumu goster'
+        $Mode = @{ '1' = 'Local'; '2' = 'Server'; '3' = 'Pair'; '4' = 'Admin'; '5' = 'Status' }[(Read-Host 'Secim').Trim()]
         if (!$Mode) { return }
+    }
+    if ($Mode -eq 'Admin') {
+        if (!(Get-Health $healthUrl)) {
+            throw 'Sunucu kapali. PanCafe bilgisayarinda once 1 veya 2 ile sunucuyu baslat, sonra 4 ile admin panelini ac.'
+        }
+        Start-Process -FilePath $adminUrl
+        return
     }
     if ($Mode -eq 'Status') {
         $api = Get-Health $healthUrl
@@ -335,7 +348,7 @@ try {
         Write-Host ('Firebase: ' + $api.firebaseSync)
         Write-Host ('Kiosk: ' + $(if (Get-Process kiosk -ErrorAction SilentlyContinue) { 'acik' } else { 'kapali' }))
         Write-Host ('Odeal tuneli: ' + $(if ((Get-Health 'http://127.0.0.1:4040/api/tunnels').tunnels) { 'acik' } else { 'kapali' }))
-        Write-Host "Yonetim paneli: http://127.0.0.1:$port/admin/"
+        Write-Host "Yonetim paneli: $adminUrl"
         if ($interactive) { [void](Read-Host 'Kapatmak icin Enter') }
         return
     }
@@ -354,7 +367,7 @@ try {
     $pairing = Get-Content -LiteralPath $pairingFile -Raw | ConvertFrom-Json
     Start-Bridge $bridge
     Start-Api $bridge $pairing
-    Write-Host "PanCafe ve backend hazir. Yonetim paneli: http://127.0.0.1:$port/admin/" -ForegroundColor Green
+    Write-Host "PanCafe ve backend hazir. Yonetim paneli: $adminUrl" -ForegroundColor Green
     if ($Mode -in @('Server', 'Pair')) { Start-Lan $pairing }
     try { Start-Pos } catch { Write-Warning $_.Exception.Message }
     if ($Mode -eq 'Pair') { Export-Kiosk $pairing }

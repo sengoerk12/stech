@@ -1,16 +1,13 @@
 import type { CollectionReference } from "firebase-admin/firestore";
 import type { Database, SqlExecutor } from "../database/database";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
+import type { CafeSystemAdapter } from "./adapter";
 
 export const S_COIN_UNITS = 10000;
 export const sCoinsForTopup = (paidKurus: number) => Math.floor(paidKurus / S_COIN_UNITS);
-const prizes = [
-  null, { kind: "product", title: "1 Red Bull" },
-  null, { kind: "playtime", title: "1 saat oyun süresi" },
-  null, null, { kind: "balance", title: "10 TL oyun bakiyesi" },
-  null, null, null,
-] as const;
+const wheelAmounts = [0, 500, 500, 1000, 500, 0, 1000, 500, 0, 2500] as const;
+type WheelCredits = { queue: CollectionReference; cafe: Pick<CafeSystemAdapter, "addBalance"> };
 
 export class SCoinService {
   private timer?: ReturnType<typeof setInterval>;
@@ -22,6 +19,7 @@ export class SCoinService {
     private installationId: string,
     private testOnly: boolean,
     private legacyWallets?: CollectionReference,
+    private credits?: WheelCredits,
   ) {}
 
   private get unitsField() { return this.testOnly ? "units" : "sCoinUnits"; }
@@ -70,11 +68,17 @@ export class SCoinService {
   }
 
   async playGame(userId: string, operationId: string, game = "wheel") {
+    if (game !== "wheel") throw new ConflictException("Bu oyun hazırlık aşamasında.");
+    if (!this.testOnly && !this.credits)
+      throw new ServiceUnavailableException("Çark ödülü aktarımı hazır değil.");
     const wallet = await this.wallet(userId);
     const play = wallet.collection(this.testOnly ? "wheelPlays" : "sCoinPlays").doc(operationId);
     const legacy = this.legacyWallets?.doc(wallet.id);
-    const sector = randomInt(prizes.length);
-    const result = { game, sector, prize: prizes[sector], testOnly: this.testOnly };
+    const sector = randomInt(wheelAmounts.length);
+    const amount = wheelAmounts[sector];
+    const prize = amount ? { kind: "balance", title: `${amount / 100} TL oyun bakiyesi`, amountKurus: amount } : null;
+    const result = { game, sector, prize, testOnly: this.testOnly };
+    const credit = !this.testOnly && amount ? this.credits?.queue.doc(randomUUID()) : undefined;
     return this.wallets.firestore.runTransaction(async tx => {
       const previous = await tx.get(play);
       if (previous.exists) {
@@ -88,9 +92,35 @@ export class SCoinService {
       if (units < S_COIN_UNITS)
         throw new ConflictException("Oyunu başlatmak için 1 S Coin gerekiyor.");
       tx.set(wallet, { [this.unitsField]: units - S_COIN_UNITS }, { merge: true });
-      tx.create(play, result.prize && !this.testOnly ? { ...result, fulfillment: "pending" } : result);
+      // The draw, coin debit and payout job are committed together. PanCafe is called outside the transaction.
+      tx.create(play, result);
+      if (credit) tx.create(credit, { userId, amount, nextAttemptAt: Date.now() });
       return result;
     });
+  }
+
+  async drainWheelCredits() {
+    if (!this.credits) return;
+    const { queue, cafe } = this.credits;
+    const pending = await queue.where("nextAttemptAt", "<=", Date.now()).orderBy("nextAttemptAt").limit(25).get();
+    for (const job of pending.docs) {
+      try {
+        const { userId, amount } = job.data();
+        if (typeof userId !== "string" || !userId || ![500, 1000, 2500].includes(amount))
+          throw new Error("Invalid wheel balance award");
+        // PanCafe uses the job ID as its receipt ID, including after a lost response.
+        await cafe.addBalance(userId, amount, 0, job.id);
+        await job.ref.delete();
+      } catch {
+        try {
+          await job.ref.update({ nextAttemptAt: Date.now() + 30_000 }, { lastUpdateTime: job.updateTime });
+        } catch (error) {
+          // A second worker may already have completed or rescheduled this award.
+          const code = (error as { code?: number | string }).code;
+          if (![5, 9, "NOT_FOUND", "FAILED_PRECONDITION"].includes(code ?? "")) throw error;
+        }
+      }
+    }
   }
 
   async drain() {
@@ -120,9 +150,10 @@ export class SCoinService {
 
   start() {
     this.timer = setInterval(() => {
-      if (!this.running) this.running = this.drain().catch(() => {
-        console.warn("S Coin sync unavailable; top-up awards remain queued.");
-      }).finally(() => { this.running = undefined; });
+      if (!this.running) this.running = Promise.all([
+        this.drain().catch(() => console.warn("S Coin sync unavailable; top-up awards remain queued.")),
+        this.drainWheelCredits().catch(() => console.warn("Wheel balance credit unavailable; rewards remain queued.")),
+      ]).then(() => { this.running = undefined; });
     }, 5000).unref();
   }
 

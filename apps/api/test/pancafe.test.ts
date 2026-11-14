@@ -213,11 +213,23 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     const documents = new Map<string, Record<string, unknown>>();
     type Ref = { path: string };
     const snapshot = ({ path }: Ref) => ({ exists: documents.has(path), get: (key: string) => documents.get(path)?.[key], data: () => documents.get(path) });
+    const reference = (prefix: string, id: string) => {
+      const path = prefix + "/" + id;
+      return { id, path, get: async () => snapshot({ path }), collection: (name: string) => collection(path + "/" + name),
+        delete: async () => documents.delete(path),
+        update: async (data: Record<string, unknown>) => documents.set(path, { ...documents.get(path), ...data }) };
+    };
     const collection = (prefix: string) => ({
-      doc: (id: string) => {
-        const path = prefix + "/" + id;
-        return { id, path, get: async () => snapshot({ path }), collection: (name: string) => collection(path + "/" + name) };
-      },
+      doc: (id: string) => reference(prefix, id),
+      where: (_field: string, _operator: string, now: number) => ({
+        orderBy: () => ({ limit: () => ({ get: async () => ({
+          docs: [...documents].filter(([path, data]) => path.startsWith(prefix + "/") && Number(data.nextAttemptAt) <= now)
+            .map(([path, data]) => {
+              const id = path.slice(prefix.length + 1);
+              return { id, ref: reference(prefix, id), data: () => data, updateTime: {} };
+            }),
+        }) }) }),
+      }),
       firestore: {
         runTransaction: async (work: (tx: object) => Promise<unknown>) => work({
           get: async (ref: Ref) => snapshot(ref),
@@ -259,16 +271,27 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     const play = await sCoin.playGame(member.id, playId);
     assert.deepEqual(await sCoin.playGame(member.id, playId), play);
     assert.equal((await sCoin.balance(member.id)).playableCoins, 1);
-    await assert.rejects(() => sCoin.playGame(member.id, playId, "scratch"), /başka bir oyuna ait/);
+    await assert.rejects(() => sCoin.playGame(member.id, playId, "scratch"), /hazırlık aşamasında/);
     const scratchId = "cf4ce669-41cc-4bbb-98e8-e984651f20dd";
-    const scratch = await sCoin.playGame(member.id, scratchId, "scratch");
-    assert.equal(scratch.game, "scratch");
+    await assert.rejects(() => sCoin.playGame(member.id, scratchId, "scratch"), /hazırlık aşamasında/);
+    assert.equal((await sCoin.balance(member.id)).playableCoins, 1);
+    await sCoin.playGame(member.id, scratchId);
     assert.equal((await sCoin.balance(member.id)).playableCoins, 0);
     const other = await source.authenticate("first", "PanCafePassword!");
     assert(other);
     await assert.rejects(() => sCoin.playGame(other.id, playId), /1 S Coin/);
     const legacyWallets = collection("live-wallets") as unknown as CollectionReference;
-    const liveSCoin = new SCoinService(db, collection("members") as unknown as CollectionReference, config.installationId, false, legacyWallets);
+    let loseCreditResponse = false;
+    const liveSCoin = new SCoinService(db, collection("members") as unknown as CollectionReference, config.installationId, false, legacyWallets, {
+      queue: collection("wheel-awards") as unknown as CollectionReference,
+      cafe: {
+        async addBalance(...args) {
+          const wallet = await source.addBalance(...args);
+          if (loseCreditResponse) { loseCreditResponse = false; throw new Error("Lost credit response"); }
+          return wallet;
+        },
+      },
+    });
     documents.set("live-wallets/2", { units: 10000000 });
     documents.set("members/2", { username: "kaan2" });
     assert.equal((await liveSCoin.balance(member.id)).playableCoins, 1000);
@@ -290,9 +313,25 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     assert.equal((await liveSCoin.balance(member.id)).units, 10040000);
     const livePlay = await liveSCoin.playGame(member.id, playId);
     assert.equal(livePlay.testOnly, false);
-    assert.equal((await liveSCoin.playGame(member.id, playId)).sector, livePlay.sector);
+    assert.deepEqual(await liveSCoin.playGame(member.id, playId), livePlay);
+    const drawnAmount = [0, 500, 500, 1000, 500, 0, 1000, 500, 0, 2500][livePlay.sector];
+    assert.equal(livePlay.prize?.amountKurus ?? 0, drawnAmount);
+    const drawnAwards = [...documents].filter(([path]) => path.startsWith("wheel-awards/"));
+    assert.deepEqual(drawnAwards.map(([, doc]) => doc.amount), drawnAmount ? [drawnAmount] : []);
     assert.equal((await liveSCoin.balance(member.id)).playableCoins, 1003);
     assert.equal(documents.get("members/2")?.username, "kaan2");
+    const balanceBeforeWheel = (await source.getBalance(member.id)).balance;
+    await liveSCoin.drainWheelCredits();
+    assert.equal((await source.getBalance(member.id)).balance, balanceBeforeWheel + drawnAmount);
+    const queuedPath = "wheel-awards/7ab67289-97fd-4d33-b4a3-18e0bfa49932";
+    documents.set(queuedPath, { userId: member.id, amount: 2500, nextAttemptAt: 0 });
+    loseCreditResponse = true;
+    await liveSCoin.drainWheelCredits();
+    assert(documents.has(queuedPath));
+    documents.get(queuedPath)!.nextAttemptAt = 0;
+    await liveSCoin.drainWheelCredits();
+    assert(!documents.has(queuedPath));
+    assert.equal((await source.getBalance(member.id)).balance, balanceBeforeWheel + drawnAmount + 2500);
   } finally { await db.close(); }
 });
 

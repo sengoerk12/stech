@@ -75,8 +75,9 @@
   box-shadow: 0 8px 20px #07091075;
   transition: border-color .16s ease, translate .16s ease, box-shadow .16s ease;
 }
-.arcade-card:hover { border-color: var(--game-accent); translate: 0 -2px; box-shadow: 0 10px 28px #05070baa; }
-.arcade-card:active { translate: 0 1px; }
+.arcade-card:enabled:hover { border-color: var(--game-accent); translate: 0 -2px; box-shadow: 0 10px 28px #05070baa; }
+.arcade-card:enabled:active { translate: 0 1px; }
+.arcade-card:disabled { opacity: .7; cursor: default; }
 .arcade-card-cover {
   grid-column: 1 / -1;
   position: relative;
@@ -108,7 +109,7 @@
   background: url('assets/arcade-covers.png') var(--art-x) var(--art-y) / 300% 200% no-repeat;
   transition: scale .22s ease;
 }
-.arcade-card:hover .arcade-card-art::after { scale: 1.035; }
+.arcade-card:enabled:hover .arcade-card-art::after { scale: 1.035; }
 .arcade-card-text { display: grid; gap: 5px; min-width: 0; padding: 12px 0 13px clamp(10px, 1.8vw, 17px); }
 .arcade-card-text strong { font-size: clamp(16px, 2.1vw, 24px); line-height: 1.15; }
 .arcade-card-text > span { color: #b8c4d4; font-size: clamp(10px, 1.3vw, 14px); line-height: 1.28; }
@@ -238,6 +239,10 @@
   background: radial-gradient(circle, transparent 35%, #0e0c1b45 94%), conic-gradient(#273652 0% 10%, #a44474 10% 20%, #273652 20% 30%, #a6702f 30% 40%, #273652 40% 50%, #b54b3a 50% 60%, #273652 60% 70%, #a44474 70% 80%, #273652 80% 90%, #a6702f 90%);
 }
 .arcade-wheel-disc span { position: absolute; inset: 0; padding-top: 8%; text-align: center; color: white; font-size: clamp(15px, 2.8vw, 24px); font-weight: 800; }
+.arcade-balance-wheel .arcade-wheel-disc {
+  background: radial-gradient(circle, transparent 35%, #0e0c1b45 94%), conic-gradient(#273652 0% 10%, #933d69 10% 30%, #86501d 30% 40%, #933d69 40% 50%, #273652 50% 60%, #86501d 60% 70%, #933d69 70% 80%, #273652 80% 90%, #9c3b2b 90%);
+}
+.arcade-balance-wheel .arcade-wheel-disc span { padding-top: 10%; font-size: clamp(11px, 2.3vw, 19px); }
 .arcade-wheel-disc span:nth-child(1) { rotate: 18deg; }
 .arcade-wheel-disc span:nth-child(2) { rotate: 54deg; }
 .arcade-wheel-disc span:nth-child(3) { rotate: 90deg; }
