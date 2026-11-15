@@ -268,7 +268,7 @@ function renderModal() {
         </fieldset>
       </form>`;
     resetLoginFormTimer();
-  } else if (state.modal === 'idle') content = `<div class="modal-symbol">${icon('history')}</div><h2>Hâlâ burada mısın?</h2><p>Gizliliğin için oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak.</p>${button('Buradayım, devam et', 'continue', 'primary wide')}${button('Oturumu bitir', 'logout', 'quiet wide')}`;
+  } else if (state.modal === 'idle') content = `<div class="modal-symbol">${icon('history')}</div><h2>Hâlâ burada mısın?</h2><p>Gizliliğin için oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak.</p>${button('Buradayım, devam et', 'continue', 'primary wide')}${button('Oturumu bitir', 'confirm-logout', 'quiet wide')}`;
   else if (state.modal === 'logout') content = `<div class="modal-symbol">${icon('logout')}</div><h2>İşlemlerin tamam mı?</h2><p>Oturumun kapanacak ve ekran yeni müşteri için hazırlanacak.</p>${button('Evet, oturumu bitir', 'confirm-logout', 'primary wide')}${button('Hesabıma dön', 'close-modal', 'secondary wide')}`;
   else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   else if (state.modal === 'computer-start' && selectedComputer) {
@@ -463,7 +463,11 @@ async function action(value) {
     return;
   }
   if (name === 'demo1' || name === 'demo2') return scan(name === 'demo1' ? 'DEMO0001' : 'DEMO0002');
-  if (name === 'finish-session' || (name === 'logout' && state.payment?.status === 'completed')) { reset(); await call('logout'); return; }
+  if (name === 'finish-session' || name === 'confirm-logout' || (name === 'logout' && state.payment?.status === 'completed')) {
+    reset();
+    await call('logout');
+    return;
+  }
   if (name === 'another-transaction') {
     if (state.processing) return;
     const epoch = state.epoch; state.processing = true; render();
@@ -475,7 +479,6 @@ async function action(value) {
     return;
   }
   if (name === 'logout') { state.modal = 'logout'; renderModal(); return; }
-  if (name === 'confirm-logout') { reset(); await call('logout'); return; }
   if (name === 'continue') {
     if (confirmingEpoch === state.epoch) return;
     const epoch = state.epoch;

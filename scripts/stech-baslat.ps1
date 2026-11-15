@@ -1,6 +1,7 @@
 param(
-    [ValidateSet('Menu', 'Local', 'Server', 'Pair', 'Admin', 'Status')]
-    [string]$Mode = 'Menu'
+    [ValidateSet('Menu', 'Local', 'Server', 'Pair', 'Admin', 'Status', 'StopBridge', 'StopServer', 'StopAll')]
+    [string]$Mode = 'Menu',
+    [string]$BridgeExecutable
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,6 +56,61 @@ function Start-Background($File, $Arguments, $Folder, $Log, $Check) {
     Start-Process -FilePath $File -ArgumentList $Arguments -WorkingDirectory $Folder -WindowStyle Hidden `
         -RedirectStandardOutput "$Log.log" -RedirectStandardError "$Log-error.log"
     return (Wait-Ready $Check "Baslatilamadi. Gunluk: $Log-error.log")
+}
+
+function Stop-LauncherProcess($Name, $Label, [scriptblock]$MatchesLaunch) {
+    $targets = @(Get-CimInstance Win32_Process -Filter "Name='$Name.exe'" |
+        Where-Object { & $MatchesLaunch $_ })
+    if (!$targets) { Write-Host "$Label zaten kapali."; return }
+    foreach ($target in $targets) {
+        $process = Get-Process -Id $target.ProcessId -ErrorAction SilentlyContinue
+        if (!$process) { continue }
+        if (!$process.CloseMainWindow() -or !$process.WaitForExit(5000)) {
+            Stop-Process -InputObject $process -ErrorAction Stop
+            if (!$process.WaitForExit(5000)) { throw "$Label kapatilamadi." }
+        }
+    }
+    Write-Host "$Label kapatildi." -ForegroundColor Green
+}
+
+function Test-LaunchArgument($Process, $Argument) {
+    return $Process.CommandLine -match ('(?:^|\s)(?:"' + [regex]::Escape($Argument) + '"|' + [regex]::Escape($Argument) + ')(?=\s|$)')
+}
+
+function Stop-Bridge {
+    if (!(Get-Process -Name PanCafeBridge -ErrorAction SilentlyContinue)) {
+        Write-Host 'PanCafe koprusu zaten kapali.'
+        return
+    }
+    $bridgeExe = Join-Path $bridgeHome 'PanCafeBridge.exe'
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        $arguments = @('-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File', ('"' + $PSCommandPath + '"'),
+            '-Mode', 'StopBridge', '-BridgeExecutable', ('"' + $bridgeExe + '"'))
+        $elevated = Start-Process -FilePath powershell.exe -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+        if ($elevated.ExitCode -ne 0) { throw 'PanCafe koprusu kapatilamadi.' }
+        Write-Host 'PanCafe koprusunu kapatma islemi tamamlandi.' -ForegroundColor Green
+        return
+    }
+    if ($BridgeExecutable) { $bridgeExe = $BridgeExecutable }
+    Stop-LauncherProcess 'PanCafeBridge' 'PanCafe koprusu' { param($p) $p.ExecutablePath -eq $bridgeExe }
+}
+
+function Stop-Server {
+    $gateway = Join-Path $PSScriptRoot 'odeal-webhook-gateway.cjs'
+    $caddyConfig = Join-Path $serverHome 'Caddyfile'
+    $entry = Join-Path $PSScriptRoot 'start-server.cjs'
+    $serverEnvironments = @((Join-Path $serverHome 'launcher-api.env'), (Join-Path $serverHome 'api.env'), (Join-Path $posHome 'odeal-api.env'))
+    Stop-LauncherProcess 'ngrok' 'Odeal tuneli' { param($p)
+        (Test-LaunchArgument $p 'http://127.0.0.1:3011') -and (Test-LaunchArgument $p '--inspect=false') -and (Test-LaunchArgument $p '--log=stdout')
+    }
+    Stop-LauncherProcess 'node' 'Odeal bildirim servisi' { param($p) Test-LaunchArgument $p $gateway }
+    Stop-LauncherProcess 'caddy' 'Yerel HTTPS' { param($p) Test-LaunchArgument $p $caddyConfig }
+    Stop-LauncherProcess 'node' 'S TECH sunucusu' { param($p)
+        (Test-LaunchArgument $p $entry) -and
+            [bool]($serverEnvironments | Where-Object { Test-LaunchArgument $p "--env-file=$_" })
+    }
 }
 
 function Initialize-Server($SetupMode) {
@@ -329,8 +385,24 @@ try {
         Write-Host '3  A bilgisayari: Ilk kurulum / B kiosk paketini olustur'
         Write-Host '4  Admin panelini ac'
         Write-Host '5  Durumu goster'
-        $Mode = @{ '1' = 'Local'; '2' = 'Server'; '3' = 'Pair'; '4' = 'Admin'; '5' = 'Status' }[(Read-Host 'Secim').Trim()]
+        Write-Host '6  PanCafe koprusunu kapat'
+        Write-Host '7  S TECH sunucusunu kapat'
+        Write-Host '8  Tum S TECH servislerini kapat'
+        $Mode = @{ '1' = 'Local'; '2' = 'Server'; '3' = 'Pair'; '4' = 'Admin'; '5' = 'Status'
+            '6' = 'StopBridge'; '7' = 'StopServer'; '8' = 'StopAll' }[(Read-Host 'Secim').Trim()]
         if (!$Mode) { return }
+    }
+    if ($Mode -in @('StopBridge', 'StopServer', 'StopAll')) {
+        if ($Mode -eq 'StopAll') {
+            $kioskExe = Join-Path $activeKiosk 'kiosk.exe'
+            Stop-LauncherProcess 'kiosk' 'Yerel kiosk' { param($p)
+                $p.ExecutablePath -eq $kioskExe -and (Test-LaunchArgument $p '--portrait-preview')
+            }
+        }
+        if ($Mode -in @('StopServer', 'StopAll')) { Stop-Server }
+        if ($Mode -in @('StopBridge', 'StopAll')) { Stop-Bridge }
+        if ($interactive) { [void](Read-Host 'Kapatmak icin Enter') }
+        return
     }
     if ($Mode -eq 'Admin') {
         if (!(Get-Health $healthUrl)) {

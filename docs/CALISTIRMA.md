@@ -30,6 +30,9 @@ Bilgisayar yeniden açıldığında yine **1** seç. Kiosk pencere modunda açı
 İlk kurulumda **kiosktan oturum açma** sorusuna **E** verirsen desteklenen PanCafe sanal masalarında bu özellik etkinleşir. Mevcut kurulumlarda ayar `Bridge\connection.json` içindeki `allowVirtualSessionStart` değeridir. Değişiklikten sonra köprü ve backend yeniden başlatılır.
 
 - PanCafe bilgisayarında sunucu çalışırken **4** yönetim panelini tarayıcıda açar. **5** backend, Firebase, kiosk ve tünel durumunu gösterir.
+- **6** PanCafe köprüsünü kapatır. Windows yönetici izni isterse onayla.
+- **7** S TECH sunucusunu, yerel HTTPS bağlantısını ve başlatıcının açtığı Ödeal servislerini kapatır.
+- **8** yukarıdakileri ve bu bilgisayarda başlatıcıyla açılan kiosku kapatır. PanCafe Pro açık kalır. B'deki tam ekran kiosku B'de `Ctrl+Alt+Q` ve kiosk PIN'iyle kapat.
 - Başlatıcı yalnızca `kiosk\dist\current` içindeki derlemeyi kullanır. Bu klasör ilk çalıştırmada oluşturulur. Kiosk kaynak kodu değiştiğinde açık kiosku kapatıp **scripts\Kiosk-Derle.cmd** çalıştır.
 - Kurulum, derleme ve bakım araçları `scripts` klasöründedir. Eski A/B kurucuları önceki GitHub paketleriyle uyumluluk için burada durur. Günlük kullanımda üstte anlatılan dosyaları aç.
 - PanCafe veritabanı kendi PanCafe klasöründe, S TECH sunucu verileri ve yerel ayarlar `%LOCALAPPDATA%\STech-Kiosk-Sunucu` içinde kalır. Ödeal ayarları `%LOCALAPPDATA%\STech-OdealTunnel` içindedir. ZIP dosyası kiosk cihaz anahtarını içerir. Yalnızca B’ye kopyala.

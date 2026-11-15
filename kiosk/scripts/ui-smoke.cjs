@@ -84,6 +84,14 @@ const assert = require('node:assert/strict');
     await page.getByRole('button', { name:'İşlemleri bitir', exact:true }).click();
     await page.getByRole('heading', { name:'Üye kartını okut' }).waitFor();
     assert.equal(await page.locator('.member-mini').count(), 0);
+    await page.getByRole('button', { name:'Deniz olarak dene' }).click();
+    await page.getByRole('heading', { name:'Merhaba, Deniz.' }).waitFor();
+    await page.getByRole('heading', { name:'Hâlâ burada mısın?' }).waitFor({ timeout:20000 });
+    await page.getByRole('dialog').getByRole('button', { name:'Oturumu bitir', exact:true }).click();
+    await page.getByRole('heading', { name:'Üye kartını okut' }).waitFor({ timeout:3000 });
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    await page.getByRole('button', { name:'Kaan olarak dene' }).click();
+    await page.getByRole('heading', { name:'Merhaba, Kaan.' }).waitFor();
     assert.deepEqual(errors, []);
     console.log('Electron UI verified: NFC keyboard login, topup, approval, decline, history, campaign, profile, account isolation, idle modal, 1024px layout, ATM continue/finish and confirmation on the payment result.');
   } finally { await app.close(); await rm(dataDir, { recursive:true, force:true }); }
