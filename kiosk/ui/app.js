@@ -325,8 +325,13 @@ async function submitPasswordLogin(form) {
 }
 function openHome(data) {
   kioskGames.startSession(state.info.mode === 'connected' ? async (game, operationId) => {
+    const epoch = state.epoch;
+    const version = ++sCoinVersion;
     const result = await call('sCoinPlay', { game, operationId });
-    void refreshSCoin();
+    if (epoch === state.epoch && version === sCoinVersion) {
+      if (result.balance) showSCoinBalance(result.balance);
+      else void refreshSCoin();
+    }
     return result;
   } : undefined);
   state.data = data;
@@ -437,17 +442,25 @@ async function go(page) {
   if (page === 'games' && state.info.mode === 'connected') void refreshSCoin();
 }
 let sCoinEpoch;
+let sCoinVersion = 0;
+function showSCoinBalance({ units, unitsPerCoin, testOnly, playableCoins }) {
+  if (!Number.isSafeInteger(units) || units < 0 || unitsPerCoin !== 10000) {
+    kioskGames.showSCoin('S Coin bakiyesi şu anda alınamıyor.');
+    return;
+  }
+  const value = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 4 }).format(units / unitsPerCoin);
+  kioskGames.showSCoin(`${testOnly ? 'Test S Coin' : 'S Coin'} · ${value}`, playableCoins);
+}
 async function refreshSCoin() {
   const epoch = state.epoch;
   if (sCoinEpoch === epoch) return;
   sCoinEpoch = epoch;
+  const version = ++sCoinVersion;
   try {
-    const { units, unitsPerCoin, testOnly, playableCoins } = await call('sCoin');
-    if (!Number.isSafeInteger(units) || units < 0 || unitsPerCoin !== 10000) throw new Error('Invalid S Coin balance');
-    const value = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 4 }).format(units / unitsPerCoin);
-    if (epoch === state.epoch) kioskGames.showSCoin(`${testOnly ? 'Test S Coin' : 'S Coin'} · ${value}`, playableCoins);
+    const balance = await call('sCoin');
+    if (epoch === state.epoch && version === sCoinVersion) showSCoinBalance(balance);
   } catch {
-    if (epoch === state.epoch) kioskGames.showSCoin('S Coin bakiyesi şu anda alınamıyor.');
+    if (epoch === state.epoch && version === sCoinVersion) kioskGames.showSCoin('S Coin bakiyesi şu anda alınamıyor.');
   } finally {
     if (sCoinEpoch === epoch) sCoinEpoch = undefined;
   }
@@ -646,7 +659,6 @@ function clockTick() {
 }
 clockTick(); setInterval(clockTick, 10000);
 setInterval(() => { if (state.info?.mode === 'connected' && state.data && !state.processing) void refreshLiveAccount(); }, 5000);
-setInterval(() => { if (state.info?.mode === 'connected' && state.data && state.page === 'games') void refreshSCoin(); }, 5000);
 setInterval(() => { if (state.info?.mode === 'demo' && state.data && state.page === 'home' && !state.processing && !state.modal) void refresh().catch(() => {}); }, 15000);
 setInterval(refreshPcAvailability, 5000);
 call('info').then(info => { state.info = info; render(); void refreshPcAvailability(); }).catch(error => { root.innerHTML = '<div class="boot-error"><h1>S TECH</h1><p>' + e(error.message) + '</p></div>'; });

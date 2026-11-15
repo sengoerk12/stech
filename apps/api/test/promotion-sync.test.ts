@@ -14,6 +14,40 @@ const campaign: Campaign = {
   startsAt: "2020-01-01T00:00:00.000Z", endsAt: "2099-01-01T00:00:00.000Z", accent: "blue", active: true,
 };
 
+test("campaign worker imports the initial listener result and later changes without polling the cloud", async () => {
+  const db = await openDatabase();
+  let emit!: (campaigns: Campaign[]) => void;
+  let unsubscribed = false;
+  let cloudReads = 0;
+  const worker = new PromotionSync(db, {
+    async publish() {},
+    async read() { cloudReads++; return []; },
+    watch(next) {
+      emit = next;
+      return () => { unsubscribed = true; };
+    },
+  });
+  const waitForTitle = async (title: string) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await activePromotions(db))[0]?.title === title) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.fail("Campaign listener did not import " + title);
+  };
+  try {
+    worker.start();
+    emit([campaign]);
+    await waitForTitle(campaign.title);
+    emit([{ ...campaign, title: "Güncel kampanya" }]);
+    await waitForTitle("Güncel kampanya");
+    assert.equal(cloudReads, 0);
+  } finally {
+    await worker.stop();
+    await db.close();
+  }
+  assert.equal(unsubscribed, true);
+});
+
 test("admin campaigns survive cloud outage, reach another kiosk API intact, update and deactivate", async () => {
   const author = await openDatabase();
   const receiver = await openDatabase();
@@ -29,7 +63,7 @@ test("admin campaigns survive cloud outage, reach another kiosk API intact, upda
     },
     async read() { return [...docs.values()]; },
   };
-  const admin = new AdminService(author, null, {} as PersistentPaymentService, { FIREBASE_SYNC_ENABLED: "true" });
+  const admin = new AdminService(author, null, {} as PersistentPaymentService, { WALLET_HTTPS_URL: "https://wallet.example.test/index.php" });
   const sender = new PromotionSync(author, cloud);
   const kiosk = new PromotionSync(receiver, cloud);
   try {
@@ -66,7 +100,7 @@ test("admin campaigns survive cloud outage, reach another kiosk API intact, upda
 
 test("a second edit during upload is kept; stale cloud imports cannot overwrite pending edits", async () => {
   const db = await openDatabase();
-  const admin = new AdminService(db, null, {} as PersistentPaymentService, { FIREBASE_SYNC_ENABLED: "true" });
+  const admin = new AdminService(db, null, {} as PersistentPaymentService, { WALLET_HTTPS_URL: "https://wallet.example.test/index.php" });
   try {
     await admin.savePromotion(actor, { ...campaign, revision: 0 });
     let editDuringUpload = true;

@@ -6,6 +6,10 @@ node_modules.incomplete/
 .env.local
 .env.*
 !.env.example
+wallet-api.env
+wallet-api.env.pending
+wallet-private.dpapi
+stech-wallet-config.php
 connection.json
 kiosk.config.json
 kiosk-cards.json

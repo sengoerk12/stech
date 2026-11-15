@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { FieldValue, type DocumentData, type DocumentSnapshot } from "firebase-admin/firestore";
+import type { WalletData, WalletSnapshot } from "./wallet-store";
 import type { MemberSnapshot } from "./firebase-sync";
 import type { PanCafeBridgeClient } from "./pancafe";
 import { panCafeMoney } from "./pancafe-reader";
@@ -23,7 +23,7 @@ function canApplyDelta(balance: unknown, bonus: unknown, delta: number) {
     validAmount(balance + delta) && balance + delta >= bonus;
 }
 
-export function planFirebaseBalance(member: MemberSnapshot, data?: DocumentData) {
+export function planFirebaseBalance(member: MemberSnapshot, data?: WalletData) {
   const state = data?.balanceSync;
   if (data?.memberId !== member.memberId || data.username !== member.username ||
       !Number.isSafeInteger(state?.balanceKurus) || !Number.isSafeInteger(state?.bonusKurus))
@@ -54,7 +54,7 @@ export function planFirebaseBalance(member: MemberSnapshot, data?: DocumentData)
     : { kind: "publish", status: "synced" } as const;
 }
 
-async function writeIfCurrent(doc: DocumentSnapshot, data: DocumentData) {
+async function writeIfCurrent(doc: WalletSnapshot, data: WalletData) {
   try {
     if (doc.updateTime) await doc.ref.update(data, { lastUpdateTime: doc.updateTime });
     else await doc.ref.create(data);
@@ -67,22 +67,23 @@ async function writeIfCurrent(doc: DocumentSnapshot, data: DocumentData) {
   }
 }
 
-async function publish(doc: DocumentSnapshot, member: MemberSnapshot, status: Status) {
+async function publish(doc: WalletSnapshot, member: MemberSnapshot, status: Status, timestamp: () => unknown) {
   await writeIfCurrent(doc, {
     ...member,
-    updatedAt: FieldValue.serverTimestamp(),
+    updatedAt: timestamp(),
     balanceSync: { balanceKurus: member.balanceKurus, bonusKurus: member.bonusKurus, status },
   });
 }
 
-function savePending(doc: DocumentSnapshot, baseline: Baseline, edit: Edit) {
+function savePending(doc: WalletSnapshot, baseline: Baseline, edit: Edit) {
   return writeIfCurrent(doc, { balanceSync: { ...baseline, status: "pending", pending: edit } });
 }
 
-export async function reconcileFirebaseBalance(doc: DocumentSnapshot, member: MemberSnapshot, bridge: PanCafeBridgeClient) {
+export async function reconcileFirebaseBalance(doc: WalletSnapshot, member: MemberSnapshot, bridge: PanCafeBridgeClient,
+  timestamp: () => unknown = () => new Date().toISOString()) {
   const plan = planFirebaseBalance(member, doc.data());
   if (plan.kind === "skip") return;
-  if (plan.kind === "publish") return publish(doc, member, plan.status);
+  if (plan.kind === "publish") return publish(doc, member, plan.status, timestamp);
 
   const edit = plan.kind === "resume" ? plan.edit : { ...plan.edit, operationId: randomUUID() };
   if (plan.kind === "claim" && !await savePending(doc, plan.baseline, edit)) return;
@@ -104,10 +105,10 @@ export async function reconcileFirebaseBalance(doc: DocumentSnapshot, member: Me
     ...member, balanceKurus: panCafeMoney(current.BALANCE_TL), bonusKurus: panCafeMoney(current.BONUS_TL),
     active: current.ACCSTATUS === "1",
   };
-  if (latest.get("balanceKurus") !== edit.target) return publish(latest, actual, "conflict");
+  if (latest.get("balanceKurus") !== edit.target) return publish(latest, actual, "conflict", timestamp);
   if (result === "stale" && actual.active && canApplyDelta(actual.balanceKurus, actual.bonusKurus, edit.delta)) {
     await savePending(latest, plan.baseline, { ...edit, expectedBalance: actual.balanceKurus, expectedBonus: actual.bonusKurus });
     return;
   }
-  await publish(latest, actual, result === "ok" ? "applied" : result === "conflict" ? "conflict" : "invalid");
+  await publish(latest, actual, result === "ok" ? "applied" : result === "conflict" ? "conflict" : "invalid", timestamp);
 }

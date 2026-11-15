@@ -494,7 +494,7 @@ export class AdminService {
       ...r.definition,
       active: r.active,
       revision: r.revision,
-      cloudSync: this.env.FIREBASE_SYNC_ENABLED !== "true" && this.env.FIREBASE_CAMPAIGN_SYNC_ENABLED !== "true" ? "disabled" : r.pending ? "pending" : "synced",
+      cloudSync: !this.env.WALLET_HTTPS_URL && !this.env.WALLET_MYSQL_URL ? "disabled" : r.pending ? "pending" : "synced",
     }));
   }
   async savePromotion(actor: Admin, input: unknown) {

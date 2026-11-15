@@ -1,12 +1,13 @@
 import type { Promotion } from "@stech/contracts";
 import type { Database } from "../database/database";
-import { FieldValue, type Firestore } from "firebase-admin/firestore";
+import type { WalletCollection, WalletSnapshot } from "./wallet-store";
 
 export type Campaign = Promotion & { active: boolean };
 type Pending = { id: string; operation_id: string; payload: Campaign };
 export interface CampaignCloud {
   publish(operationId: string, campaign: Campaign): Promise<void>;
   read(): Promise<Campaign[]>;
+  watch?(next: (campaigns: Campaign[]) => void, error: (error: unknown) => void): () => void;
 }
 
 // Admin is the author; Firestore distributes committed versions between API instances.
@@ -15,10 +16,21 @@ export class PromotionSync {
   status: "pending" | "synced" | "error" = "pending";
   private timer?: ReturnType<typeof setTimeout>;
   private running?: Promise<void>;
+  private importing = Promise.resolve();
+  private unsubscribe?: () => void;
+  private reconnect?: ReturnType<typeof setTimeout>;
+  private receivedSnapshot = false;
+  private listenerGeneration = 0;
   private stopped = true;
   constructor(private db: Database, private cloud: CampaignCloud) {}
 
   async syncOnce() {
+    await this.publishPending();
+    await this.importCampaigns(await this.cloud.read());
+    await this.updateStatus();
+  }
+
+  private async publishPending() {
     const pending = (await this.db.query<Pending>(
       "SELECT id,operation_id,payload FROM promotion_sync_outbox ORDER BY id LIMIT 100",
     )).rows;
@@ -27,7 +39,9 @@ export class PromotionSync {
       // An admin can edit again while the request is in flight. Never drop that edit.
       await this.db.query("DELETE FROM promotion_sync_outbox WHERE id=$1 AND operation_id=$2", [item.id, item.operation_id]);
     }
-    const campaigns = await this.cloud.read();
+  }
+
+  private async importCampaigns(campaigns: Campaign[]) {
     for (const campaign of campaigns) {
       if (!validCampaign(campaign)) throw new Error("Invalid cloud campaign");
       const { active, ...definition } = campaign;
@@ -41,15 +55,58 @@ export class PromotionSync {
         [campaign.id, JSON.stringify(definition), active]);
       });
     }
-    this.status = (await this.db.query("SELECT id FROM promotion_sync_outbox LIMIT 1")).rows.length ? "pending" : "synced";
+  }
+
+  private async updateStatus() {
+    const pending = (await this.db.query("SELECT id FROM promotion_sync_outbox LIMIT 1")).rows.length;
+    this.status = pending ? "pending" : "synced";
+  }
+
+  private reportError() {
+    if (this.status !== "error") console.warn("Campaign sync unavailable; saved changes remain queued.");
+    this.status = "error";
+  }
+
+  private listen() {
+    const generation = ++this.listenerGeneration;
+    const failed = () => {
+      if (this.stopped || generation !== this.listenerGeneration) return;
+      this.listenerGeneration++;
+      this.unsubscribe?.();
+      this.unsubscribe = undefined;
+      this.receivedSnapshot = false;
+      this.reportError();
+      this.reconnect = setTimeout(() => this.listen(), 60_000).unref();
+    };
+    try {
+      if (!this.cloud.watch) throw new Error("Campaign listener unavailable");
+      const unsubscribe = this.cloud.watch(campaigns => {
+        if (this.stopped || generation !== this.listenerGeneration) return;
+        this.importing = this.importing.then(async () => {
+          if (this.stopped || generation !== this.listenerGeneration) return;
+          await this.importCampaigns(campaigns);
+          if (this.stopped || generation !== this.listenerGeneration) return;
+          this.receivedSnapshot = true;
+          await this.updateStatus();
+        }).catch(failed);
+      }, failed);
+      if (generation === this.listenerGeneration) this.unsubscribe = unsubscribe;
+      else unsubscribe();
+    } catch {
+      failed();
+    }
   }
   start() {
     if (!this.stopped) return;
     this.stopped = false;
+    this.receivedSnapshot = false;
+    this.status = "pending";
+    this.listen();
     const tick = () => {
-      this.running = this.syncOnce().catch(() => {
-        if (this.status !== "error") console.warn("Campaign sync unavailable; saved changes remain queued.");
-        this.status = "error";
+      this.running = this.publishPending().then(async () => {
+        if (this.receivedSnapshot) await this.updateStatus();
+      }).catch(() => {
+        this.reportError();
       }).finally(() => {
         this.running = undefined;
         if (!this.stopped) this.timer = setTimeout(tick, 5000).unref();
@@ -60,7 +117,10 @@ export class PromotionSync {
   async stop() {
     this.stopped = true;
     clearTimeout(this.timer);
-    await this.running;
+    clearTimeout(this.reconnect);
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+    await Promise.all([this.running, this.importing]);
   }
 }
 
@@ -76,27 +136,52 @@ function validCampaign(p: Campaign) {
     && Date.parse(p.endsAt) > Date.parse(p.startsAt);
 }
 
-export function firestoreCampaigns(firestore: Firestore, installationId: string): CampaignCloud {
-  const installation = firestore.collection("pancafeInstallations").doc(installationId);
-  const campaigns = installation.collection("promotions");
-  const receipts = installation.collection("promotionSyncReceipts");
+export function walletCampaigns(campaigns: WalletCollection, receipts: WalletCollection,
+  timestamp: () => unknown = () => new Date().toISOString(),
+  subscribe?: (next: (docs: WalletSnapshot[]) => void, error: (error: unknown) => void) => () => void): CampaignCloud {
+  function readCampaign(doc: WalletSnapshot) {
+    const { updatedAt: _updatedAt, ...campaign } = doc.data() ?? {};
+    if (campaign.id !== doc.id) throw new Error("Invalid cloud campaign identity");
+    return campaign as Campaign;
+  }
   return {
     async publish(operationId, campaign) {
       // Receipt and document are atomic. A lost response cannot replay an older
       // campaign over a newer edit made on another connected admin server.
-      await firestore.runTransaction(async tx => {
+      await campaigns.firestore.runTransaction(async tx => {
         const receipt = receipts.doc(operationId);
         if ((await tx.get(receipt)).exists) return;
-        tx.set(campaigns.doc(campaign.id), { ...campaign, updatedAt: FieldValue.serverTimestamp() });
-        tx.create(receipt, { campaignId: campaign.id, appliedAt: FieldValue.serverTimestamp() });
+        tx.set(campaigns.doc(campaign.id), { ...campaign, updatedAt: timestamp() });
+        tx.create(receipt, { campaignId: campaign.id, appliedAt: timestamp() });
       });
     },
     async read() {
-      return (await campaigns.get()).docs.map(doc => {
-        const { updatedAt: _updatedAt, ...campaign } = doc.data();
-        if (campaign.id !== doc.id) throw new Error("Invalid cloud campaign identity");
-        return campaign as Campaign;
-      });
+      return (await campaigns.get()).docs.map(readCampaign);
+    },
+    watch(next, error) {
+      const deliver = (docs: WalletSnapshot[]) => {
+        try { next(docs.map(readCampaign)); }
+        catch (failure) { error(failure); }
+      };
+      if (subscribe) return subscribe(deliver, error);
+      // MySQL has no Firestore-style listener. Read changes from the private database.
+      let stopped = false;
+      let last: string | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const poll = async () => {
+        try {
+          const { docs } = await campaigns.get();
+          if (stopped) return;
+          const snapshot = docs.map(doc => [doc.id, doc.updateTime?.seconds, doc.updateTime?.nanoseconds]);
+          const current = JSON.stringify(snapshot);
+          if (current !== last) { last = current; deliver(docs); }
+          if (!stopped) timer = setTimeout(poll, 15_000).unref();
+        } catch (failure) {
+          if (!stopped) error(failure);
+        }
+      };
+      void poll();
+      return () => { stopped = true; clearTimeout(timer); };
     },
   };
 }

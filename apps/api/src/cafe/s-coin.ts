@@ -1,24 +1,26 @@
-import type { CollectionReference } from "firebase-admin/firestore";
 import type { Database, SqlExecutor } from "../database/database";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { randomInt, randomUUID } from "node:crypto";
 import type { CafeSystemAdapter } from "./adapter";
+import type { WalletCollection } from "./wallet-store";
 
 export const S_COIN_UNITS = 10000;
 export const sCoinsForTopup = (paidKurus: number) => Math.floor(paidKurus / S_COIN_UNITS);
 const wheelAmounts = [0, 500, 500, 1000, 500, 0, 1000, 500, 0, 2500] as const;
-type WheelCredits = { queue: CollectionReference; cafe: Pick<CafeSystemAdapter, "addBalance"> };
+type WheelCredits = { queue: WalletCollection; cafe: Pick<CafeSystemAdapter, "addBalance"> };
 
 export class SCoinService {
   private timer?: ReturnType<typeof setInterval>;
+  private wheelTimer?: ReturnType<typeof setInterval>;
   private running?: Promise<void>;
+  private recovering?: Promise<void>;
 
   constructor(
     private db: Database,
-    private wallets: CollectionReference,
+    private wallets: WalletCollection,
     private installationId: string,
     private testOnly: boolean,
-    private legacyWallets?: CollectionReference,
+    private legacyWallets?: WalletCollection,
     private credits?: WheelCredits,
   ) {}
 
@@ -64,6 +66,10 @@ export class SCoinService {
         if (previous.exists) tx.set(wallet, { [this.unitsField]: migrated }, { merge: true });
         return migrated;
       });
+    return this.balanceResult(units);
+  }
+
+  private balanceResult(units: number) {
     return { units, unitsPerCoin: S_COIN_UNITS, playableCoins: Math.floor(units / S_COIN_UNITS), testOnly: this.testOnly };
   }
 
@@ -79,12 +85,13 @@ export class SCoinService {
     const prize = amount ? { kind: "balance", title: `${amount / 100} TL oyun bakiyesi`, amountKurus: amount } : null;
     const result = { game, sector, prize, testOnly: this.testOnly };
     const credit = !this.testOnly && amount ? this.credits?.queue.doc(randomUUID()) : undefined;
-    return this.wallets.firestore.runTransaction(async tx => {
+    const outcome = await this.wallets.firestore.runTransaction(async tx => {
       const previous = await tx.get(play);
       if (previous.exists) {
         const saved = previous.data() as typeof result;
         if ((saved.game ?? "wheel") !== game) throw new ConflictException("Bu işlem başka bir oyuna ait.");
-        return saved;
+        const units = this.validateUnits((await tx.get(wallet)).get(this.unitsField) ?? 0);
+        return { result: saved, units, created: false };
       }
       const current = (await tx.get(wallet)).get(this.unitsField);
       const previousWallet = current === undefined && legacy ? await tx.get(legacy) : undefined;
@@ -94,9 +101,19 @@ export class SCoinService {
       tx.set(wallet, { [this.unitsField]: units - S_COIN_UNITS }, { merge: true });
       // The draw, coin debit and payout job are committed together. PanCafe is called outside the transaction.
       tx.create(play, result);
-      if (credit) tx.create(credit, { userId, amount, nextAttemptAt: Date.now() });
-      return result;
+      if (credit) tx.create(credit, { userId, amount, nextAttemptAt: Date.now() + 30_000 });
+      return { result, units: units - S_COIN_UNITS, created: true };
     });
+    if (outcome.created && credit && this.credits) {
+      try {
+        await this.credits.cafe.addBalance(userId, amount, 0, credit.id);
+        await credit.delete();
+      } catch {
+        // Recovery will reuse the same PanCafe receipt ID if the result was lost.
+        console.warn("Immediate wheel balance credit unavailable; reward remains queued.");
+      }
+    }
+    return { ...outcome.result, balance: this.balanceResult(outcome.units) };
   }
 
   async drainWheelCredits() {
@@ -105,7 +122,7 @@ export class SCoinService {
     const pending = await queue.where("nextAttemptAt", "<=", Date.now()).orderBy("nextAttemptAt").limit(25).get();
     for (const job of pending.docs) {
       try {
-        const { userId, amount } = job.data();
+        const { userId, amount } = job.data() ?? {};
         if (typeof userId !== "string" || !userId || ![500, 1000, 2500].includes(amount))
           throw new Error("Invalid wheel balance award");
         // PanCafe uses the job ID as its receipt ID, including after a lost response.
@@ -149,16 +166,27 @@ export class SCoinService {
   }
 
   start() {
+    if (this.timer) return;
     this.timer = setInterval(() => {
-      if (!this.running) this.running = Promise.all([
-        this.drain().catch(() => console.warn("S Coin sync unavailable; top-up awards remain queued.")),
-        this.drainWheelCredits().catch(() => console.warn("Wheel balance credit unavailable; rewards remain queued.")),
-      ]).then(() => { this.running = undefined; });
+      if (!this.running) this.running = this.drain()
+        .catch(() => console.warn("S Coin sync unavailable; top-up awards remain queued."))
+        .finally(() => { this.running = undefined; });
     }, 5000).unref();
+    if (this.credits) {
+      const recover = () => {
+        if (!this.recovering) this.recovering = this.drainWheelCredits()
+          .catch(() => console.warn("Wheel balance credit unavailable; rewards remain queued."))
+          .finally(() => { this.recovering = undefined; });
+      };
+      recover();
+      this.wheelTimer = setInterval(recover, 60_000).unref();
+    }
   }
 
   async stop() {
     clearInterval(this.timer);
-    await this.running;
+    clearInterval(this.wheelTimer);
+    this.timer = undefined;
+    await Promise.all([this.running, this.recovering]);
   }
 }

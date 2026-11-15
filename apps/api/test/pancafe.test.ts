@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app";
 import { SCoinService } from "../src/cafe/s-coin";
-import type { CollectionReference } from "firebase-admin/firestore";
+import type { WalletCollection as CollectionReference } from "../src/cafe/wallet-store";
 
 const config = {
   installationId: "test-installation",
@@ -311,16 +311,18 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     await db.query("UPDATE s_coin_awards SET synced_at=NULL WHERE test_only=false");
     await liveSCoin.drain();
     assert.equal((await liveSCoin.balance(member.id)).units, 10040000);
+    const balanceBeforeWheel = (await source.getBalance(member.id)).balance;
     const livePlay = await liveSCoin.playGame(member.id, playId);
     assert.equal(livePlay.testOnly, false);
     assert.deepEqual(await liveSCoin.playGame(member.id, playId), livePlay);
     const drawnAmount = [0, 500, 500, 1000, 500, 0, 1000, 500, 0, 2500][livePlay.sector];
     assert.equal(livePlay.prize?.amountKurus ?? 0, drawnAmount);
     const drawnAwards = [...documents].filter(([path]) => path.startsWith("wheel-awards/"));
-    assert.deepEqual(drawnAwards.map(([, doc]) => doc.amount), drawnAmount ? [drawnAmount] : []);
+    assert.deepEqual(drawnAwards, []);
+    assert.equal(livePlay.balance.playableCoins, 1003);
     assert.equal((await liveSCoin.balance(member.id)).playableCoins, 1003);
     assert.equal(documents.get("members/2")?.username, "kaan2");
-    const balanceBeforeWheel = (await source.getBalance(member.id)).balance;
+    assert.equal((await source.getBalance(member.id)).balance, balanceBeforeWheel + drawnAmount);
     await liveSCoin.drainWheelCredits();
     assert.equal((await source.getBalance(member.id)).balance, balanceBeforeWheel + drawnAmount);
     const queuedPath = "wheel-awards/7ab67289-97fd-4d33-b4a3-18e0bfa49932";

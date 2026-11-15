@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
-import { applicationDefault, deleteApp, initializeApp } from "firebase-admin/app";
-import { FieldValue, initializeFirestore, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import type { PanCafeBridgeClient } from "./pancafe";
 import { panCafeMoney, type PanCafeRow } from "./pancafe-reader";
 import { reconcileFirebaseBalance } from "./firebase-balance";
+import type { WalletCollection, WalletSnapshot } from "./wallet-store";
 
 function text(value: string | null | undefined) {
   return value?.trim() || null;
@@ -81,7 +80,7 @@ export class PanCafeFirebaseSync {
       this.running = this.syncOnce().then(() => {
         this.status = "synced";
       }, () => {
-        if (this.status !== "error") console.warn("PanCafe Firebase sync failed. Check the local bridge and Firestore access.");
+        if (this.status !== "error") console.warn("PanCafe wallet sync failed. Check the local bridge and wallet store access.");
         this.status = "error";
       }).finally(() => {
         this.running = undefined;
@@ -98,74 +97,26 @@ export class PanCafeFirebaseSync {
   }
 }
 
-export function createFirebaseSync(projectId: string, installationId: string, bridge: PanCafeBridgeClient, balanceWrite: boolean) {
-  const app = initializeApp({ credential: applicationDefault(), projectId }, `pancafe-sync-${installationId}`);
-  const firestore = initializeFirestore(app, { preferRest: true });
-  const members = firestore.collection("pancafeInstallations").doc(installationId).collection("members");
-  let liveDocuments: Promise<Map<string, QueryDocumentSnapshot>> | undefined;
-  let unsubscribe: (() => void) | undefined;
-  function watchMembers() {
-    if (liveDocuments) return liveDocuments;
-    const pending = new Promise<Map<string, QueryDocumentSnapshot>>((resolve, reject) => {
-      const documents = new Map<string, QueryDocumentSnapshot>();
-      let active = true;
-      const disconnect = (error: Error) => {
-        if (!active) return;
-        active = false;
-        clearTimeout(timeout);
-        unsubscribe?.();
-        unsubscribe = undefined;
-        liveDocuments = undefined;
-        reject(error);
-      };
-      const timeout = setTimeout(() => disconnect(new Error("Firestore listener timed out")), 15_000).unref();
-      try {
-        const stop = members.onSnapshot(snapshot => {
-          if (!active) return;
-          clearTimeout(timeout);
-          for (const change of snapshot.docChanges()) {
-            if (change.type === "removed") documents.delete(change.doc.id);
-            else documents.set(change.doc.id, change.doc);
-          }
-          resolve(documents);
-        }, disconnect);
-        unsubscribe = () => { active = false; clearTimeout(timeout); stop(); };
-      } catch (error) {
-        disconnect(error as Error);
-      }
-    });
-    liveDocuments = pending.catch(error => {
-      liveDocuments = undefined;
-      throw error;
-    });
-    return liveDocuments;
-  }
-  const worker = new PanCafeFirebaseSync(async (after) => {
+export function createWalletMemberSync(members: WalletCollection, bridge: PanCafeBridgeClient, balanceWrite: boolean) {
+  let current = new Map<string, WalletSnapshot>();
+  return new PanCafeFirebaseSync(async after => {
+    if (balanceWrite && after === 0)
+      current = new Map((await members.get()).docs.map(doc => [doc.id, doc]));
     const rows = await bridge.request(`/firebase/members?after=${after}`);
     if (!rows) throw new Error("PanCafe member page unavailable");
     return rows;
-  }, async (page) => {
+  }, async page => {
     if (balanceWrite) {
-      const docs = await watchMembers();
       for (const member of page) {
         const id = String(member.memberId);
-        const doc = docs.get(id) ?? await members.doc(id).get();
-        await reconcileFirebaseBalance(doc, member, bridge);
+        const doc = current.get(id) ?? await members.doc(id).get();
+        await reconcileFirebaseBalance(doc, member, bridge, () => new Date().toISOString());
       }
       return;
     }
-    const batch = firestore.batch();
-    for (const member of page)
-      batch.set(members.doc(String(member.memberId)), { ...member, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    await batch.commit();
+    await members.firestore.runTransaction(async tx => {
+      const updatedAt = new Date().toISOString();
+      for (const member of page) tx.set(members.doc(String(member.memberId)), { ...member, updatedAt }, { merge: true });
+    });
   }, balanceWrite);
-  return {
-    firestore,
-    worker,
-    async stop() {
-      await worker.stop();
-      unsubscribe?.();
-      await deleteApp(app);
-    },
-  };
 }

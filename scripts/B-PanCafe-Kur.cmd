@@ -197,20 +197,7 @@ if (!(Test-Path -LiteralPath $appModule) -or !(Test-Path -LiteralPath $buildMark
 
 }
 
-$firebase = "$work\firebase.json"
-if (!(Test-Path -LiteralPath $firebase)) {
-    Write-Host 'wallet-stech projesi için indirdiğin hizmet hesabı JSON dosyasını seç.'
-    Add-Type -AssemblyName System.Windows.Forms
-    $picker = New-Object System.Windows.Forms.OpenFileDialog
-    $picker.Title = 'Firebase hizmet hesabı JSON dosyasını seç'
-    $picker.Filter = 'JSON (*.json)|*.json'
-    if ($picker.ShowDialog() -ne 'OK') { throw 'Firebase JSON dosyası seçilmedi. Hazır olunca B dosyasını tekrar çalıştır.' }
-    try { $credential = Get-Content -LiteralPath $picker.FileName -Raw | ConvertFrom-Json } catch { throw 'Firebase JSON dosyası okunamadı.' }
-    if ($credential.type -ne 'service_account' -or $credential.project_id -ne 'wallet-stech' -or !$credential.private_key) {
-        throw 'wallet-stech projesinin hizmet hesabı JSON dosyasını seç.'
-    }
-    Copy-Item -LiteralPath $picker.FileName -Destination $firebase
-}
+if (!(Test-Path -LiteralPath "$work\wallet-api.env" -PathType Leaf)) { throw "Wallet baglanti dosyasi eksik: $work\wallet-api.env" }
 
 $bridgeConfig = "$bridge\connection.json"
 if (Test-Path -LiteralPath $bridgeConfig) {
@@ -229,7 +216,7 @@ if (Test-Path -LiteralPath $bridgeConfig) {
     $memberId = [int](Read-Host 'Aktif PanCafe üyesinin numarası')
     $username = (Read-Host 'Aynı üyenin kullanıcı adı').Trim()
     if ($memberId -lt 1 -or $username -notmatch '^[a-zA-Z0-9_.]{1,32}$') { throw 'Geçerli bir üye numarası ve kullanıcı adı gir.' }
-    $installation = (Read-Host 'Firestore kurulum kimliği (ilk kurulumda Enter = stech-b)').Trim()
+    $installation = (Read-Host 'Wallet kurulum kimliği (ilk kurulumda Enter = stech-b)').Trim()
     if (!$installation) { $installation = 'stech-b' }
     if ($installation -notmatch '^[a-zA-Z0-9_-]{1,80}$') { throw 'Kurulum kimliğinde sadece harf, rakam, tire ve alt çizgi kullanılabilir.' }
     $port = 3002, 3003, 3004 | Where-Object { !(Is-Listening $_) } | Select-Object -First 1
@@ -362,10 +349,6 @@ PANCAFE_BALANCE_CREDIT=false
 PANCAFE_BRIDGE_CONFIG="$dir/Bridge/connection.json"
 DATA_DIR="$dir/api-data"
 KIOSK_DEVICE_KEY=$($pairing.deviceKey)
-FIREBASE_SYNC_ENABLED=true
-FIREBASE_BALANCE_WRITE_ENABLED=true
-FIREBASE_PROJECT_ID=wallet-stech
-GOOGLE_APPLICATION_CREDENTIALS="$dir/firebase.json"
 STECH_SOURCE_DIR="$($source.Replace('\', '/'))"
 PORT=$apiPort
 "@)
@@ -379,11 +362,16 @@ createApp().then(app => app.listen(Number(process.env.PORT), "127.0.0.1")).catch
     process.exitCode = 1;
 });
 '@)
-    Start-Process -FilePath $node -ArgumentList "`"--env-file=$work\api.env`"", "`"$work\start-api.cjs`"" `
+    $apiArguments = @("`"--env-file=$work\api.env`"")
+    if (Test-Path -LiteralPath "$work\wallet-api.env" -PathType Leaf) {
+        $apiArguments += "`"--env-file=$work\wallet-api.env`""
+    }
+    $apiArguments += "`"$work\start-api.cjs`""
+    Start-Process -FilePath $node -ArgumentList $apiArguments `
         -WorkingDirectory "$source\apps\api" -WindowStyle Hidden -RedirectStandardOutput "$work\api.log" -RedirectStandardError "$work\api-error.log"
     $api = Wait-Ready { Health $apiHealth } "S TECH API açılmadı. Günlük: $work\api-error.log"
 }
-if ($api.cafe -ne 'pancafe' -or !$api.firebaseBalanceWrite) { throw "Port $apiPort üzerinde beklenen PanCafe API yanıtı alınamadı." }
+if ($api.cafe -ne 'pancafe' -or !$api.walletSync) { throw "Port $apiPort üzerinde beklenen PanCafe API yanıtı alınamadı." }
 [IO.File]::WriteAllText($activeRelease, $releaseId)
 
 $bIp = $pairing.bIp
@@ -435,7 +423,6 @@ $kiosk = @{ mode = 'connected'; station = 'S TECH'; apiBaseUrl = "$site/api/v1";
 $generated = Join-Path $transfer 'A-Kiosk-Kur.cmd'
 Make-KioskLauncher "$source\scripts\A-Kiosk-Kur.cmd" $generated $kiosk ([IO.File]::ReadAllText($certPath)) $kioskUrl $kioskSha256
 $current = Health $apiHealth
-if ($current.firebaseSync -eq 'error') { Write-Warning "Firebase eşitlemesi hata verdi. Yetkiyi ve Bridge ayarlarını kontrol et. Günlük: $work\api-error.log" }
-else { Write-Host "Firebase eşitleme durumu: $($current.firebaseSync)" }
+if ($current.walletSync) { Write-Host "Wallet MySQL eşitleme durumu: $($current.walletSync)" }
 Write-Host "B hazır. A bilgisayarına kopyalayıp açacağın dosya: $generated" -ForegroundColor Green
 Write-Host 'Sonraki açılışlarda masaüstündeki S TECH Kiosk kısayolunu kullan.'

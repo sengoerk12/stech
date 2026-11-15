@@ -57,10 +57,11 @@ import { json, static as serveStatic } from "express";
 import { AdminService } from "./admin/service";
 import { createAdminController } from "./admin/controller";
 import { MemberProfileService, normalizePhone } from './profile/service';
-import { createFirebaseSync } from "./cafe/firebase-sync";
+import { createWalletMemberSync } from "./cafe/firebase-sync";
 import { SCoinService } from "./cafe/s-coin";
 import { calculateQuote } from "./payments/service";
-import { activePromotions, firestoreCampaigns, PromotionSync } from "./cafe/promotion-sync";
+import { activePromotions, PromotionSync, walletCampaigns } from "./cafe/promotion-sync";
+import { openWallet } from "./cafe/open-wallet";
 import {
   PanCafeSystemAdapter,
   PanCafeBridgeClient,
@@ -165,16 +166,14 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     throw new Error("Live Ödeal requires native PanCafe balance credit.");
   if (odeal?.mode === "live" && env.PANCAFE_PAYMENT_SIMULATION === "true")
     throw new Error("Disable simulated credits before activating live Ödeal.");
-  const firebaseEnabled = env.FIREBASE_SYNC_ENABLED === "true" || env.FIREBASE_CAMPAIGN_SYNC_ENABLED === "true";
-  const firebaseProject = firebaseEnabled ? env.FIREBASE_PROJECT_ID : undefined;
-  const firebaseBalanceWrite = env.FIREBASE_BALANCE_WRITE_ENABLED === "true";
-  if (firebaseEnabled && (!panCafe || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(firebaseProject ?? "")))
-    throw new Error("Firebase sync requires the PanCafe adapter and a Firebase project ID.");
+  const walletUrl = env.WALLET_HTTPS_URL || env.WALLET_MYSQL_URL;
+  if (walletUrl && !panCafe) throw new Error("Hosted wallet requires the PanCafe adapter");
+  const walletBalanceWrite = !!walletUrl && env.WALLET_BALANCE_WRITE_ENABLED === "true";
   const bridgeConfig: PanCafeBridgeConfig | null = panCafe
     ? JSON.parse(await readFile(env.PANCAFE_BRIDGE_CONFIG ?? "", "utf8"))
     : null;
-  if (firebaseBalanceWrite && (!firebaseProject || !bridgeConfig?.allowFirebaseSync || !bridgeConfig.allowFirebaseBalanceWrite))
-    throw new Error("Firestore balance writes must be enabled in both the API and local PanCafe bridge.");
+  if (walletUrl && (!bridgeConfig?.allowFirebaseSync || (walletBalanceWrite && !bridgeConfig.allowFirebaseBalanceWrite)))
+    throw new Error("Wallet synchronization must be enabled in the local PanCafe bridge.");
   const db = await openDatabase({
     url: env.DATABASE_URL,
     directory:
@@ -194,17 +193,17 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   if (simulation) await simulation.initialize();
   const paymentCafe = simulation ?? cafe;
   const provider = new MockPaymentProvider();
-  const firebaseSync = firebaseProject && bridgeConfig && bridge
-    ? createFirebaseSync(firebaseProject, bridgeConfig.installationId, bridge, firebaseBalanceWrite)
-    : null;
-  const installation = firebaseSync && bridgeConfig
-    ? firebaseSync.firestore.collection("pancafeInstallations").doc(bridgeConfig.installationId) : null;
-  const testSCoin = installation && bridgeConfig
-    ? new SCoinService(db, installation.collection("sCoinTestWallets"), bridgeConfig.installationId, true) : undefined;
-  const liveSCoin = installation && bridgeConfig && odeal?.mode === "live"
-    ? new SCoinService(db, installation.collection("members"), bridgeConfig.installationId, false,
-      installation.collection("sCoinWallets"),
-      env.FIREBASE_SYNC_ENABLED === "true" ? { queue: installation.collection("wheelBalanceAwards"), cafe } : undefined) : undefined;
+  const hostedWallet = await openWallet(env);
+  const walletCollection = bridgeConfig && hostedWallet ? (name: string) =>
+    hostedWallet.collection(`pancafeInstallations/${bridgeConfig.installationId}/${name}`) : undefined;
+  const walletMemberSync = hostedWallet && walletCollection && bridge
+    ? createWalletMemberSync(walletCollection("members"), bridge, walletBalanceWrite) : null;
+  const testSCoin = walletCollection && bridgeConfig
+    ? new SCoinService(db, walletCollection("sCoinTestWallets"), bridgeConfig.installationId, true) : undefined;
+  const liveSCoin = walletCollection && bridgeConfig && odeal?.mode === "live"
+    ? new SCoinService(db, walletCollection("members"), bridgeConfig.installationId, false,
+      walletCollection("sCoinWallets"),
+      { queue: walletCollection("wheelBalanceAwards"), cafe }) : undefined;
   const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock", testSCoin);
   const posCafe = odeal?.mode === "stage" && panCafe
     ? new PanCafeSimulationAdapter(db, cafe, false) : cafe;
@@ -226,8 +225,12 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         env.KIOSK_CARD_MAP_FILE ? JSON.parse(await readFile(env.KIOSK_CARD_MAP_FILE, "utf8")) as KioskCardMap : { cards: [] },
         cafe, auth)
     : null;
-  const promotionSync = firebaseSync && bridgeConfig
-    ? new PromotionSync(db, firestoreCampaigns(firebaseSync.firestore, env.FIREBASE_CAMPAIGN_INSTALLATION_ID ?? bridgeConfig.installationId)) : null;
+  const campaignInstallation = env.WALLET_CAMPAIGN_INSTALLATION_ID ?? bridgeConfig?.installationId;
+  const campaignPath = `pancafeInstallations/${campaignInstallation}`;
+  const promotionSync = hostedWallet
+    ? new PromotionSync(db, walletCampaigns(hostedWallet.collection(campaignPath + "/promotions"),
+      hostedWallet.collection(campaignPath + "/promotionSyncReceipts")))
+    : null;
   async function requirePayments() {
     if (!(await admin.topupEnabled())) throw new ServiceUnavailableException("Bakiye yükleme geçici olarak kapalı. Lütfen daha sonra tekrar dene.");
     if (panCafe && !simulation)
@@ -405,7 +408,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         payments: panCafe && !simulation ? "disabled" : "simulation",
         cafe: panCafe ? "pancafe" : "mock",
         balanceCredit: nativeCredit,
-        ...(firebaseSync && env.FIREBASE_SYNC_ENABLED === "true" ? { firebaseSync: firebaseSync.worker.status, firebaseBalanceWrite } : {}),
+        ...(walletMemberSync ? { walletSync: walletMemberSync.status, walletBalanceWrite } : {}),
         campaignSync: promotionSync?.status ?? "disabled",
       };
     }
@@ -581,7 +584,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     onModuleInit() {
       if (!panCafe || simulation) payments.startWorker();
       posPayments?.startWorker();
-      if (env.FIREBASE_SYNC_ENABLED === "true") firebaseSync?.worker.start();
+      walletMemberSync?.start();
       promotionSync?.start();
       testSCoin?.start();
       liveSCoin?.start();
@@ -591,7 +594,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       await posPayments?.stopWorker();
       await Promise.all([testSCoin?.stop(), liveSCoin?.stop()]);
       await promotionSync?.stop();
-      await firebaseSync?.stop();
+      await walletMemberSync?.stop();
+      await hostedWallet?.close();
       await db.close();
     }
   }

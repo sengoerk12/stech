@@ -4,7 +4,7 @@ import { PanCafeFirebaseSync, type MemberSnapshot } from "../src/cafe/firebase-s
 import { planFirebaseBalance, reconcileFirebaseBalance } from "../src/cafe/firebase-balance";
 import { PanCafeBridgeClient } from "../src/cafe/pancafe";
 import type { PanCafeRow } from "../src/cafe/pancafe-reader";
-import { Timestamp, type DocumentData, type DocumentSnapshot } from "firebase-admin/firestore";
+import type { Timestamp, WalletData as DocumentData, WalletSnapshot as DocumentSnapshot } from "../src/cafe/wallet-store";
 
 const member: PanCafeRow = {
   ID: "12", USERNAME: "demo", NAME: "Deneme", LASTNAME: "00AB1234",
@@ -80,12 +80,12 @@ test("a pending edit from before the upgrade can still be replayed", () => {
 
 function testDocument(initial: DocumentData) {
   let data = initial;
-  let version = new Timestamp(1, 0);
+  let version = { seconds: 1, nanoseconds: 0 };
   const ref = {
     async update(next: DocumentData, condition: { lastUpdateTime: Timestamp }) {
       assert.equal(condition.lastUpdateTime, version);
       data = { ...data, ...next };
-      version = new Timestamp(version.seconds + 1, 0);
+      version = { seconds: version.seconds + 1, nanoseconds: 0 };
     },
     async get() { return currentDoc(); },
   };

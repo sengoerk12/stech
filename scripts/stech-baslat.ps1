@@ -11,7 +11,7 @@ $posHome = Join-Path $env:LOCALAPPDATA 'STech-OdealTunnel'
 $bridgeHome = Join-Path $serverHome 'Bridge'
 $bridgeConfig = Join-Path $bridgeHome 'connection.json'
 $pairingFile = Join-Path $serverHome 'pairing.json'
-$firebaseFile = Join-Path $serverHome 'firebase.json'
+$walletEnv = Join-Path $serverHome 'wallet-api.env'
 $activeKiosk = Join-Path $project 'kiosk\dist\current'
 $port = 3091
 $healthUrl = "http://127.0.0.1:$port/api/v1/health"
@@ -191,10 +191,6 @@ PANCAFE_BALANCE_CREDIT=$(([bool]$Config.allowBalanceCredit).ToString().ToLowerIn
 PANCAFE_BRIDGE_CONFIG="$folder/Bridge/connection.json"
 DATA_DIR="$folder/api-data"
 KIOSK_DEVICE_KEY=$($Pairing.deviceKey)
-FIREBASE_SYNC_ENABLED=true
-FIREBASE_BALANCE_WRITE_ENABLED=$(([bool]$Config.allowFirebaseBalanceWrite).ToString().ToLowerInvariant())
-FIREBASE_PROJECT_ID=wallet-stech
-GOOGLE_APPLICATION_CREDENTIALS="$folder/firebase.json"
 $adminSetupSetting
 "@
     return $envFile
@@ -207,10 +203,12 @@ function Start-Api($Config, $Pairing) {
     } else {
         if (Test-Listener $port) { throw "Port $port baska bir uygulama tarafindan kullaniliyor." }
         $app = Join-Path $project 'apps\api\dist\apps\api\src\app.js'
-        if (!(Test-Path -LiteralPath $app)) {
+        $walletDependency = Join-Path $project 'node_modules\mysql2'
+        $needsWalletDependency = (Test-Path -LiteralPath $walletEnv -PathType Leaf) -and !(Test-Path -LiteralPath $walletDependency)
+        if (!(Test-Path -LiteralPath $app) -or $needsWalletDependency) {
             Push-Location -LiteralPath $project
             try {
-                if (!(Test-Path -LiteralPath 'node_modules\typescript')) {
+                if (!(Test-Path -LiteralPath 'node_modules\typescript') -or $needsWalletDependency) {
                     & npm.cmd ci --workspace '@stech/api' --include-workspace-root=false | Out-Host
                     if ($LASTEXITCODE) { throw 'API bagimliliklari kurulamadi.' }
                 }
@@ -227,7 +225,11 @@ function Start-Api($Config, $Pairing) {
         try {
             $env:ADMIN_WEB_DIR = Join-Path $project 'apps\admin'
             $env:KIOSK_UI_DIR = Join-Path $project 'kiosk\ui'
-            $arguments = @(('"' + "--env-file=$envFile" + '"'), ('"' + $entry + '"'))
+            $arguments = @(('"' + "--env-file=$envFile" + '"'))
+            if (Test-Path -LiteralPath $walletEnv -PathType Leaf) {
+                $arguments += ('"' + "--env-file=$walletEnv" + '"')
+            }
+            $arguments += ('"' + $entry + '"')
             [void](Start-Background $node $arguments $cwd (Join-Path $serverHome 'launcher-api') { Get-Health $healthUrl })
         } finally {
             $env:ADMIN_WEB_DIR = $oldAdminDir
@@ -417,7 +419,7 @@ try {
         $connection = if ($bridge) { Get-Health "http://127.0.0.1:$($bridge.port)/health" @{ Authorization = "Bearer $($bridge.apiKey)" } }
         Write-Host ('PanCafe koprusu: ' + $(if ($connection.connected) { 'bagli' } else { 'kapali' }))
         Write-Host ('Backend: ' + $(if ($api) { 'acik' } else { 'kapali' }))
-        Write-Host ('Firebase: ' + $api.firebaseSync)
+        if ($api.walletSync) { Write-Host ('Wallet MySQL: ' + $api.walletSync) }
         Write-Host ('Kiosk: ' + $(if (Get-Process kiosk -ErrorAction SilentlyContinue) { 'acik' } else { 'kapali' }))
         Write-Host ('Odeal tuneli: ' + $(if ((Get-Health 'http://127.0.0.1:4040/api/tunnels').tunnels) { 'acik' } else { 'kapali' }))
         Write-Host "Yonetim paneli: $adminUrl"
@@ -427,7 +429,8 @@ try {
     Require-Program node.exe OpenJS.NodeJS.LTS
     if ([int](& node.exe -p "process.versions.node.split('.')[0]") -lt 22) { throw 'Node.js 22 veya ustu gerekli.' }
     if ($Mode -in @('Local', 'Pair')) { Require-KioskBuild }
-    $firstSetup = @(@($bridgeConfig, $pairingFile, $firebaseFile) | Where-Object { !(Test-Path -LiteralPath $_) }).Count -gt 0
+    $setupFiles = @($bridgeConfig, $pairingFile)
+    $firstSetup = @($setupFiles | Where-Object { !(Test-Path -LiteralPath $_) }).Count -gt 0
     if ($Mode -eq 'Pair') {
         Require-Program caddy.exe CaddyServer.Caddy
         Initialize-Server 'lan'
