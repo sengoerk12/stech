@@ -620,19 +620,23 @@ test('computer list distinguishes ready, occupied and unavailable terminals', as
   class ComputerBridge extends TestBridge {
     override async request(path: string, body?: unknown) {
       if (path === '/computers') return [
-        { ID: '1', NAME: 'PC-1', TERMINALSTATUS: '1' },
+        { ID: '1', NAME: 'PC-1', ISVIRTUAL: '0', STARTSUPPORTED: '1', TERMINALSTATUS: '1' },
         { ID: '2', NAME: 'PC-2', TERMINALSTATUS: '3' },
-        { ID: '3', NAME: 'PC-3', TERMINALSTATUS: '0' },
+        { ID: '3', NAME: 'PC-3', ISVIRTUAL: '0', STARTSUPPORTED: '0', TERMINALSTATUS: '0' },
         { ID: '4', NAME: 'PC-4', TERMINALSTATUS: '5' },
+        { ID: '5', NAME: 'PC-5', TERMINALSTATUS: '4' },
+        { ID: '6', NAME: 'PC-6', ISVIRTUAL: '0', WAKABLE: '1', STARTSUPPORTED: '1', TERMINALSTATUS: '0' },
       ];
       return super.request(path, body);
     }
   }
   try {
-    const cafe = new PanCafeSystemAdapter(db, new ComputerBridge(), config);
+    const cafe = new PanCafeSystemAdapter(db, new ComputerBridge(), { ...config, allowVirtualSessionStart: true });
     const member = await cafe.authenticate('first', 'PanCafePassword!');
     assert(member);
     const result = await cafe.getComputers(member.id);
-    assert.deepEqual(result.computers.map(pc => pc.status), ['available', 'occupied', 'unavailable', 'occupied']);
+    assert.deepEqual(result.computers.map(pc => pc.status), ['available', 'occupied', 'unavailable', 'occupied', 'occupied', 'wakeable']);
+    assert.deepEqual(result.computers.map(pc => pc.canStart), [true, false, false, false, false, true]);
+    assert.equal(result.computers[5].available, true);
   } finally { await db.close(); }
 });

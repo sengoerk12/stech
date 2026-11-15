@@ -12,7 +12,7 @@ class ApiGateway {
       response = await fetch(this.config.apiBaseUrl.replace(/\/$/, '') + endpoint, {
         method: body ? 'POST' : 'GET',
         headers: { 'Content-Type': 'application/json', 'X-Kiosk-Key': this.config.deviceKey, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
-        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 45000 : endpoint === '/kiosk/pos-payments' ? 25000 : 12000), redirect: 'error',
+        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 110000 : endpoint === '/kiosk/pos-payments' ? 25000 : 12000), redirect: 'error',
       });
     } catch { throw new Error('Sunucuya ulaşılamıyor. Lütfen yetkiliden yardım iste.'); }
     if (response.status === 304) return null;

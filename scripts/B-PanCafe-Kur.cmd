@@ -243,7 +243,7 @@ if (Test-Path -LiteralPath $bridgeConfig) {
         allowFirebaseSync = $true; allowFirebaseBalanceWrite = $true; firebaseAddressColumn = 'ADDRESS'
     }
     if ($managed) {
-        $enableSessions = (Read-Host 'PanCafe sanal masalarında kiosktan oturum açmayı etkinleştir? (E/H, Enter = H)').Trim()
+        $enableSessions = (Read-Host 'PanCafe masalarında kiosktan üye oturumu açmayı etkinleştir? (E/H, Enter = H)').Trim()
         $config | Add-Member -NotePropertyName allowVirtualSessionStart -NotePropertyValue ($enableSessions -ieq 'E')
     }
     Write-Json $bridgeConfig $config

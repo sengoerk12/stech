@@ -43,7 +43,7 @@ export class PanCafeBridgeClient {
           "Content-Type": "application/json",
         },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(path === '/sessions/start' ? 40000 : 10000),
+        signal: AbortSignal.timeout(path === '/sessions/start' ? 105000 : 10000),
       });
     } catch {
       throw new ServiceUnavailableException(
@@ -256,12 +256,16 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
     return { startSupported: this.config.allowVirtualSessionStart === true, computers: rows.map(row => {
       if (!/^[1-9]\d*$/.test(row.ID ?? '') || !row.NAME || !/^\d+$/.test(row.TERMINALSTATUS ?? ''))
         throw new ServiceUnavailableException("Bilgisayar bilgileri doğrulanamadı.");
+      const canWake = row.WAKABLE === '1';
       return {
         id: row.ID!,
         name: row.NAME!,
         virtual: row.ISVIRTUAL === '1',
-        available: row.TERMINALSTATUS === '1',
-        status: row.TERMINALSTATUS === '1' ? 'available' : ['3', '5'].includes(row.TERMINALSTATUS!) ? 'occupied' : 'unavailable',
+        canStart: this.config.allowVirtualSessionStart === true &&
+          (row.STARTSUPPORTED === '1' || (row.STARTSUPPORTED == null && row.ISVIRTUAL === '1')),
+        canWake,
+        available: row.TERMINALSTATUS === '1' || canWake,
+        status: canWake ? 'wakeable' : row.TERMINALSTATUS === '1' ? 'available' : ['3', '4', '5'].includes(row.TERMINALSTATUS!) ? 'occupied' : 'unavailable',
       };
     }) };
   }

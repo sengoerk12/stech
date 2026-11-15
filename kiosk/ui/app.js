@@ -507,7 +507,7 @@ async function action(value) {
     if (computerStart || !computerData) return;
     const pc = computerData.computers.find(pc => pc.id === arg && pc.available);
     if (!pc) return;
-    if (!computerData.startSupported || !pc.virtual) { selectedComputer = undefined; computerNotice = `${pc.name} kiosktan açılamıyor. Oturum için kasaya başvur.`; render(); return; }
+    if (!computerData.startSupported || !(pc.canStart ?? pc.virtual)) { selectedComputer = undefined; computerNotice = `${pc.name} kiosktan açılamıyor. Oturum için kasaya başvur.`; render(); return; }
     selectedComputer = pc; computerNotice = ''; render(); return;
   }
   if (name === 'computer-confirm') return startSelectedComputer();
@@ -707,7 +707,7 @@ let startingComputer = false;
 async function startSelectedComputer(checkOnly = false) {
   if (startingComputer || !state.data || (!selectedComputer && !computerStart)) return;
   const epoch = state.epoch;
-  computerStart ??= { terminalId: selectedComputer.id, operationId: crypto.randomUUID(), status: 'pending' };
+  computerStart ??= { terminalId: selectedComputer.id, operationId: crypto.randomUUID(), status: 'pending', waking: selectedComputer.canWake };
   const request = computerStart;
   state.modal = null; renderModal(); startingComputer = true; render();
   try {
@@ -735,20 +735,20 @@ async function loadComputers() {
     computersError = '';
     if (selectedComputer && !computerStart) {
       const current = result.computers.find(pc => pc.id === selectedComputer.id);
-      if (current?.available && current.virtual && result.startSupported) selectedComputer = current;
-      else { computerNotice = `${selectedComputer.name} az önce doldu. Başka bir bilgisayar seç.`; selectedComputer = undefined; }
+        if (current?.available && (current.canStart ?? current.virtual) && result.startSupported) selectedComputer = current;
+        else { computerNotice = `${selectedComputer.name} artık oturum açmaya uygun değil. Başka bir bilgisayar seç.`; selectedComputer = undefined; }
     }
   } catch (error) { if (epoch === state.epoch) computersError = error.message; }
   finally { loadingComputers = false; if (epoch === state.epoch && state.page === 'computers') render(); }
 }
-function computerStatusText(pc) { return pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'; }
+function computerStatusText(pc) { return pc.canWake ? 'Kapalı, açılabilir' : pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'; }
 function computerStatusClass(pc) { return pc.available ? 'pc-free' : pc.status === 'occupied' ? 'pc-busy' : 'pc-off'; }
 function computersPage() {
   const groups = computerData ? ComputerZones.summarize(computerData.computers) : [];
   const group = groups.find(g => g.zone.id === computerZone);
   const alerts = `${computersError ? `<div role="alert" class="notice">${e(computersError)}</div>` : ''}
     ${computerNotice ? `<div role="status" class="notice">${e(computerNotice)}</div>` : ''}
-    ${computerStart ? `<div class="notice" role="status">${e(startingComputer ? 'PanCafe’de oturumun başlatılıyor…' : computerStart.message || 'Oturum sonucu bekleniyor.')}${!startingComputer ? button('Durumu kontrol et', 'computer-check', 'secondary') : ''}</div>` : ''}
+    ${computerStart ? `<div class="notice" role="status">${e(startingComputer ? (computerStart.waking ? 'Bilgisayar açılıyor. PanCafe bağlantısı bekleniyor…' : 'PanCafe’de oturumun başlatılıyor…') : computerStart.message || 'Oturum sonucu bekleniyor.')}${!startingComputer ? button('Durumu kontrol et', 'computer-check', 'secondary') : ''}</div>` : ''}
     ${!computerData && !computersError ? '<p role="status">Bilgisayarlar alınıyor…</p>' : ''}
     ${computerData && !computerData.startSupported ? '<div class="notice">Bu şubede kiosktan oturum açma etkin değil. Şube yetkilisine başvur.</div>' : ''}`;
   if (!group) return `<div class="page-heading"><div><span class="eyebrow">OYUN ALANIN</span><h1>Bilgisayar türünü seç</h1><p>Önce oynamak istediğin alanı seç, sonra salon planından boş bir bilgisayar belirle.</p></div></div>
@@ -766,7 +766,7 @@ function computersPage() {
       ${group.total ? '' : '<p class="muted">Bu türde PanCafe’de tanımlı bilgisayar bulunamadı.</p>'}
     </section>
     <section class="panel pick-bar ${pick ? 'pick-ready' : ''}" aria-live="polite">${pick
-      ? `<div><span class="eyebrow">SEÇİMİN</span><h2>${e(pick.name)}</h2><p>Oturum ${e(state.data.member.username)} üyeliğinle başlar. PanCafe’deki üye tarifesi ve varsa açılış ücreti uygulanır.</p></div><div class="pick-actions">${button('Onayla ve oturumu başlat', 'computer-confirm', 'primary', !canPick)}${button('Seçimi kaldır', 'computer-clear', 'secondary', Boolean(computerStart))}</div>`
+      ? `<div><span class="eyebrow">SEÇİMİN</span><h2>${e(pick.name)}</h2><p>${pick.canWake ? 'Bilgisayar açıldığında üye oturumun başlar. ' : ''}Oturum ${e(state.data.member.username)} üyeliğinle başlar. PanCafe’deki üye tarifesi ve varsa açılış ücreti uygulanır.</p></div><div class="pick-actions">${button('Onayla ve oturumu başlat', 'computer-confirm', 'primary', !canPick)}${button('Seçimi kaldır', 'computer-clear', 'secondary', Boolean(computerStart))}</div>`
       : `<p>${canPick ? 'Yeşil bir bilgisayara dokunarak seçimini yap.' : 'Şu anda seçim yapılamıyor.'}</p>`}</section>`;
 }
 setInterval(() => { if (state.data && state.page === 'computers') void loadComputers(); }, 5000);

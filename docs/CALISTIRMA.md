@@ -27,7 +27,7 @@ Bilgisayar yeniden açıldığında yine **1** seç. Kiosk pencere modunda açı
 
 ## Yönetim ve dosyalar
 
-İlk kurulumda **kiosktan oturum açma** sorusuna **E** verirsen desteklenen PanCafe sanal masalarında bu özellik etkinleşir. Mevcut kurulumlarda ayar `Bridge\connection.json` içindeki `allowVirtualSessionStart` değeridir. Değişiklikten sonra köprü ve backend yeniden başlatılır.
+İlk kurulumda **kiosktan oturum açma** sorusuna **E** verirsen sanal masalarda ve PanCafe’ye bağlı fiziksel masalarda üye oturumu açılabilir. Mevcut kurulumlarda ayar `Bridge\connection.json` içindeki `allowVirtualSessionStart` değeridir. Değişiklikten sonra köprü ve backend yeniden başlatılır.
 
 - PanCafe bilgisayarında sunucu çalışırken **4** yönetim panelini tarayıcıda açar. **5** backend, Firebase, kiosk ve tünel durumunu gösterir.
 - **6** PanCafe köprüsünü kapatır. Windows yönetici izni isterse onayla.

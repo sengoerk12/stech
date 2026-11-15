@@ -20,6 +20,7 @@ class KioskSession {
     }).finally(() => { session.renewing = false; });
   }
   remaining(now = Date.now()) {
+    if (this.session?.startInFlight) return Math.ceil(this.idleMs / 1000);
     return this.session ? Math.max(0, Math.ceil((this.session.activity + this.idleMs - now) / 1000)) : 0;
   }
   countdown(now = Date.now()) {
@@ -122,7 +123,10 @@ class KioskSession {
       try {
         result = await this.gateway[action](session.token, session.unresolvedStart);
         if (result.status !== 'pending') delete session.unresolvedStart;
-      } finally { session.startInFlight = false; }
+      } finally {
+        session.startInFlight = false;
+        if (this.session === session) this.markActivity(session, Date.now());
+      }
     }
     else if (action === 'transactions') result = this.mode === 'demo' ? await this.demo.transactions(session.card, payload.cursor) : await this.gateway.transactions(session.token, payload.cursor);
     else if (action === 'sessions') result = this.mode === 'demo' ? { items: [] } : await this.gateway.sessions(session.token, payload.cursor);

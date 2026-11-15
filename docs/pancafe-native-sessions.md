@@ -1,8 +1,12 @@
-# Kiosktan sanal PanCafe oturumu
+# Kiosktan PanCafe üye oturumu
 
 Bağlantı, Türkçe PanCafe Pro **v3.3.2** yönetim ekranında doğrulandı.
-Yalnızca `ISVIRTUAL=1` olan sanal masalarda üye oturumu açar. Fiziksel
-bilgisayarı açma veya istemci kilidini kaldırma desteği içermez.
+Sanal masalara ve PanCafe istemcisi sunucuya bağlı olan fiziksel masalara
+PanCafe’nin kendi üye oturumu komutunu gönderir. Fiziksel masanın bağlı
+sayılması için PanCafe IP günlüğünde açılış kaydı ve sunucuda etkin TCP
+bağlantısı gerekir. Ağ kartı adresi kayıtlı olan boş fiziksel masa kapalıysa,
+üyenin onayıyla Wake-on-LAN paketi gönderilir. Köprü PanCafe bağlantısını en
+fazla 60 saniye bekler ve ardından üye oturumu komutunu çalıştırır.
 
 ## Yerel bağlantı
 

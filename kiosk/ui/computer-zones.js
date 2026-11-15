@@ -114,7 +114,7 @@
     const rect = place(spot), a = spot.at;
     const state = !pc ? 'missing' : pc.available ? 'free' : pc.status === 'occupied' ? 'busy' : 'off';
     const selected = pc && pc.id === selectedId;
-    const label = !pc ? 'sistemde tanımlı değil' : state === 'free' ? 'boş' : state === 'busy' ? 'dolu' : 'kullanıma hazır değil';
+    const label = !pc ? 'sistemde tanımlı değil' : pc.canWake ? 'kapalı, açılabilir' : state === 'free' ? 'boş' : state === 'busy' ? 'dolu' : 'kullanıma hazır değil';
     const tile = rect(a + 0.04, 0, a + 0.96, DEPTH), tilePoints = corners(tile);
     const parts = [
       box(...rect(a + 0.08, 0.1, a + 0.92, 0.72), 0, 0.42, 'iso-desk'),

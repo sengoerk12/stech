@@ -15,8 +15,25 @@ public static class PanCafeBridge
     static string database,clientDirectory,apiKey,folder;
     static HttpListener listener;
     const string projection="ID,USERNAME,NAME,LASTNAME,GSM,PHONE,EMAIL,CAST(RECDATE AS VARCHAR(30)) AS JOINED_AT,CAST(BAKIYE AS DECIMAL(18,2)) AS BALANCE_TL,CAST(AVAILBONUS AS DECIMAL(18,2)) AS BONUS_TL,ACCTYPE,ACCSTATUS";
-    // Match the terminal view, including PCs marked virtual. tsReady is 1.
-    internal const string PcAvailabilitySql="SELECT COUNT(*) AS TOTAL,COUNT(CASE WHEN TERMINALSTATUS=1 THEN 1 END) AS AVAILABLE FROM TERMINALS WHERE TERMINALTYPE=0";
+    static List<Dictionary<string,string>> Computers() {
+        var rows = Query("SELECT ID,NAME,ISVIRTUAL,TERMINALSTATUS,NOMEMBERLOGIN,MAC FROM TERMINALS WHERE TERMINALTYPE=0 ORDER BY ID");
+        var connected = PanCafeConnectedTerminals.Read(database);
+        foreach (var row in rows) {
+            bool physicalOnline = row["ISVIRTUAL"] == "0" && connected.Contains(row["NAME"]);
+            row["ONLINE"] = row["ISVIRTUAL"] == "1" || physicalOnline ? "1" : "0";
+            bool allowed = Enabled("allowVirtualSessionStart");
+            bool canWake = allowed && row["ISVIRTUAL"] == "0" && !physicalOnline &&
+                row["NOMEMBERLOGIN"] == "0" && (row["TERMINALSTATUS"] == "0" || row["TERMINALSTATUS"] == "1") &&
+                PanCafeConnectedTerminals.WakePacket(row["MAC"]) != null;
+            row["WAKABLE"] = canWake ? "1" : "0";
+            row["STARTSUPPORTED"] = allowed &&
+                (row["ISVIRTUAL"] == "1" || ((physicalOnline || canWake) && row["NOMEMBERLOGIN"] == "0")) ? "1" : "0";
+            if (row["ONLINE"] == "0" && row["TERMINALSTATUS"] == "1" && !canWake) row["TERMINALSTATUS"] = "0";
+            row.Remove("MAC");
+            row.Remove("NOMEMBERLOGIN");
+        }
+        return rows;
+    }
     static JavaScriptSerializer Serializer() {return new JavaScriptSerializer { MaxJsonLength=1048576 };}
     static string Setting(string key) {return Convert.ToString(config[key]);}
     static bool Enabled(string key) {return config.ContainsKey(key) && Convert.ToBoolean(config[key]);}
@@ -73,16 +90,24 @@ public static class PanCafeBridge
                 Reply(response,200,new {connected=true,installationId=Setting("installationId"),name=Setting("displayName"),memberRegistration=Convert.ToBoolean(config["allowRegistration"]),balanceCredit=config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"]),transactionHistory=true,sessionHistory=true});return;
             }
             if(request.HttpMethod=="GET" && route=="/pc-availability") {
-                Reply(response,200,Query(PcAvailabilitySql));return;
+                var computers = Computers();
+                int available = computers.FindAll(row => row["TERMINALSTATUS"] == "1" || row["WAKABLE"] == "1").Count;
+                Reply(response,200,new [] {new {TOTAL=computers.Count.ToString(),AVAILABLE=available.ToString()}});return;
             }
             if(request.HttpMethod=="GET" && route=="/computers") {
-                Reply(response,200,Query("SELECT ID,NAME,ISVIRTUAL,TERMINALSTATUS FROM TERMINALS WHERE TERMINALTYPE=0 ORDER BY ID"));return;
+                Reply(response,200,Computers());return;
             }
             if(request.HttpMethod=="POST" && route=="/sessions/start") {
                 if(!Enabled("allowVirtualSessionStart")) {Reply(response,503,new {error="session_start_disabled"});return;}
                 var body=ReadBody(request);int terminalId,memberId;
                 if(!Int32.TryParse(Field(body,"terminalId"),out terminalId)||!Int32.TryParse(Field(body,"memberId"),out memberId)) {Reply(response,400,new {error="invalid_session"});return;}
-                Reply(response,200,PanCafeNativeSessions.Start(database,clientDirectory,folder,terminalId,memberId,Field(body,"username"),Field(body,"operationId")));return;
+                string username = Field(body,"username"), operationId = Field(body,"operationId");
+                // A cold boot can take a minute. Keep the bridge available for payments and reads.
+                ThreadPool.QueueUserWorkItem(delegate {
+                    try { Reply(response,200,PanCafeNativeSessions.Start(database,clientDirectory,folder,terminalId,memberId,username,operationId)); }
+                    catch { try { Reply(response,503,new {error="pancafe_unavailable"}); } catch {} }
+                });
+                return;
             }
             if(request.HttpMethod=="GET" && route=="/sessions/status") {
                 int terminalId,memberId;

@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 
-// Starts virtual member sessions through the operator's PanCafe UI, not by
+// Starts member sessions through the operator's PanCafe UI, not by
 // editing TERMINALS. Input is sent as window messages first (no pointer or focus change). Only the verified Turkish v3.3.2 layout is supported.
 public static class PanCafeNativeSessions {
     public sealed class Receipt {
@@ -54,9 +54,12 @@ public static class PanCafeNativeSessions {
                 }
 
                 var terminal = Terminal(database, client, terminalId);
-                if (terminal["ISVIRTUAL"] != "1" || terminal["TERMINALTYPE"] != "0")
-                    return Result("unsupported", "Bu bağlantı yalnızca sanal masalarda oturum açabilir.");
-                if (terminal["TERMINALSTATUS"] != "1")
+                if (terminal["TERMINALTYPE"] != "0" || (terminal["ISVIRTUAL"] != "1" && terminal["ISVIRTUAL"] != "0"))
+                    return Result("unsupported", "Bu terminalde kiosktan üye oturumu açılamıyor.");
+                if (terminal["ISVIRTUAL"] == "0" && terminal["NOMEMBERLOGIN"] != "0")
+                    return Result("unsupported", "Bu bilgisayarda üye oturumu kapalı.");
+                bool needsWake = !IsOnline(database, terminal);
+                if (terminal["TERMINALSTATUS"] != "1" && (!needsWake || terminal["TERMINALSTATUS"] != "0"))
                     return Result("occupied", "Bu bilgisayar artık boş değil. Başka bir bilgisayar seç.");
                 var members = PanCafeReadOnly.Query(database, client,
                     "SELECT ID FROM MEMBERS WHERE ID=" + memberId + " AND USERNAME='" + username + "' AND ACCSTATUS=1 AND BAKIYE>0");
@@ -70,6 +73,20 @@ public static class PanCafeNativeSessions {
                     "SELECT COUNT(*) AS N FROM MEMBERS WHERE POSITION('" + username.ToLowerInvariant() + "' IN LOWER(USERNAME))>0");
                 if (matches[0]["N"] != "1")
                     return Result("ambiguous", "Bu kullanıcı adı için kasadan oturum açılması gerekiyor.");
+
+                if (needsWake) {
+                    if (!PanCafeConnectedTerminals.Wake(terminal["MAC"]))
+                        return Result("failed", "Bilgisayara açılma isteği gönderilemedi. Başka bir bilgisayar seç veya kasaya başvur.");
+                    var wakeTimer = Stopwatch.StartNew();
+                    while (!IsOnline(database, terminal) && wakeTimer.Elapsed < TimeSpan.FromSeconds(60))
+                        Thread.Sleep(1000);
+                    if (!IsOnline(database, terminal))
+                        return Result("failed", "Bilgisayar 60 saniye içinde PanCafe’ye bağlanmadı. Başka bir bilgisayar seç veya kasaya başvur.");
+                    var ready = Terminal(database, client, terminalId);
+                    if (!CanSubmit(ready, terminal) || !MemberCanStart(database, client, memberId, username))
+                        return Result("failed", "Bilgisayar veya üyelik artık oturum açmaya uygun değil.");
+                    terminal = ready;
+                }
 
                 NativeUi prepared;
                 string beforeLog;
@@ -93,7 +110,8 @@ public static class PanCafeNativeSessions {
                     Save(path, receipt);
                     bool submitted = false;
                     try {
-                        try { ui.Prepare(terminal["NAME"], username); }
+                        bool physical = terminal["ISVIRTUAL"] == "0";
+                        try { ui.Prepare(terminal["NAME"], username, physical); }
                         catch (InvalidOperationException) {
                             if (!ui.Background) throw;
                             // PanCafe did not accept window messages. Nothing was submitted yet:
@@ -102,10 +120,11 @@ public static class PanCafeNativeSessions {
                             Thread.Sleep(600);
                             ui.Background = false;
                             ui.CheckIdle();
-                            ui.Prepare(terminal["NAME"], username);
+                            ui.Prepare(terminal["NAME"], username, physical);
                         }
                         // The terminal may have become busy while the picker was opening.
-                        if (Terminal(database, client, terminalId)["TERMINALSTATUS"] != "1")
+                        var current = Terminal(database, client, terminalId);
+                        if (!CanSubmit(current, terminal) || !IsOnline(database, current))
                             throw new InvalidOperationException("Bu bilgisayar artık boş değil.");
                         submitted = true;
                         ui.Accept(username);
@@ -158,13 +177,28 @@ public static class PanCafeNativeSessions {
 
     static Dictionary<string,string> Terminal(string db, string client, int id) {
         var rows = PanCafeReadOnly.Query(db, client,
-            "SELECT ID,NAME,TERMINALTYPE,ISVIRTUAL,TERMINALSTATUS,MEMBERID,CAST(STARTDATE AS VARCHAR(30)) AS STARTDATE,CAST(STARTTIME AS VARCHAR(30)) AS STARTTIME FROM TERMINALS WHERE ID=" + id);
+            "SELECT ID,NAME,TERMINALTYPE,ISVIRTUAL,TERMINALSTATUS,NOMEMBERLOGIN,MAC,MEMBERID,CAST(STARTDATE AS VARCHAR(30)) AS STARTDATE,CAST(STARTTIME AS VARCHAR(30)) AS STARTTIME FROM TERMINALS WHERE ID=" + id);
         if (rows.Count != 1) throw new InvalidOperationException("Bilgisayar bulunamadı.");
         return rows[0];
     }
+    static bool IsOnline(string database, Dictionary<string,string> terminal) {
+        return terminal["ISVIRTUAL"] == "1" || PanCafeConnectedTerminals.Read(database).Contains(terminal["NAME"]);
+    }
+    static bool CanSubmit(Dictionary<string,string> current, Dictionary<string,string> original) {
+        return current["TERMINALSTATUS"] == "1" && current["NAME"] == original["NAME"] &&
+            current["ISVIRTUAL"] == original["ISVIRTUAL"] && current["TERMINALTYPE"] == "0" &&
+            (current["ISVIRTUAL"] == "1" || (current["NOMEMBERLOGIN"] == "0" && current["MAC"] == original["MAC"]));
+    }
+    static bool MemberCanStart(string database, string client, int memberId, string username) {
+        return PanCafeReadOnly.Query(database, client,
+            "SELECT ID FROM MEMBERS WHERE ID=" + memberId + " AND USERNAME='" + username +
+            "' AND ACCSTATUS=1 AND BAKIYE>0 AND NOT EXISTS(SELECT 1 FROM TERMINALS WHERE MEMBERID=" +
+            memberId + " AND TERMINALSTATUS=5)").Count == 1;
+    }
     static bool Confirmed(string db, string client, Receipt receipt, string newLog) {
         var terminal = Terminal(db, client, receipt.TerminalId);
-        if (terminal["ISVIRTUAL"] != "1" || terminal["TERMINALSTATUS"] != "5" ||
+        if (terminal["TERMINALTYPE"] != "0" || terminal["NAME"] != receipt.TerminalName ||
+            terminal["TERMINALSTATUS"] != "5" ||
             terminal["MEMBERID"] != receipt.MemberId.ToString(CultureInfo.InvariantCulture) ||
             (terminal["STARTDATE"] == receipt.BeforeDate && terminal["STARTTIME"] == receipt.BeforeTime)) return false;
         if (newLog == null) {
@@ -230,7 +264,7 @@ public static class PanCafeNativeSessions {
             if (!Background) Activate(main);
         }
         public string ReadLog() { return Text(log); }
-        public void Prepare(string terminal, string username) {
+        public void Prepare(string terminal, string username, bool physical) {
             using (var items = new RemoteList(list, processId)) {
                 int selected = items.Find(terminal);
                 items.Select(selected);
@@ -246,7 +280,9 @@ public static class PanCafeNativeSessions {
             Rect submenuRect; GetClientRect(submenu, out submenuRect);
             if (submenuRect.Bottom < 100 || submenuRect.Bottom > 350)
                 throw new InvalidOperationException("PanCafe oturum menüsü beklenen düzende değil.");
-            MenuClick(submenu, submenuRect.Right / 2, submenuRect.Bottom * 7 / 12);
+            // The physical terminal menu has six items and a separator before member login.
+            int memberRow = physical ? submenuRect.Bottom * 3 / 5 : submenuRect.Bottom * 7 / 12;
+            MenuClick(submenu, submenuRect.Right / 2, memberRow);
             picker = WaitWindow("TSrvMemberSearchDlgFrm", IntPtr.Zero);
             bool usernameSearch = false;
             foreach (var h in Children(picker)) if (Class(h) == "TspSkinComboBox" && Caption(h) == "Kullanıcı Adı") usernameSearch = true;
@@ -431,7 +467,7 @@ public static class PanCafeNativeSessions {
             Write(value); Message(list, 0x102B, -1, memory);
             Array.Copy(BitConverter.GetBytes(3), 0, value, 12, 4);
             Write(value); Message(list, 0x102B, index, memory);
-            Message(list, 0x1043, 0, new IntPtr(index));
+            Message(list, 0x1013, index, IntPtr.Zero); // LVM_ENSUREVISIBLE
         }
         public Rect Bounds(int index) {
             Write(new byte[16]);
