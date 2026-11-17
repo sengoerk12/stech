@@ -57,6 +57,7 @@ export interface Promotion {
 }
 export interface Payment {
   awaitingTerminal?: boolean;
+  transferNeedsReview?: boolean;
   simulation?: boolean;
   creditedToCafe?: boolean;
   id: string;

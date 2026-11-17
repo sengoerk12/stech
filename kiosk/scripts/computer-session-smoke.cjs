@@ -6,21 +6,22 @@ const assert = require('node:assert/strict');
 const { ApiGateway } = require('../electron/gateway.cjs');
 const { KioskSession } = require('../electron/session.cjs');
 (async () => {
-  let starts = 0, checks = 0;
-  const server = createServer((req, res) => {
+  const operationIds = [];
+  let ready = false;
+  const server = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     const reply = value => res.end(JSON.stringify(value));
     if (req.url.endsWith('/card-login')) return reply({ accessToken: 'test-token' });
     if (req.url.endsWith('/dashboard')) return reply({ member: { name: 'Kaan', username: 'kaan', joinedAt: '2026-01-01' }, wallet: { balance: 50000 }, promotions: [], transactions: [], features: {} });
-    if (req.url.endsWith('/computers')) return reply({ startSupported: true, computers: [{ id: '1', name: 'PC-1', available: true, virtual: true, status: 'available' }] });
+    if (req.url.endsWith('/computers')) return reply({ startSupported: true, computers: [{ id: '1', name: 'PC-1', available: true, canStart: true, canWake: true, virtual: false, status: 'wakeable' }] });
     if (req.url.endsWith('/start')) {
-      starts++;
-      if (starts === 1) { res.statusCode = 503; return reply({ message: 'PanCafe ekranına ulaşılamadı.' }); }
-      return reply({ status: 'failed', message: 'PanCafe’deki açık menüyü kapatıp tekrar dene.' });
-    }
-    if (req.url.includes('/start/')) {
-      checks++; assert.equal(req.method, 'GET');
-      return reply({ status: 'not_started', message: 'Bu işlem PanCafe’de başlatılmadı. Bilgisayarı yeniden seçebilirsin.' });
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      operationIds.push(JSON.parse(body).operationId);
+      if (operationIds.length === 2) { res.statusCode = 503; return reply({ message: 'PanCafe bağlantısı geçici olarak kesildi.' }); }
+      if (!ready) return reply({ status: 'waking', message: 'Bilgisayarınız açılıyor.' });
+      if (operationIds.length === 4) return reply({ status: 'pending', message: 'PanCafe’de oturumunuz başlatılıyor…' });
+      return reply({ status: 'started', message: 'PanCafe’de üye oturumun başladı.' });
     }
     return reply({ items: [] });
   });
@@ -43,23 +44,24 @@ const { KioskSession } = require('../electron/session.cjs');
     await page.getByRole('button', { name: 'Bilgisayarlar', exact: true }).click();
     // Tür seçimi → bilgisayar seçimi (sarı çerçeve) → onay.
     await page.getByRole('button', { name: /Diğer bilgisayarlar/ }).click();
-    const open = page.getByRole('button', { name: 'PC-1, Boş', exact: true });
+    const open = page.getByRole('button', { name: 'PC-1, Kapalı, açılabilir', exact: true });
     const confirm = page.getByRole('button', { name: 'Onayla ve oturumu başlat', exact: true });
     await open.click();
     assert.equal(await open.getAttribute('aria-pressed'), 'true');
-    assert.equal(starts, 0);
+    assert.equal(operationIds.length, 0);
     await confirm.click();
-    await page.getByRole('button', { name: 'Durumu kontrol et' }).waitFor();
+    const waking = page.getByRole('status').filter({ hasText: 'Bilgisayarınız açılıyor' });
+    await waking.waitFor();
     assert.equal(await open.isDisabled(), true);
-    assert.equal(starts, 1);
-    await page.getByRole('button', { name: 'Durumu kontrol et' }).click();
-    await page.waitForFunction(() => Boolean(document.querySelector('[data-action="computer-select:1"]')));
-    assert.equal(starts, 1); assert.equal(checks, 1);
-    await open.click(); await confirm.click();
-    await page.waitForFunction(() => Boolean(document.querySelector('[data-action="computer-select:1"]')));
-    assert.equal(starts, 2);
-    assert.match(await page.locator('#toast').innerText(), /PanCafe’deki açık menüyü/);
+    await page.waitForTimeout(6500);
+    assert.equal(operationIds.length, 3);
+    assert.equal(await waking.isVisible(), true);
+    ready = true;
+    await page.getByRole('status').filter({ hasText: 'PanCafe’de oturumunuz başlatılıyor' }).waitFor();
+    await page.locator('#toast').filter({ hasText: 'PanCafe’de üye oturumun başladı.' }).waitFor();
+    assert.equal(operationIds.length, 5);
+    assert.equal(new Set(operationIds).size, 1);
     assert.deepEqual(errors, []);
-    console.log('Computer error recovery passed: GET-only status, no duplicate start, retry unlocked, friendly native error.');
+    console.log('Computer start passed: waking, transient disconnect, confirmation and success with one operation ID.');
   } finally { session.lock(); await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => { console.error(error.message); process.exit(1); });

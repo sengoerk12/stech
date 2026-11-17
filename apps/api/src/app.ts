@@ -250,8 +250,17 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   function user(req: Request) {
     return auth.user(token(req));
   }
+  let kioskLastSeenAt: string | undefined;
   @Controller()
   class ApiController {
+    @Post("kiosk/heartbeat")
+    @Header("Cache-Control", "no-store")
+    kioskHeartbeat(@Headers("x-kiosk-key") key: string | undefined) {
+      if (!kioskAuth) throw new ServiceUnavailableException("Kiosk bağlantısı yapılandırılmadı.");
+      kioskAuth.verifyDevice(key);
+      kioskLastSeenAt = new Date().toISOString();
+      return { ok: true };
+    }
     @Post("kiosk/session/keep-alive")
     async kioskKeepAlive(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined) {
       if (!kioskAuth) throw new ServiceUnavailableException("Kiosk bağlantısı yapılandırılmadı.");
@@ -410,6 +419,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         balanceCredit: nativeCredit,
         ...(walletMemberSync ? { walletSync: walletMemberSync.status, walletBalanceWrite } : {}),
         campaignSync: promotionSync?.status ?? "disabled",
+        kioskLastSeenAt,
       };
     }
     @Post("auth/login") login(@Body() body: unknown) {
@@ -583,7 +593,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   class RuntimeLifecycle {
     onModuleInit() {
       if (!panCafe || simulation) payments.startWorker();
-      posPayments?.startWorker();
+      posPayments?.startWorker(odealProvider?.findCapturedPayment.bind(odealProvider));
       walletMemberSync?.start();
       promotionSync?.start();
       testSCoin?.start();

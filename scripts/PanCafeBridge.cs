@@ -102,7 +102,7 @@ public static class PanCafeBridge
                 var body=ReadBody(request);int terminalId,memberId;
                 if(!Int32.TryParse(Field(body,"terminalId"),out terminalId)||!Int32.TryParse(Field(body,"memberId"),out memberId)) {Reply(response,400,new {error="invalid_session"});return;}
                 string username = Field(body,"username"), operationId = Field(body,"operationId");
-                // A cold boot can take a minute. Keep the bridge available for payments and reads.
+                // Keep native UI work separate from bridge payments and reads.
                 ThreadPool.QueueUserWorkItem(delegate {
                     try { Reply(response,200,PanCafeNativeSessions.Start(database,clientDirectory,folder,terminalId,memberId,username,operationId)); }
                     catch { try { Reply(response,503,new {error="pancafe_unavailable"}); } catch {} }
@@ -187,7 +187,12 @@ public static class PanCafeBridge
                 if(!config.ContainsKey("allowBalanceCredit") || !Convert.ToBoolean(config["allowBalanceCredit"])) {Reply(response,503,new {error="credit_disabled"});return;}
                 var body=ReadBody(request);int memberId;long amount,bonus;
                 if(!Int32.TryParse(Field(body,"memberId"),out memberId)||!Int64.TryParse(Field(body,"amount"),out amount)||!Int64.TryParse(Field(body,"bonus"),out bonus)) {Reply(response,400,new {error="invalid_credit"});return;}
-                Reply(response,200,PanCafeBalanceWriter.Credit(database,clientDirectory,memberId,Field(body,"username"),amount,bonus,Field(body,"operationId")));return;
+                string username=Field(body,"username"), operationId=Field(body,"operationId");
+                ThreadPool.QueueUserWorkItem(delegate {
+                    try { Reply(response,200,PanCafeNativeSessions.Credit(database,clientDirectory,folder,memberId,username,amount,bonus,operationId)); }
+                    catch { try { Reply(response,503,new {error="pancafe_credit_unavailable"}); } catch {} }
+                });
+                return;
             }
             Reply(response,404,new {error="not_found"});
         } catch {try{Reply(response,503,new {error="pancafe_unavailable"});}catch{}}

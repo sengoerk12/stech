@@ -160,7 +160,8 @@ async function checkPosStatus(showError = false) {
   try {
     const payment = await call('payment', { id: current.id });
     if (epoch !== state.epoch || state.processing || state.payment !== current) return;
-    if (payment.status === current.status && payment.awaitingTerminal === current.awaitingTerminal) return;
+    if (payment.status === current.status && payment.awaitingTerminal === current.awaitingTerminal &&
+        payment.transferNeedsReview === current.transferNeedsReview) return;
     state.payment = payment;
     render();
     if (payment.status === 'completed' || payment.status === 'failed') await refresh();
@@ -175,12 +176,13 @@ function paymentView() {
   const p = state.payment, done = p.status === 'completed', failed = p.status === 'failed';
   const physical = state.info.mode === 'connected';
   const transferring = p.status === 'transferring';
+  const review = transferring && p.transferNeedsReview;
   const waiting = physical && p.awaitingTerminal === false;
   const cancel = physical && p.status === 'pending' && p.awaitingTerminal === true
     ? button('Ödemeyi iptal et', 'pos-cancel', 'secondary', state.processing)
     : '';
-  const title = done ? 'Hazırsın. İyi oyunlar!' : failed ? 'Ödeme tamamlanmadı.' : transferring ? 'Bakiye yükleniyor…' : waiting ? 'POS işlemi kontrol ediliyor…' : 'Kartını POS cihazına okut.';
-  const detail = done ? (p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
+  const title = done ? 'Hazırsın. İyi oyunlar!' : failed ? 'Ödeme tamamlanmadı.' : review ? 'Ödeme alındı, aktarım inceleme bekliyor.' : transferring ? 'Bakiye yükleniyor…' : waiting ? 'POS işlemi kontrol ediliyor…' : 'Kartını POS cihazına okut.';
+  const detail = done ? (p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : review ? 'Bu işlem için kasaya başvur. Tekrar ödeme yapmana gerek yok.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
   return `<div class="payment-page">${!state.processing && !done && (!physical || failed) ? button(icon('back') + ' Tutara geri dön', 'payment-back', 'quiet') : ''}<div class="payment-steps"><span class="finished">1 <b>Tutar seçimi</b></span><i></i><span class="${done ? 'finished' : 'current'}">2 <b>POS ile ödeme</b></span><i></i><span class="${done ? 'finished' : ''}">3 <b>Bakiye onayı</b></span></div><section class="panel payment-panel"><div class="payment-illustration ${done ? 'success' : failed ? 'failure' : ''}">${icon(done ? 'check' : failed ? 'close' : 'topup')}</div><span class="eyebrow">${done ? 'İŞLEM TAMAMLANDI' : failed ? 'ÖDEME ONAYLANMADI' : 'POS İLE ÖDEME'}</span><h1>${title}</h1><p>${detail}</p><div class="payment-value">${cash(p.amount)}</div><div class="payment-receipt"><span>Yükleme <b>${cash(p.amount)}</b></span><span>Bonus <b class="positive">+${cash(p.bonus)}</b></span>${done ? '<span>Yeni bakiye <b>' + cash(p.balanceAfter) + '</b></span>' : ''}</div>
   ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + button('Durumu kontrol et', 'pos-status', 'secondary', state.processing) + cancel + '</div>' : `<div class="pos-demo"><span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span><div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
   <div class="receipt-id">İşlem no: ${e(p.id)}</div></section></div>`;
@@ -524,7 +526,6 @@ async function action(value) {
     selectedComputer = pc; computerNotice = ''; render(); return;
   }
   if (name === 'computer-confirm') return startSelectedComputer();
-  if (name === 'computer-check') return startSelectedComputer(true);
   if (name === 'campaign') { state.modal = arg; renderModal(); return; }
   if (name === 'modal-topup') { state.promotionId = state.modal; return go('topup'); }
   if (name === 'select-promotion') { state.promotionId = arg === 'auto' ? undefined : arg; return updateQuote(); }
@@ -716,24 +717,33 @@ let computerZone;
 let computerNotice = '';
 let computerStart;
 let startingComputer = false;
-async function startSelectedComputer(checkOnly = false) {
+async function startSelectedComputer() {
   if (startingComputer || !state.data || (!selectedComputer && !computerStart)) return;
   const epoch = state.epoch;
-  computerStart ??= { terminalId: selectedComputer.id, operationId: crypto.randomUUID(), status: 'pending', waking: selectedComputer.canWake };
+  computerStart ??= { terminalId: selectedComputer.id, operationId: crypto.randomUUID(), waking: selectedComputer.canWake };
   const request = computerStart;
   state.modal = null; renderModal(); startingComputer = true; render();
   try {
-    const result = await call(checkOnly ? 'computerStatus' : 'startComputer', { terminalId: request.terminalId, operationId: request.operationId });
-    if (epoch !== state.epoch) return;
-    request.status = result.status; request.message = result.message;
-    if (result.status !== 'pending') {
-      toast(result.message);
-      computerStart = undefined; selectedComputer = undefined;
-      computersError = result.status === 'started' ? '' : result.message;
-      await refreshLiveAccount(); await loadComputers();
+    while (epoch === state.epoch && computerStart === request) {
+      const result = await call('startComputer', { terminalId: request.terminalId, operationId: request.operationId });
+      if (epoch !== state.epoch) return;
+      if (!['waking', 'pending'].includes(result.status)) {
+        toast(result.message);
+        computerStart = undefined; selectedComputer = undefined;
+        computersError = result.status === 'started' ? '' : result.message;
+        await refreshLiveAccount(); await loadComputers();
+        return;
+      }
+      if (result.status === 'waking') request.waking = true;
+      else if (result.message) request.waking = false;
+      render();
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   } catch (error) {
-    if (epoch === state.epoch && computerStart === request) request.message = `${error.message} İşlem durumunu kontrol et.`;
+    if (epoch === state.epoch && computerStart === request) {
+      computerStart = undefined; selectedComputer = undefined;
+      computersError = error.message;
+    }
   } finally { if (epoch === state.epoch) { startingComputer = false; render(); } }
 }
 async function loadComputers() {
@@ -760,7 +770,7 @@ function computersPage() {
   const group = groups.find(g => g.zone.id === computerZone);
   const alerts = `${computersError ? `<div role="alert" class="notice">${e(computersError)}</div>` : ''}
     ${computerNotice ? `<div role="status" class="notice">${e(computerNotice)}</div>` : ''}
-    ${computerStart ? `<div class="notice" role="status">${e(startingComputer ? (computerStart.waking ? 'Bilgisayar açılıyor. PanCafe bağlantısı bekleniyor…' : 'PanCafe’de oturumun başlatılıyor…') : computerStart.message || 'Oturum sonucu bekleniyor.')}${!startingComputer ? button('Durumu kontrol et', 'computer-check', 'secondary') : ''}</div>` : ''}
+    ${computerStart ? `<div class="notice" role="status">${e(computerStart.waking ? 'Bilgisayarınız açılıyor. PanCafe bağlantısı bekleniyor…' : 'PanCafe’de oturumunuz başlatılıyor…')}</div>` : ''}
     ${!computerData && !computersError ? '<p role="status">Bilgisayarlar alınıyor…</p>' : ''}
     ${computerData && !computerData.startSupported ? '<div class="notice">Bu şubede kiosktan oturum açma etkin değil. Şube yetkilisine başvur.</div>' : ''}`;
   if (!group) return `<div class="page-heading"><div><span class="eyebrow">OYUN ALANIN</span><h1>Bilgisayar türünü seç</h1><p>Önce oynamak istediğin alanı seç, sonra salon planından boş bir bilgisayar belirle.</p></div></div>

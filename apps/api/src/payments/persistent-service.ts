@@ -6,11 +6,11 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import type { Payment, Quote } from "@stech/contracts";
 import type { Database, SqlExecutor } from "../database/database";
-import type { CafeSystemAdapter } from "../cafe/adapter";
+import { ActiveCafeSessionError, PanCafeCreditReviewError, type CafeSystemAdapter } from "../cafe/adapter";
 import type { PaymentProvider, VerifiedPaymentEvent } from "./provider";
 import { calculateQuote } from "./service";
 import type { SCoinService } from "../cafe/s-coin";
-import { OdealCheckoutRejected } from "./odeal";
+import { OdealCheckoutRejected, type OdealPaymentProvider } from "./odeal";
 
 interface PaymentRow {
   payment_provider: "mock" | "odeal";
@@ -23,6 +23,7 @@ interface PaymentRow {
   amount: number;
   bonus: number;
   status: Payment["status"];
+  transfer_needs_review?: boolean;
   created_at: Date;
   balance_after: string | number | null;
   provider_reference: string | null;
@@ -38,6 +39,7 @@ function publicPayment(row: PaymentRow): Payment {
     ...(row.payment_provider === "odeal" && row.status === "pending"
       ? { awaitingTerminal: row.provider_reference !== null }
       : {}),
+    ...(row.status === "transferring" && row.transfer_needs_review ? { transferNeedsReview: true } : {}),
     createdAt: new Date(row.created_at).toISOString(),
     ...(row.balance_after === null
       ? {}
@@ -53,7 +55,9 @@ async function audit(tx: SqlExecutor, id: string, status: string) {
 
 export class PersistentPaymentService {
   private timer?: ReturnType<typeof setInterval>;
+  private reportTimer?: ReturnType<typeof setInterval>;
   private draining: Promise<void> | null = null;
+  private reconciling?: Promise<void>;
   constructor(
     private db: Database,
     private cafe: CafeSystemAdapter,
@@ -134,7 +138,9 @@ export class PersistentPaymentService {
       throw new NotFoundException("İşlem bulunamadı.");
     const row = (
       await this.db.query<PaymentRow>(
-        "SELECT * FROM payment_orders WHERE id=$1 AND user_id=$2 AND transfer_target=$3 AND payment_provider=$4",
+        `SELECT p.*, (j.status='reconciliation') AS transfer_needs_review
+         FROM payment_orders p LEFT JOIN transfer_jobs j ON j.payment_id=p.id
+         WHERE p.id=$1 AND p.user_id=$2 AND p.transfer_target=$3 AND p.payment_provider=$4`,
         [id, userId, this.target, this.providerName],
       )
     ).rows[0];
@@ -143,9 +149,11 @@ export class PersistentPaymentService {
   }
   async pending(userId: string): Promise<Payment[]> {
     const result = await this.db.query<PaymentRow>(
-      `SELECT * FROM payment_orders WHERE user_id=$1 AND transfer_target=$2 AND payment_provider=$3
-        AND (status='transferring' OR (status='pending' AND (payment_provider='odeal' OR created_at>now()-interval '24 hours')))
-        ORDER BY created_at DESC LIMIT 5`,
+      `SELECT p.*, (j.status='reconciliation') AS transfer_needs_review
+        FROM payment_orders p LEFT JOIN transfer_jobs j ON j.payment_id=p.id
+        WHERE p.user_id=$1 AND p.transfer_target=$2 AND p.payment_provider=$3
+        AND (p.status='transferring' OR (p.status='pending' AND (p.payment_provider='odeal' OR p.created_at>now()-interval '24 hours')))
+        ORDER BY p.created_at DESC LIMIT 5`,
       [userId, this.target, this.providerName],
     );
     return result.rows.map(publicPayment);
@@ -306,20 +314,29 @@ export class PersistentPaymentService {
         await audit(tx, paymentId, "completed");
         if (this.target === "pancafe") await this.sCoin?.enqueue(tx, row);
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof ActiveCafeSessionError) {
+        await this.db.query(
+          `UPDATE transfer_jobs SET status='retry',lease_until=NULL,next_attempt_at=now()+interval '5 seconds',
+           attempts=GREATEST(attempts-1,0) WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
+          [paymentId, leaseToken],
+        );
+        return;
+      }
+      const needsReview = error instanceof PanCafeCreditReviewError;
       const delay = Math.min(300000, 1000 * 2 ** Math.min(attempts - 1, 8));
       await this.db.query(
         `UPDATE transfer_jobs SET status=$3,lease_until=NULL,next_attempt_at=$4 WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
         [
           paymentId,
           leaseToken,
-          attempts >= 10 ? "reconciliation" : "retry",
+          needsReview || attempts >= 10 ? "reconciliation" : "retry",
           new Date(Date.now() + delay),
         ],
       );
       console.warn(
         JSON.stringify({
-          event: "payment.transfer_retry",
+          event: needsReview ? "payment.transfer_ui_review" : "payment.transfer_retry",
           paymentId,
           attempts,
         }),
@@ -339,16 +356,43 @@ export class PersistentPaymentService {
     });
     return this.draining;
   }
-  startWorker() {
+  async reconcileOdeal(lookup: OdealPaymentProvider["findCapturedPayment"]): Promise<void> {
+    if (!this.posDevice) return;
+    if (this.reconciling) return this.reconciling;
+    this.reconciling = (async () => {
+      const { rows: [order] } = await this.db.query<PaymentRow>(
+        `SELECT id,amount,created_at FROM payment_orders
+          WHERE payment_provider='odeal' AND transfer_target=$1 AND pos_device_code=$2
+          AND status='pending' AND checkout_started AND pos_cancelled_at IS NULL
+          AND created_at<=now()-interval '45 seconds'`,
+        [this.target, this.posDevice],
+      );
+      if (!order) return;
+      const paid = await lookup(order.id, order.amount, order.created_at);
+      if (paid) await this.accept(paid, true);
+    })().finally(() => { this.reconciling = undefined; });
+    return this.reconciling;
+  }
+  startWorker(lookup?: OdealPaymentProvider["findCapturedPayment"]) {
     this.timer = setInterval(() => {
       void this.drain().catch(() =>
         console.error(JSON.stringify({ event: "transfer.worker_unavailable" })),
       );
     }, 2000);
     this.timer.unref();
+    if (lookup) {
+      const check = () => void this.reconcileOdeal(lookup).catch(error =>
+        console.warn(JSON.stringify({ event: "odeal.report_reconciliation_failed", reason: error instanceof Error ? error.name : "unknown" })),
+      );
+      this.reportTimer = setInterval(check, 30_000);
+      this.reportTimer.unref();
+      check();
+    }
   }
   async stopWorker() {
     if (this.timer) clearInterval(this.timer);
+    if (this.reportTimer) clearInterval(this.reportTimer);
+    if (this.reconciling) await this.reconciling.catch(() => {});
     if (this.draining) await this.draining;
   }
 }

@@ -1,6 +1,18 @@
 import type { Member, Wallet, Transaction, TransactionPage, Promotion } from "@stech/contracts";
 import type { CafeSessionHistoryPage } from "@stech/contracts";
 
+export class ActiveCafeSessionError extends Error {
+  constructor() {
+    super("PanCafe üye oturumu açık. Ödeme kaydedildi ve bakiye aktarımı bekliyor.");
+  }
+}
+
+export class PanCafeCreditReviewError extends Error {
+  constructor() {
+    super("PanCafe bakiye ekranı doğrulanamadı. Ödenen işlem inceleme bekliyor.");
+  }
+}
+
 /** The cafe remains authoritative. A retry MUST reuse operationId. */
 export interface CafeSystemAdapter {
   getProfile?(userId: string): Promise<import('@stech/contracts').MemberProfile>;

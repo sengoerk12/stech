@@ -420,7 +420,15 @@ try {
         Write-Host ('PanCafe koprusu: ' + $(if ($connection.connected) { 'bagli' } else { 'kapali' }))
         Write-Host ('Backend: ' + $(if ($api) { 'acik' } else { 'kapali' }))
         if ($api.walletSync) { Write-Host ('Wallet MySQL: ' + $api.walletSync) }
-        Write-Host ('Kiosk: ' + $(if (Get-Process kiosk -ErrorAction SilentlyContinue) { 'acik' } else { 'kapali' }))
+        Write-Host ('Yerel kiosk: ' + $(if (Get-Process kiosk -ErrorAction SilentlyContinue) { 'acik' } else { 'kapali' }))
+        if (!$api) { Write-Host 'B kiosku: backend kapali, durum alinamadi.' }
+        elseif ($api.kioskLastSeenAt) {
+            $lastSeen = [DateTimeOffset]$api.kioskLastSeenAt
+            $connected = ([DateTimeOffset]::Now - $lastSeen).TotalSeconds -le 90
+            $state = if ($connected) { 'bagli' } else { 'baglanti sinyali alinamiyor' }
+            Write-Host ('B kiosku: {0} (son baglanti {1})' -f $state, $lastSeen.ToLocalTime().ToString('dd.MM.yyyy HH:mm:ss'))
+        }
+        else { Write-Host 'B kiosku: henuz baglanti sinyali alinmadi.' }
         Write-Host ('Odeal tuneli: ' + $(if ((Get-Health 'http://127.0.0.1:4040/api/tunnels').tunnels) { 'acik' } else { 'kapali' }))
         Write-Host "Yonetim paneli: $adminUrl"
         if ($interactive) { [void](Read-Host 'Kapatmak icin Enter') }

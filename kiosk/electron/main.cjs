@@ -32,7 +32,8 @@ async function boot() {
   if (config.mode === 'connected' && !/^[0-9a-f]{128}$/.test(config.adminPinHash || '')) throw new Error('Admin PIN required');
   const demo = new DemoStore(path.join(app.getPath('userData'), 'demo-wallets.json'));
   if (config.mode === 'demo') await demo.initialize();
-  kiosk = new KioskSession({ demo, gateway: config.mode === 'connected' ? new ApiGateway(config) : null,
+  const gateway = config.mode === 'connected' ? new ApiGateway(config) : null;
+  kiosk = new KioskSession({ demo, gateway,
     mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)),
     onLock: () => {
       if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
@@ -98,5 +99,11 @@ async function boot() {
   await window.loadFile(uiFile);
   if (portraitPreview) window.webContents.setZoomFactor(previewScale);
   window.show();
+  if (gateway && new URL(config.apiBaseUrl).protocol === 'https:') {
+    const reportPresence = () => void gateway.heartbeat().catch(() => {});
+    const presenceTimer = setInterval(reportPresence, 30000).unref();
+    window.once('closed', () => clearInterval(presenceTimer));
+    reportPresence();
+  }
 }
 app.on('window-all-closed', () => app.quit());

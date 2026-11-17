@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import type { Member, RegistrationInput, Wallet, TransactionPage, CafeSessionHistoryPage } from "@stech/contracts";
 import type { Database } from "../database/database";
-import type { CafeSystemAdapter } from "./adapter";
+import { ActiveCafeSessionError, PanCafeCreditReviewError, type CafeSystemAdapter } from "./adapter";
 import { panCafeMoney, type PanCafeRow } from "./pancafe-reader";
 import { mapPanCafeHistory, panCafeTimestamp } from "./pancafe-history";
 
@@ -43,7 +43,7 @@ export class PanCafeBridgeClient {
           "Content-Type": "application/json",
         },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(path === '/sessions/start' ? 105000 : 10000),
+        signal: AbortSignal.timeout(path === "/sessions/start" ? 105_000 : path === "/credit" ? 25_000 : 10_000),
       });
     } catch {
       throw new ServiceUnavailableException(
@@ -282,14 +282,15 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
           terminalId: Number(terminalId), memberId: Number(member.ID), username: member.USERNAME, operationId,
         });
     const result = rows?.[0];
-    if (!result || !['started', 'pending', 'failed', 'busy', 'occupied', 'unsupported', 'member', 'active', 'ambiguous', 'conflict', 'review', 'not_started'].includes(result.RESULT_CODE ?? ''))
-      throw new ServiceUnavailableException('PanCafe oturum sonucu doğrulanamadı. Aynı işlemi tekrar kontrol et.');
+    if (!result || !['started', 'waking', 'pending', 'failed', 'busy', 'occupied', 'unsupported', 'member', 'active', 'ambiguous', 'conflict', 'review', 'not_started'].includes(result.RESULT_CODE ?? ''))
+      throw new ServiceUnavailableException('PanCafe bağlantısı bekleniyor.');
     if (result.RESULT_CODE === 'started') {
       await this.db.query(`INSERT INTO audit_logs(id,event,resource_id,metadata) VALUES($1,'kiosk.session.started',$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
         [operationId, userId, JSON.stringify({ installationId: this.config.installationId, terminalId, memberId: member.ID })]);
     }
     return { status: result.RESULT_CODE, terminalId, operationId,
-      message: result.RESULT_CODE === 'started' ? 'PanCafe’de üye oturumun başladı.' : result.MESSAGE || 'Şube yetkilisinden yardım iste.' };
+      message: result.RESULT_CODE === 'started' ? 'PanCafe’de üye oturumun başladı.' :
+        result.RESULT_CODE === 'pending' ? result.MESSAGE : result.MESSAGE || 'Şube yetkilisinden yardım iste.' };
   }
   private wallet(row: PanCafeRow): Wallet {
     return {
@@ -373,6 +374,8 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
     const rows = await this.client.request("/credit", {
       memberId: Number(member.ID), username: member.USERNAME, amount, bonus, operationId,
     });
+    if (rows?.[0]?.RESULT_CODE === "active") throw new ActiveCafeSessionError();
+    if (rows?.[0]?.RESULT_CODE === "credit_ui_review") throw new PanCafeCreditReviewError();
     if (!rows || rows[0].RESULT_CODE !== "ok")
       throw new ServiceUnavailableException("PanCafe bakiye aktarımı doğrulanamadı.");
     return { balance: panCafeMoney(rows[0].BALANCE_TL), currency: "TRY", updatedAt: new Date().toISOString() };

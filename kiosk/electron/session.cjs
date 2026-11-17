@@ -122,7 +122,14 @@ class KioskSession {
       session.unresolvedStart = { terminalId: payload.terminalId, operationId: payload.operationId };
       try {
         result = await this.gateway[action](session.token, session.unresolvedStart);
-        if (result.status !== 'pending') delete session.unresolvedStart;
+        if (!['pending', 'waking'].includes(result.status)) delete session.unresolvedStart;
+      } catch (error) {
+        if (error.status === undefined || [429, 502, 503, 504].includes(error.status))
+          result = { status: 'pending' };
+        else {
+          delete session.unresolvedStart;
+          throw error;
+        }
       } finally {
         session.startInFlight = false;
         if (this.session === session) this.markActivity(session, Date.now());

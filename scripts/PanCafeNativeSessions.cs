@@ -7,14 +7,21 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 // Starts member sessions through the operator's PanCafe UI, not by
 // editing TERMINALS. Input is sent as window messages first (no pointer or focus change). Only the verified Turkish v3.3.2 layout is supported.
-public static class PanCafeNativeSessions {
+public static partial class PanCafeNativeSessions {
+    const string WakingMessage = "Bilgisayarınız açılıyor. PanCafe bağlantısı bekleniyor…";
+    const string PendingMessage = "PanCafe’de oturumunuz başlatılıyor…";
+    static readonly TimeSpan UnattendedWait = TimeSpan.FromMinutes(10);
+    static readonly HashSet<Guid> Running = new HashSet<Guid>();
+
     public sealed class Receipt {
         public string OperationId, Username, TerminalName, BeforeDate, BeforeTime, CreatedAtUtc;
-        public int MemberId, TerminalId, LogLength;
+        public string LastPollUtc, LastWakeUtc, TerminalMac;
+        public int MemberId, TerminalId;
         public string InputMode;
         public string Status = "pending", Message = "";
     }
@@ -26,89 +33,136 @@ public static class PanCafeNativeSessions {
             !Regex.IsMatch(username ?? "", @"\A[a-zA-Z0-9_.]{1,32}\z"))
             throw new ArgumentException("Invalid session request");
 
+        var result = Advance(database, client, folder, terminalId, memberId, username, operation, false);
+        if (IsWaiting(result)) {
+            bool schedule;
+            lock (Running) schedule = Running.Add(operation);
+            if (schedule) {
+                // The bridge owns an accepted start even if the kiosk sends no further requests.
+                Task.Run(() => Continue(database, client, folder, terminalId, memberId, username, operation));
+            }
+        }
+        return result;
+    }
+
+    static bool IsWaiting(List<Dictionary<string,string>> result) {
+        string status = result[0]["RESULT_CODE"];
+        return status == "waking" || status == "pending";
+    }
+
+    static async Task Continue(string database, string client, string folder, int terminalId,
+        int memberId, string username, Guid operation) {
+        var elapsed = Stopwatch.StartNew();
+        try {
+            while (true) {
+                await Task.Delay(3000).ConfigureAwait(false);
+                try {
+                    if (!IsWaiting(Advance(database, client, folder, terminalId, memberId, username, operation, true))) return;
+                } catch (Exception error) {
+                    Trace.TraceWarning("PanCafe session {0} retry failed: {1}", operation, error.GetType().Name);
+                }
+                if (elapsed.Elapsed >= UnattendedWait) return;
+            }
+        } finally {
+            lock (Running) Running.Remove(operation);
+        }
+    }
+
+    static List<Dictionary<string,string>> Advance(string database, string client, string folder,
+        int terminalId, int memberId, string username, Guid operation, bool background) {
         using (var mutex = new Mutex(false, "Local\\STech-PanCafe-NativeSessions")) {
             bool acquired;
             try { acquired = mutex.WaitOne(0); }
             catch (AbandonedMutexException) { acquired = true; }
-            if (!acquired) return Result("busy", "Başka bir bilgisayar açma işlemi sürüyor.");
+            if (!acquired) return Result("pending", "");
             try {
                 string directory = Path.Combine(folder, "session-operations");
                 Directory.CreateDirectory(directory);
                 string path = Path.Combine(directory, operation.ToString() + ".json");
                 var serializer = new JavaScriptSerializer();
-                Receipt receipt;
+                Receipt receipt = null;
                 if (File.Exists(path)) {
                     receipt = serializer.Deserialize<Receipt>(File.ReadAllText(path));
                     if (receipt.MemberId != memberId || receipt.TerminalId != terminalId || receipt.Username != username)
                         return Result("conflict", "İşlem bilgileri değişmiş. Yeni bir işlem başlat.");
-                    if (receipt.Status == "pending" && Confirmed(database, client, receipt, null)) {
-                        receipt.Status = "started";
+                    if (receipt.Status != "waking") return Observe(database, client, path, receipt);
+                    if (OlderThan(receipt.LastPollUtc, UnattendedWait))
+                        return Finish(path, receipt, "failed", "Bilgisayar açılış isteği sona erdi. Yeniden deneyebilirsin.");
+                    if (!background) {
+                        receipt.LastPollUtc = DateTime.UtcNow.ToString("o");
                         Save(path, receipt);
+                        return Result("waking", WakingMessage);
                     }
-                    return Result(receipt.Status, receipt.Message);
                 }
-                foreach (string priorPath in Directory.GetFiles(directory,"*.json")) {
-                    var prior=serializer.Deserialize<Receipt>(File.ReadAllText(priorPath));
-                    if(prior.Status=="pending" && (prior.MemberId==memberId || prior.TerminalId==terminalId))
-                        return Result("review","Önceki oturum açma işlemi sonuçlanmadı. Şube yetkilisinden kontrol etmesini iste.");
+                if (receipt == null) {
+                    foreach (string priorPath in Directory.EnumerateFiles(directory, "*.json")) {
+                        var prior = serializer.Deserialize<Receipt>(File.ReadAllText(priorPath));
+                        if (prior.MemberId != memberId && prior.TerminalId != terminalId) continue;
+                        if (prior.Status == "waking" && OlderThan(prior.LastPollUtc, TimeSpan.FromSeconds(30))) {
+                            Guid priorOperation;
+                            bool tracked;
+                            lock (Running) tracked = Guid.TryParse(prior.OperationId, out priorOperation) && Running.Contains(priorOperation);
+                            if (!tracked) Finish(priorPath, prior, "failed", "Açılış isteği artık takip edilmiyor.");
+                        }
+                        if (prior.Status == "pending") Observe(database, client, priorPath, prior);
+                        if (prior.Status == "pending" || prior.Status == "waking")
+                            return Result("busy", "Bu üye veya bilgisayar için bir oturum işlemi sürüyor.");
+                    }
                 }
 
                 var terminal = Terminal(database, client, terminalId);
                 if (terminal["TERMINALTYPE"] != "0" || (terminal["ISVIRTUAL"] != "1" && terminal["ISVIRTUAL"] != "0"))
-                    return Result("unsupported", "Bu terminalde kiosktan üye oturumu açılamıyor.");
+                    return Finish(path, receipt, "unsupported", "Bu terminalde kiosktan üye oturumu açılamıyor.");
                 if (terminal["ISVIRTUAL"] == "0" && terminal["NOMEMBERLOGIN"] != "0")
-                    return Result("unsupported", "Bu bilgisayarda üye oturumu kapalı.");
+                    return Finish(path, receipt, "unsupported", "Bu bilgisayarda üye oturumu kapalı.");
                 bool needsWake = !IsOnline(database, terminal);
-                if (terminal["TERMINALSTATUS"] != "1" && (!needsWake || terminal["TERMINALSTATUS"] != "0"))
-                    return Result("occupied", "Bu bilgisayar artık boş değil. Başka bir bilgisayar seç.");
+                if (receipt != null && (terminal["NAME"] != receipt.TerminalName ||
+                    terminal["MAC"] != receipt.TerminalMac || terminal["ISVIRTUAL"] != "0"))
+                    return Finish(path, receipt, "failed", "Bilgisayarın PanCafe ayarları değişti.");
+                if (terminal["TERMINALSTATUS"] != "1" &&
+                    (!(needsWake || receipt != null) || terminal["TERMINALSTATUS"] != "0"))
+                    return Finish(path, receipt, "occupied", "Bu bilgisayar artık boş değil. Başka bir bilgisayar seç.");
                 var members = PanCafeReadOnly.Query(database, client,
                     "SELECT ID FROM MEMBERS WHERE ID=" + memberId + " AND USERNAME='" + username + "' AND ACCSTATUS=1 AND BAKIYE>0");
-                if (members.Count != 1) return Result("member", "Üyeliğini ve bakiyeni kontrol et.");
+                if (members.Count != 1) return Finish(path, receipt, "member", "Üyeliğini ve bakiyeni kontrol et.");
                 var active = PanCafeReadOnly.Query(database, client,
                     "SELECT FIRST 1 ID FROM TERMINALS WHERE MEMBERID=" + memberId + " AND TERMINALSTATUS=5");
-                if (active.Count > 0) return Result("active", "Zaten açık bir üye oturumun var.");
+                if (active.Count > 0) return Finish(path, receipt, "active", "Zaten açık bir üye oturumun var.");
                 // PanCafe's search locates a username. Reject ambiguous partial
                 // matches before opening its picker, including inactive accounts.
                 var matches = PanCafeReadOnly.Query(database, client,
                     "SELECT COUNT(*) AS N FROM MEMBERS WHERE POSITION('" + username.ToLowerInvariant() + "' IN LOWER(USERNAME))>0");
                 if (matches[0]["N"] != "1")
-                    return Result("ambiguous", "Bu kullanıcı adı için kasadan oturum açılması gerekiyor.");
+                    return Finish(path, receipt, "ambiguous", "Bu kullanıcı adı için kasadan oturum açılması gerekiyor.");
 
-                if (needsWake) {
-                    if (!PanCafeConnectedTerminals.Wake(terminal["MAC"]))
-                        return Result("failed", "Bilgisayara açılma isteği gönderilemedi. Başka bir bilgisayar seç veya kasaya başvur.");
-                    var wakeTimer = Stopwatch.StartNew();
-                    while (!IsOnline(database, terminal) && wakeTimer.Elapsed < TimeSpan.FromSeconds(60))
-                        Thread.Sleep(1000);
-                    if (!IsOnline(database, terminal))
-                        return Result("failed", "Bilgisayar 60 saniye içinde PanCafe’ye bağlanmadı. Başka bir bilgisayar seç veya kasaya başvur.");
-                    var ready = Terminal(database, client, terminalId);
-                    if (!CanSubmit(ready, terminal) || !MemberCanStart(database, client, memberId, username))
-                        return Result("failed", "Bilgisayar veya üyelik artık oturum açmaya uygun değil.");
-                    terminal = ready;
+                if (needsWake || (receipt != null && terminal["TERMINALSTATUS"] == "0")) {
+                    if (receipt == null) {
+                        if (PanCafeConnectedTerminals.WakePacket(terminal["MAC"]) == null)
+                            return Result("failed", "Bilgisayarın açılma ayarı eksik.");
+                        receipt = new Receipt { OperationId = operation.ToString(), MemberId = memberId,
+                            TerminalId = terminalId, Username = username, TerminalName = terminal["NAME"],
+                            TerminalMac = terminal["MAC"], Status = "waking", LastPollUtc = DateTime.UtcNow.ToString("o") };
+                    }
+                    if (needsWake && OlderThan(receipt.LastWakeUtc, TimeSpan.FromSeconds(20))) {
+                        PanCafeConnectedTerminals.Wake(terminal["MAC"]);
+                        receipt.LastWakeUtc = DateTime.UtcNow.ToString("o");
+                    }
+                    Save(path, receipt);
+                    return Result("waking", WakingMessage);
                 }
 
                 NativeUi prepared;
-                string beforeLog;
                 try {
                     prepared=new NativeUi(database);
                     prepared.CheckIdle();
-                    beforeLog=prepared.ReadLog();
+                    prepared.OpenTerminalScreen(terminal["NAME"]);
                 } catch(Exception error) {
                     File.WriteAllText(Path.Combine(folder,"session-readiness-error.json"),serializer.Serialize(new {
                         operationId=operation.ToString(),stage="before-submit",message=error.Message,at=DateTime.UtcNow.ToString("o") }));
                     string message=error is InvalidOperationException ? error.Message : "PanCafe yönetim ekranına ulaşılamadı. Yönetim ekranını kontrol et.";
-                    receipt=new Receipt { OperationId=operation.ToString(),MemberId=memberId,TerminalId=terminalId,Username=username,Status="failed",Message=message };
-                    Save(path,receipt);
-                    return Result("failed",message);
+                    return receipt == null ? Result("failed", message) : Result("waking", WakingMessage);
                 }
                 using (var ui = prepared) {
-                    receipt = new Receipt { OperationId = operation.ToString(), MemberId = memberId,
-                        TerminalId = terminalId, Username = username, TerminalName = terminal["NAME"],
-                        BeforeDate = terminal["STARTDATE"], BeforeTime = terminal["STARTTIME"], LogLength = beforeLog.Length,
-                        CreatedAtUtc=DateTime.UtcNow.ToString("o") };
-                    Save(path, receipt);
-                    bool submitted = false;
                     try {
                         bool physical = terminal["ISVIRTUAL"] == "0";
                         try { ui.Prepare(terminal["NAME"], username, physical); }
@@ -124,28 +178,29 @@ public static class PanCafeNativeSessions {
                         }
                         // The terminal may have become busy while the picker was opening.
                         var current = Terminal(database, client, terminalId);
-                        if (!CanSubmit(current, terminal) || !IsOnline(database, current))
-                            throw new InvalidOperationException("Bu bilgisayar artık boş değil.");
-                        submitted = true;
+                        bool online = IsOnline(database, current);
+                        if (receipt != null && (!online || current["TERMINALSTATUS"] == "0"))
+                            return Result("waking", WakingMessage);
+                        if (!CanSubmit(current, terminal) || !online)
+                            return Finish(path, receipt, "occupied", "Bu bilgisayar artık boş değil.");
+                        if (!MemberCanStart(database, client, memberId, username))
+                            return Finish(path, receipt, "member", "Üyeliğini, bakiyeni ve açık oturumlarını kontrol et.");
+                        receipt = new Receipt { OperationId = operation.ToString(), MemberId = memberId,
+                            TerminalId = terminalId, Username = username, TerminalName = current["NAME"],
+                            BeforeDate = current["STARTDATE"], BeforeTime = current["STARTTIME"],
+                            CreatedAtUtc = DateTime.UtcNow.ToString("o") };
+                        // Persist before accepting the picker. A lost response must never re-submit it.
+                        Save(path, receipt);
                         ui.Accept(username);
                         receipt.InputMode = ui.Background ? "background" : "foreground";
-                        for (int attempt = 0; attempt < 24; attempt++) {
-                            string log = ui.ReadLog();
-                            if (log.StartsWith(beforeLog, StringComparison.Ordinal) &&
-                                Confirmed(database, client, receipt, log.Substring(beforeLog.Length))) {
-                                receipt.Status = "started";
-                                Save(path, receipt);
-                                return Result("started", "PanCafe'de üye oturumun başladı.");
-                            }
-                            Thread.Sleep(250);
-                        }
-                        receipt.Message = "İşlem sonucu henüz doğrulanamadı. Tekrar oturum açmadan şube yetkilisine başvur.";
+                        return Observe(database, client, path, receipt);
                     } catch (Exception error) {
-                        receipt.Status = submitted ? "pending" : "failed";
-                        receipt.Message = error is InvalidOperationException ? error.Message : "PanCafe arayüzüne ulaşılamadı.";
+                        if (receipt != null && receipt.Status == "pending")
+                            return Result("pending", PendingMessage);
+                        if (receipt != null) return Result("waking", WakingMessage);
+                        return Finish(path, receipt, "failed", error is InvalidOperationException ?
+                            error.Message : "PanCafe arayüzüne ulaşılamadı.");
                     } finally { ui.CancelPicker(); }
-                    Save(path, receipt);
-                    return Result(receipt.Status, receipt.Message);
                 }
             } finally { mutex.ReleaseMutex(); }
         }
@@ -166,20 +221,20 @@ public static class PanCafeNativeSessions {
                 var receipt=new JavaScriptSerializer().Deserialize<Receipt>(File.ReadAllText(path));
                 if(receipt.TerminalId!=terminalId||receipt.MemberId!=memberId||receipt.Username!=username)
                     return Result("conflict","İşlem bilgileri bu hesapla eşleşmiyor.");
-                if(receipt.Status=="pending") {
-                    try {if(Confirmed(database,client,receipt,null)){receipt.Status="started";Save(path,receipt);}}
-                    catch { return Result("pending","Sonuç henüz doğrulanamadı. Şube yetkilisinden kontrol etmesini iste."); }
-                }
-                return Result(receipt.Status,receipt.Message);
+                return Observe(database, client, path, receipt);
             } finally {mutex.ReleaseMutex();}
         }
     }
 
     static Dictionary<string,string> Terminal(string db, string client, int id) {
+        var terminal = FindTerminal(db, client, id);
+        if (terminal == null) throw new InvalidOperationException("Bilgisayar bulunamadı.");
+        return terminal;
+    }
+    static Dictionary<string,string> FindTerminal(string db, string client, int id) {
         var rows = PanCafeReadOnly.Query(db, client,
             "SELECT ID,NAME,TERMINALTYPE,ISVIRTUAL,TERMINALSTATUS,NOMEMBERLOGIN,MAC,MEMBERID,CAST(STARTDATE AS VARCHAR(30)) AS STARTDATE,CAST(STARTTIME AS VARCHAR(30)) AS STARTTIME FROM TERMINALS WHERE ID=" + id);
-        if (rows.Count != 1) throw new InvalidOperationException("Bilgisayar bulunamadı.");
-        return rows[0];
+        return rows.Count == 1 ? rows[0] : null;
     }
     static bool IsOnline(string database, Dictionary<string,string> terminal) {
         return terminal["ISVIRTUAL"] == "1" || PanCafeConnectedTerminals.Read(database).Contains(terminal["NAME"]);
@@ -195,25 +250,42 @@ public static class PanCafeNativeSessions {
             "' AND ACCSTATUS=1 AND BAKIYE>0 AND NOT EXISTS(SELECT 1 FROM TERMINALS WHERE MEMBERID=" +
             memberId + " AND TERMINALSTATUS=5)").Count == 1;
     }
-    static bool Confirmed(string db, string client, Receipt receipt, string newLog) {
-        var terminal = Terminal(db, client, receipt.TerminalId);
-        if (terminal["TERMINALTYPE"] != "0" || terminal["NAME"] != receipt.TerminalName ||
-            terminal["TERMINALSTATUS"] != "5" ||
-            terminal["MEMBERID"] != receipt.MemberId.ToString(CultureInfo.InvariantCulture) ||
-            (terminal["STARTDATE"] == receipt.BeforeDate && terminal["STARTTIME"] == receipt.BeforeTime)) return false;
-        if (newLog == null) {
-            DateTime created;
-            // A later cashier action must not be mistaken for this request.
-            if(!DateTime.TryParse(receipt.CreatedAtUtc,CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out created) ||
-               DateTime.UtcNow-created.ToUniversalTime()>TimeSpan.FromMinutes(1)) return false;
-            using (var ui = new NativeUi(db)) {
-                var log = ui.ReadLog();
-                if (log.Length < receipt.LogLength) return false;
-                newLog = log.Substring(receipt.LogLength);
-            }
+    static bool OlderThan(string value, TimeSpan age) {
+        DateTime timestamp;
+        return !DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out timestamp)
+            || DateTime.UtcNow - timestamp.ToUniversalTime() >= age;
+    }
+    static List<Dictionary<string,string>> Observe(string db, string client, string path, Receipt receipt) {
+        if (receipt.Status == "waking")
+            return Result("waking", WakingMessage);
+        if (receipt.Status != "pending") return Result(receipt.Status, receipt.Message);
+
+        var terminal = FindTerminal(db, client, receipt.TerminalId);
+        if (terminal == null)
+            return Finish(path, receipt, "failed", "Bilgisayar bulunamadı.");
+        string status = terminal["TERMINALSTATUS"];
+        bool sameTerminal = terminal["TERMINALTYPE"] == "0" && terminal["NAME"] == receipt.TerminalName;
+        if (sameTerminal && status == "5" &&
+            terminal["MEMBERID"] == receipt.MemberId.ToString(CultureInfo.InvariantCulture) &&
+            (terminal["STARTDATE"] != receipt.BeforeDate || terminal["STARTTIME"] != receipt.BeforeTime))
+            return Finish(path, receipt, "started", "PanCafe’de üye oturumun başladı.");
+        if (!sameTerminal || (status == "5" &&
+            terminal["MEMBERID"] != receipt.MemberId.ToString(CultureInfo.InvariantCulture)))
+            return Finish(path, receipt, "occupied", "Bu bilgisayar artık oturum açmaya uygun değil.");
+
+        // Only retire a submitted request once PanCafe shows that the terminal is free.
+        // The boot wait is a separate state and has no time limit while it is polled.
+        if ((status == "0" || status == "1") && OlderThan(receipt.CreatedAtUtc, TimeSpan.FromMinutes(2)))
+            return Finish(path, receipt, "failed", "PanCafe oturumu başlamadı. Bilgisayarı yeniden seçebilirsin.");
+        return Result("pending", PendingMessage);
+    }
+    static List<Dictionary<string,string>> Finish(string path, Receipt receipt, string status, string message) {
+        if (receipt != null) {
+            receipt.Status = status;
+            receipt.Message = message;
+            Save(path, receipt);
         }
-        return newLog.IndexOf(receipt.TerminalName + ": Üye oturumu başlatıldı. (Üye:" + receipt.Username + ")",
-            StringComparison.OrdinalIgnoreCase) >= 0;
+        return Result(status, message);
     }
     static void Save(string path, Receipt receipt) {
         string temporary = path + ".tmp";
@@ -226,8 +298,9 @@ public static class PanCafeNativeSessions {
             { "RESULT_CODE", code }, { "MESSAGE", message ?? "" } } };
     }
 
-    sealed class NativeUi : IDisposable {
-        readonly IntPtr main, list, log;
+    sealed partial class NativeUi : IDisposable {
+        readonly IntPtr main;
+        IntPtr list;
         readonly uint processId;
         IntPtr picker;
         // Background mode drives PanCafe with window messages only: the mouse pointer, keyboard
@@ -247,23 +320,17 @@ public static class PanCafeNativeSessions {
             if (matches.Count != 1) throw new InvalidOperationException("PanCafe yönetim ekranını açıp tekrar dene.");
             main = matches[0];
             GetWindowThreadProcessId(main, out processId);
-            // The terminal list and log exist only on the "Genel" tab; other tabs (e.g. Üyeler) hide them.
-            try {
-                list = Child(main, "TspSkinListView", null);
-                log = Child(main, "TspSkinRichEdit", null);
-            } catch (InvalidOperationException) {
-                throw new InvalidOperationException("PanCafe yönetim ekranında Genel sekmesi açık olmalı. Genel sekmesine geçip tekrar dene.");
-            }
             bool supported = false;
             foreach (var h in Children(main)) if (Class(h) == "TspSkinStatusPanel" && Caption(h) == "v3.3.2") supported = true;
             if (!supported) throw new InvalidOperationException("Bu PanCafe sürümü için oturum açma bağlantısı doğrulanmamış.");
         }
         public void CheckIdle() {
-            if (GetLastActivePopup(main) != main || Windows("TspSkinPopupWindow", processId, true).Count > 0)
+            var members = MemberWindow();
+            if ((GetLastActivePopup(main) != main && members == IntPtr.Zero) ||
+                Windows("TspSkinPopupWindow", processId, true).Count > 0)
                 throw new InvalidOperationException("PanCafe'deki açık pencereyi veya menüyü kapatıp tekrar dene.");
-            if (!Background) Activate(main);
+            Activate(members == IntPtr.Zero ? main : members);
         }
-        public string ReadLog() { return Text(log); }
         public void Prepare(string terminal, string username, bool physical) {
             using (var items = new RemoteList(list, processId)) {
                 int selected = items.Find(terminal);
@@ -284,6 +351,9 @@ public static class PanCafeNativeSessions {
             int memberRow = physical ? submenuRect.Bottom * 3 / 5 : submenuRect.Bottom * 7 / 12;
             MenuClick(submenu, submenuRect.Right / 2, memberRow);
             picker = WaitWindow("TSrvMemberSearchDlgFrm", IntPtr.Zero);
+            PrepareMemberSearch(username);
+        }
+        void PrepareMemberSearch(string username) {
             bool usernameSearch = false;
             foreach (var h in Children(picker)) if (Class(h) == "TspSkinComboBox" && Caption(h) == "Kullanıcı Adı") usernameSearch = true;
             if (!usernameSearch) throw new InvalidOperationException("PanCafe arama kriterini Kullanıcı Adı olarak seç.");
@@ -363,6 +433,36 @@ public static class PanCafeNativeSessions {
         if(!GetGUIThreadInfo(thread,ref info)||info.Focus!=edit)
             throw new InvalidOperationException("PanCafe üye araması sırasında odak değişti. Tekrar dene.");
     }
+    static void FocusControl(IntPtr root, IntPtr control) {
+        if (!IsChild(root, control) || !IsWindowVisible(control) || !IsWindowEnabled(control))
+            throw new InvalidOperationException("PanCafe giriş alanı doğrulanamadı.");
+        Activate(root);
+        uint owner;
+        uint target = GetWindowThreadProcessId(control, out owner);
+        uint current = GetCurrentThreadId();
+        bool attached = target != current && AttachThreadInput(current, target, true);
+        try {
+            SetFocus(control);
+            CheckFocus(control);
+        } finally {
+            if (attached) AttachThreadInput(current, target, false);
+        }
+    }
+    static void TypeFocused(IntPtr root, IntPtr edit, string value) {
+        FocusControl(root, edit);
+        Key(17, false);
+        try { PressKey(65); } finally { Key(17, true); }
+        PressKey(8);
+        foreach (char character in value) {
+            CheckFocus(edit);
+            var down = new KeyboardInput { Type=1, Scan=character, Flags=4 };
+            var up = new KeyboardInput { Type=1, Scan=character, Flags=6 };
+            if (SendInput(2, new[]{down,up}, Marshal.SizeOf(typeof(KeyboardInput))) != 2)
+                throw new InvalidOperationException("PanCafe üye araması yapılamadı.");
+            Thread.Sleep(25);
+        }
+    }
+    static void PressKey(ushort key) { Key(key, false); Key(key, true); }
     static void Activate(IntPtr h) {
         if (GetForegroundWindow() == h) return;
         // The HTTP worker has no message loop. AttachThreadInput requires one.
@@ -374,8 +474,13 @@ public static class PanCafeNativeSessions {
         bool attached = foreground != 0 && foreground != current && AttachThreadInput(current, foreground, true);
         bool targetAttached=target!=0 && target!=current && target!=foreground && AttachThreadInput(current,target,true);
         try {
-            ShowWindow(h, 9);
-            if (!SetForegroundWindow(h)) throw new InvalidOperationException("PanCafe yönetim ekranını öne getirip tekrar dene.");
+            if (IsIconic(h)) ShowWindow(h, 9);
+            if (!SetForegroundWindow(h) && GetForegroundWindow() != h) {
+                BringWindowToTop(h);
+                SetActiveWindow(h);
+                if (!SetForegroundWindow(h) && GetForegroundWindow() != h)
+                    throw new InvalidOperationException("PanCafe yönetim ekranını öne getirip tekrar dene.");
+            }
         } finally {
             if(targetAttached)AttachThreadInput(current,target,false);
             if (attached) AttachThreadInput(current, foreground, false);
@@ -418,7 +523,7 @@ public static class PanCafeNativeSessions {
         var result = new List<IntPtr>();
         EnumWindows(delegate(IntPtr h, IntPtr data) {
             uint owner; GetWindowThreadProcessId(h, out owner);
-            if ((pid == 0 || owner == pid) && (!visible || IsWindowVisible(h)) && Class(h) == kind) result.Add(h);
+            if ((pid == 0 || owner == pid) && (!visible || IsWindowVisible(h)) && (kind == null || Class(h) == kind)) result.Add(h);
             return true;
         }, IntPtr.Zero);
         return result;
@@ -446,28 +551,93 @@ public static class PanCafeNativeSessions {
         void Write(byte[] value) { UIntPtr size; if (!WriteProcessMemory(process, memory, value, new UIntPtr((uint)value.Length), out size)) throw new InvalidOperationException("PanCafe liste kontrolüne ulaşılamadı."); }
         byte[] Read(int offset, int length) { var value = new byte[length]; UIntPtr size; if (!ReadProcessMemory(process, new IntPtr(memory.ToInt32() + offset), value, new UIntPtr((uint)length), out size)) throw new InvalidOperationException("PanCafe listesi okunamadı."); return value; }
         public int Find(string name) {
-            int count = (int)Message(list, 0x1004, 0, IntPtr.Zero), index = -1;
-            if (count < 0 || count > 5000) throw new InvalidOperationException("PanCafe terminal listesi geçersiz.");
-            for (int i = 0; i < count; i++) {
-                var value = new byte[1024];
-                Array.Copy(BitConverter.GetBytes(memory.ToInt32() + 64), 0, value, 20, 4);
-                Array.Copy(BitConverter.GetBytes(400), 0, value, 24, 4);
-                Write(value); Message(list, 0x1073, i, memory);
-                string actual = Encoding.Unicode.GetString(Read(64, 800)).Split('\0')[0];
-                if (actual != name) continue;
-                if (index >= 0) throw new InvalidOperationException("Birden fazla bilgisayar aynı adı kullanıyor.");
-                index = i;
-            }
+            int index = FindExact(name, 0);
             if (index < 0) throw new InvalidOperationException("Bilgisayar PanCafe ekranında bulunamadı.");
             return index;
         }
+        public int UsernameColumn() {
+            var header = new IntPtr(Message(list, 0x101F, 0, IntPtr.Zero));
+            if (header == IntPtr.Zero) return -1;
+            int count = (int)Message(header, 0x1200, 0, IntPtr.Zero);
+            if (count < 0 || count > 50) return -1;
+            for (int i = 0; i < count; i++) {
+                var value = new byte[1024];
+                Array.Copy(BitConverter.GetBytes(2), 0, value, 0, 4);
+                Array.Copy(BitConverter.GetBytes(memory.ToInt32() + 64), 0, value, 8, 4);
+                Array.Copy(BitConverter.GetBytes(400), 0, value, 16, 4);
+                Write(value);
+                if (Message(header, 0x120B, i, memory) == 0) continue;
+                string text = Encoding.Unicode.GetString(Read(64, 800)).Split('\0')[0].Trim().Trim('[', ']').Trim();
+                if (text == "Kullanıcı Adı" || text == "Kullanıcı adı" || text == "Üye Kullanıcı Adı") return i;
+            }
+            return -1;
+        }
+        public bool SelectNamedTab(Predicate<string> matches) {
+            int count = (int)Message(list, 0x1304, 0, IntPtr.Zero);
+            if (count < 1 || count > 40) return false;
+            for (int i = 0; i < count; i++) {
+                var value = new byte[1024];
+                Array.Copy(BitConverter.GetBytes(1), 0, value, 0, 4);
+                Array.Copy(BitConverter.GetBytes(memory.ToInt32() + 64), 0, value, 12, 4);
+                Array.Copy(BitConverter.GetBytes(400), 0, value, 16, 4);
+                Write(value);
+                if (Message(list, 0x133C, i, memory) == 0 ||
+                    !matches(Encoding.Unicode.GetString(Read(64, 800)).Split('\0')[0])) continue;
+                if (Message(list, 0x130A, i, memory) == 0) return false;
+                var bounds = Read(0, 16);
+                MenuClick(list,
+                    (BitConverter.ToInt32(bounds, 0) + BitConverter.ToInt32(bounds, 8)) / 2,
+                    (BitConverter.ToInt32(bounds, 4) + BitConverter.ToInt32(bounds, 12)) / 2);
+                return true;
+            }
+            return false;
+        }
+        public int FindExact(string name, int column) {
+            int count = (int)Message(list, 0x1004, 0, IntPtr.Zero), index = -1;
+            if (count < 0 || count > 50000) throw new InvalidOperationException("PanCafe liste boyutu geçersiz.");
+            if (column == 0 && name.Length < 400) {
+                var search = new byte[1024];
+                Array.Copy(BitConverter.GetBytes(2), 0, search, 0, 4);
+                Array.Copy(BitConverter.GetBytes(memory.ToInt32() + 64), 0, search, 4, 4);
+                var literal = Encoding.Unicode.GetBytes(name);
+                Array.Copy(literal, 0, search, 64, literal.Length);
+                Write(search);
+                int found = (int)Message(list, 0x1053, -1, memory);
+                if (found >= 0 && found < count && RowText(found, column) == name) {
+                    Write(search);
+                    int next = (int)Message(list, 0x1053, found, memory);
+                    if (next > found && next < count && RowText(next, column) == name)
+                        throw new InvalidOperationException("PanCafe listesinde birden fazla eşleşme bulundu.");
+                    return found;
+                }
+            }
+            for (int i = 0; i < count; i++) {
+                if (RowText(i, column) != name) continue;
+                if (index >= 0) throw new InvalidOperationException("PanCafe listesinde birden fazla eşleşme bulundu.");
+                index = i;
+            }
+            return index;
+        }
+        string RowText(int row, int column) {
+            var value = new byte[1024];
+            Array.Copy(BitConverter.GetBytes(column), 0, value, 8, 4);
+            Array.Copy(BitConverter.GetBytes(memory.ToInt32() + 64), 0, value, 20, 4);
+            Array.Copy(BitConverter.GetBytes(400), 0, value, 24, 4);
+            Write(value); Message(list, 0x1073, row, memory);
+            return Encoding.Unicode.GetString(Read(64, 800)).Split('\0')[0];
+        }
         public void Select(int index) {
+            ClearSelection();
             var value = new byte[64];
             Array.Copy(BitConverter.GetBytes(3), 0, value, 16, 4);
-            Write(value); Message(list, 0x102B, -1, memory);
             Array.Copy(BitConverter.GetBytes(3), 0, value, 12, 4);
             Write(value); Message(list, 0x102B, index, memory);
             Message(list, 0x1013, index, IntPtr.Zero); // LVM_ENSUREVISIBLE
+        }
+        public void ClearSelection() {
+            var value = new byte[64];
+            Array.Copy(BitConverter.GetBytes(3), 0, value, 16, 4);
+            Write(value); Message(list, 0x102B, -1, memory);
         }
         public Rect Bounds(int index) {
             Write(new byte[16]);
@@ -502,9 +672,13 @@ public static class PanCafeNativeSessions {
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr SetActiveWindow(IntPtr h);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern IntPtr GetLastActivePopup(IntPtr h);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int command);
+    [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint first, uint second, bool attach);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();

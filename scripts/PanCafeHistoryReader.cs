@@ -30,7 +30,7 @@ public static class PanCafeHistoryReader {
             "CAST(H.MIKTAR AS DECIMAL(18,2)) AS RAW_AMOUNT_TL,CAST(H.KALAN AS DECIMAL(18,2)) AS BALANCE_TL,"+
             "(SELECT FIRST 1 CAST(P.KALAN AS DECIMAL(18,2)) FROM MEMBERSHISTORY P WHERE P.MEMBERS_USERNAME=H.MEMBERS_USERNAME AND P.ID<H.ID ORDER BY P.ID DESC) AS PREVIOUS_BALANCE_TL,"+
             creditFields+" FROM MEMBERSHISTORY H JOIN MEMBERS M ON M.USERNAME=H.MEMBERS_USERNAME"+
-            (hasCredits?" LEFT JOIN STECH_MOBILE_CREDITS C ON C.USERNAME=H.MEMBERS_USERNAME AND C.MEMBERID=M.ID AND H.NOTE='S TECH test payment '||C.OPID":"")+
+            (hasCredits?" LEFT JOIN STECH_MOBILE_CREDITS C ON C.USERNAME=H.MEMBERS_USERNAME AND C.MEMBERID=M.ID AND (H.NOTE='S TECH test payment '||C.OPID OR H.NOTE CONTAINING ('STechPOS-'||REPLACE(C.OPID,'-','')))":"")+
             " WHERE M.ID="+memberId.ToString(CultureInfo.InvariantCulture)+" AND M.USERNAME='"+username+"' AND H.TARIH>=M.RECDATE"+
             (beforeId>0?" AND H.ID<"+beforeId.ToString(CultureInfo.InvariantCulture):"")+" ORDER BY H.ID DESC";
         return PanCafeReadOnly.Query(database,clientDirectory,sql);

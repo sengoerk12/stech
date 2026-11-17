@@ -78,6 +78,36 @@ export class OdealPaymentProvider implements PaymentProvider {
     return true;
   }
 
+  async findCapturedPayment(paymentId: string, amount: number, createdAt: Date): Promise<VerifiedPaymentEvent | null> {
+    const day = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Istanbul" });
+    const now = Date.now();
+    const dayMs = 86_400_000;
+    const query = new URLSearchParams({
+      beginDate: day.format(Math.max(new Date(createdAt).getTime(), now - 29 * dayMs)),
+      endDate: day.format(now + dayMs),
+      basketReferenceCode: paymentId,
+      externalDeviceKey: this.settings.deviceCode,
+    });
+    const response = await fetch(`${this.settings.baseUrl}/report/transactions?${query}`, {
+      headers: this.headers(), redirect: "error", signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error(`Ödeal transaction report HTTP ${response.status}`);
+    const rows: unknown = await response.json();
+    if (!Array.isArray(rows)) throw new Error("Invalid Ödeal transaction report");
+    const matches = rows.filter(row => row?.basketReferenceCode === paymentId &&
+      row?.externalDeviceKey === this.settings.deviceCode);
+    if (matches.length !== 1) return null;
+    const [record] = matches;
+    const amountText = String(record.amount);
+    if (record.currentStatus !== "PAID" || record.basketStatus !== "PAYMENT_COMPLETED" ||
+        !/^\d+(?:\.\d{1,2})?$/.test(amountText) || Math.round(Number(amountText) * 100) !== amount ||
+        typeof record.paymentId !== "string" || !record.paymentId.trim()) return null;
+    return {
+      paymentId, amount, currency: "TRY", status: "succeeded",
+      eventId: "report:" + digest(JSON.stringify([paymentId, record.paymentId])).toString("hex"),
+    };
+  }
+
   private async prepareCheckout(userId: string) {
     if (this.settings.basketType === "SIMPLE") {
       // Ödeal's documented retail customer profile keeps PanCafe identity data out of the receipt.

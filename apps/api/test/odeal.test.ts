@@ -2,6 +2,84 @@ import "reflect-metadata";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createApp } from "../src/app";
+import { openDatabase } from "../src/database/database";
+import { OdealPaymentProvider, odealSettings } from "../src/payments/odeal";
+import { PersistentPaymentService } from "../src/payments/persistent-service";
+import { ActiveCafeSessionError, PanCafeCreditReviewError, type CafeSystemAdapter } from "../src/cafe/adapter";
+
+test("Ödeal report recovers an unreported capture once and rejects mismatched rows", async (t) => {
+  const settings = odealSettings({
+    ODEAL_POS_ENV: "stage", ODEAL_MERCHANT_KEY: "test-merchant", ODEAL_SECRET_KEY: "test-secret",
+    ODEAL_REQUEST_KEY: "test-key-".repeat(5), ODEAL_DEVICE_CODE: "KIOSK1",
+    ODEAL_CITY: "İstanbul", ODEAL_TOWN: "Kadıköy", ODEAL_BASKET_TYPE: "SIMPLE",
+    ODEAL_VAT_RATE: "20", ODEAL_WEBHOOK_BASE_URL: "https://example.test/hooks",
+  })!;
+  const provider = new OdealPaymentProvider(settings, async () => ({ name: "Test Member" }));
+  const db = await openDatabase();
+  t.after(() => db.close());
+  let balance = 0, credits = 0, activeSession = true;
+  let uiReview = false, uiAttempts = 0;
+  const cafe = {
+    async addBalance(_user: string, amount: number, bonus: number) {
+      if (activeSession) throw new ActiveCafeSessionError();
+      uiAttempts++;
+      if (uiReview) throw new PanCafeCreditReviewError();
+      credits++;
+      balance += amount + bonus;
+      return { balance };
+    },
+  } as unknown as CafeSystemAdapter;
+  const service = new PersistentPaymentService(db, cafe, provider, "pancafe", undefined, settings.deviceCode);
+  const id = "00000000-0000-4000-8000-000000000001";
+  await db.query("INSERT INTO app_users (id,cafe_member_id) VALUES ('member','1')");
+  await db.query(`INSERT INTO payment_orders
+    (id,user_id,idempotency_key,amount,bonus,status,transfer_target,payment_provider,pos_device_code,checkout_started,created_at)
+    VALUES($1,'member','order-1',20000,1000,'pending','pancafe','odeal','KIOSK1',true,now()-interval '2 minutes')`, [id]);
+  let reportedAmount = "199.00";
+  t.mock.method(globalThis, "fetch", async (input: string) => {
+    const url = new URL(input);
+    assert.equal(url.pathname, "/integration/api/v1/report/transactions");
+    assert.equal(url.searchParams.get("basketReferenceCode"), id);
+    assert.equal(url.searchParams.get("externalDeviceKey"), settings.deviceCode);
+    return Response.json([{ basketReferenceCode: id, externalDeviceKey: settings.deviceCode,
+      paymentId: "provider-1", currentStatus: "PAID", basketStatus: "PAYMENT_COMPLETED", amount: reportedAmount }]);
+  });
+  const reconcile = () => service.reconcileOdeal(provider.findCapturedPayment.bind(provider));
+  await reconcile();
+  assert.equal((await service.get("member", id)).status, "pending");
+  assert.equal(credits, 0);
+  reportedAmount = "200.00";
+  await Promise.all([reconcile(), reconcile()]);
+  await service.drain();
+  assert.equal((await service.get("member", id)).status, "transferring");
+  assert.equal(credits, 0);
+  const job = (await db.query("SELECT status,attempts FROM transfer_jobs WHERE payment_id=$1", [id])).rows[0];
+  assert.deepEqual(job, { status: "retry", attempts: 0 });
+  await db.query(`INSERT INTO payment_orders
+    (id,user_id,idempotency_key,amount,bonus,status,transfer_target,payment_provider,pos_device_code)
+    VALUES(gen_random_uuid(),'member','order-2',100,0,'pending','pancafe','odeal','KIOSK1')`);
+  activeSession = false;
+  uiReview = true;
+  await db.query("UPDATE transfer_jobs SET next_attempt_at=now() WHERE payment_id=$1", [id]);
+  await service.drain();
+  await service.drain();
+  assert.equal((await db.query("SELECT status FROM transfer_jobs WHERE payment_id=$1", [id])).rows[0].status, "reconciliation");
+  const review = await service.get("member", id);
+  assert.equal(review.status, "transferring");
+  assert.equal(review.transferNeedsReview, true);
+  assert.equal((await service.pending("member")).find(payment => payment.id === id)?.transferNeedsReview, true);
+  assert.equal(uiAttempts, 1);
+  assert.equal(credits, 0);
+  uiReview = false;
+  await db.query("UPDATE transfer_jobs SET status='retry',next_attempt_at=now() WHERE payment_id=$1", [id]);
+  await service.drain();
+  const completed = await service.get("member", id);
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.transferNeedsReview, undefined);
+  await service.accept({ paymentId: id, eventId: "provider-1", amount: 20000, currency: "TRY", status: "succeeded" });
+  assert.equal(balance, 21000);
+  assert.equal(credits, 1);
+});
 
 test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verified notification", async (t) => {
   const deviceKey = "test-kiosk-".repeat(5);
@@ -50,6 +128,11 @@ test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verifie
     const api = await app.getUrl() + "/api/v1";
     const post = (path: string, data: unknown, headers: Record<string, string> = {}) =>
       realFetch(api + path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(data) });
+    const readLastSeen = async () => (await (await realFetch(api + "/health")).json()).kioskLastSeenAt;
+    assert.equal((await post("/kiosk/heartbeat", {}, { "X-Kiosk-Key": "wrong" })).status, 401);
+    assert.equal(await readLastSeen(), undefined);
+    assert.equal((await post("/kiosk/heartbeat", {}, { "X-Kiosk-Key": deviceKey })).status, 201);
+    assert.ok(Date.now() - Date.parse(await readLastSeen()) < 2000);
     const registration = await post("/auth/register", {
       username: "odeal_test", name: "Deneme Üyesi", password: "test-password", phone: "5555555555",
     });
