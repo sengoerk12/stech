@@ -13,7 +13,7 @@ export function panCafeTimestamp(date: string, timeText: string) {
     throw new Error("Invalid PanCafe history date");
   return result.toISOString();
 }
-export function mapPanCafeHistory(row: PanCafeRow, username: string, installationId: string): Transaction[] {
+export function mapPanCafeHistory(row: PanCafeRow, username: string, installationId: string, includeCreditId = false): (Transaction & { creditId?: string })[] {
   if (row.USERNAME !== username || !/^[1-9]\d{0,9}$/.test(row.HISTORY_ID ?? ""))
     throw new Error("History identity mismatch");
   const amount = panCafeMoney(row.RAW_AMOUNT_TL);
@@ -23,16 +23,20 @@ export function mapPanCafeHistory(row: PanCafeRow, username: string, installatio
   const createdAt = panCafeTimestamp(row.OCCURRED_DATE ?? "", row.OCCURRED_TIME ?? "");
   const note = row.NOTE?.trim() ?? "";
   if (row.PAYMENT_ID) {
+    const nativeMarker = note.match(/STechPOS-([0-9a-f]{32})(?![0-9a-f])/i)?.[1];
+    const live = nativeMarker?.toLowerCase() === row.PAYMENT_ID.replaceAll("-", "").toLowerCase();
     if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(row.PAYMENT_ID) ||
-        note !== `S TECH test payment ${row.PAYMENT_ID}` ||
+        (!live && note !== `S TECH test payment ${row.PAYMENT_ID}`) ||
         !/^\d+$/.test(row.PAID_KURUS ?? "") || !/^\d+$/.test(row.BONUS_KURUS ?? ""))
       throw new Error("Invalid mobile credit receipt");
     const paid = Number(row.PAID_KURUS), bonus = Number(row.BONUS_KURUS);
     if (!Number.isSafeInteger(paid) || !Number.isSafeInteger(bonus) || paid <= 0 || bonus < 0 ||
-        paid + bonus !== amount || panCafeMoney(row.CREDIT_BALANCE_TL) !== balanceAfter)
+        (paid + bonus !== amount && !(live && paid === amount)) ||
+        panCafeMoney(row.CREDIT_BALANCE_TL) !== balanceAfter)
       throw new Error("Mobile receipt and native history disagree");
-    const topup: Transaction = { id: `${id}:topup`, kind: "topup", amount: paid,
-      title: "Mobil bakiye yükleme", createdAt, balanceAfter: balanceAfter - bonus };
+    const topup = { id: `${id}:topup`, kind: "topup" as const, amount: paid,
+      ...(includeCreditId ? { creditId: row.PAYMENT_ID } : {}),
+      title: live ? "S TECH bakiye yükleme" : "Mobil bakiye yükleme", createdAt, balanceAfter: balanceAfter - bonus };
     return bonus ? [{ ...topup, id: `${id}:bonus`, kind: "bonus", amount: bonus,
       title: "Yükleme bonusu", balanceAfter }, topup] : [topup];
   }

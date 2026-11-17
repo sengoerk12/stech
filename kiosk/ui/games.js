@@ -3,7 +3,10 @@
 window.kioskGames = (() => {
   const stakeKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'back'];
   const wheelSectors = [0, 2, 0, 1, 0, 3, 0, 2, 0, 1];
-  const balanceWheelSectors = [0, 5, 5, 10, 5, 0, 10, 5, 0, 25];
+  // The server returns a sector in prize order. This permutation changes only its visual position.
+  const balanceWheelPrizes = [0, 5, 5, 10, 5, 0, 10, 5, 0, 25];
+  const balanceWheelOrder = [1, 0, 2, 3, 4, 5, 6, 7, 8, 9];
+  const balanceWheelSectors = balanceWheelOrder.map(sector => balanceWheelPrizes[sector]);
   const wheelSectorAngle = 360 / wheelSectors.length;
   const scratchSymbols = ['◆', '●', '✦', '·'];
   const scratchDeck = [0, 0, 0, 1, 1, 1, 2, 2, 3];
@@ -101,9 +104,9 @@ window.kioskGames = (() => {
     session = undefined;
   }
 
-  function startSession(playGiftRound) {
+  function startSession(playGiftRound, designPreview = false) {
     endSession();
-    session = { coins: 100n, stakeInput: '', game: undefined, rounds: {}, timers: new Set() };
+    session = { designPreview, coins: 100n, stakeInput: '', game: undefined, rounds: {}, timers: new Set() };
     if (playGiftRound) {
       session.playGiftRound = playGiftRound;
       session.giftOperations = {};
@@ -193,9 +196,10 @@ window.kioskGames = (() => {
     try {
       const { sector, prize, testOnly } = await owner.playGiftRound(game, owner.giftOperations[game]);
       if (session !== owner) return;
-      if (!Number.isInteger(sector) || sector < 0 || sector >= wheelSectors.length) throw new Error('Çark sonucu alınamadı.');
+      const displaySector = balanceWheelOrder.indexOf(sector);
+      if (displaySector === -1) throw new Error('Çark sonucu alınamadı.');
       delete owner.giftOperations[game];
-      begin({ sector, prize, testOnly });
+      begin({ sector: displaySector, prize, testOnly });
     } catch (error) {
       if (session === owner) owner.giftError = error.message;
     } finally {
@@ -206,7 +210,7 @@ window.kioskGames = (() => {
   function begin(gift) {
     const { game, rounds } = session;
     const previous = rounds[game];
-    if (session.playGiftRound && !gift) return;
+    if (session.playGiftRound && session.game === 'wheel' && !gift) return;
     const stake = gift ? 1n : readStake();
     if (game !== 'wheel' || !stake || (previous && previous.phase !== 'settled')) return;
     const round = { game, stake, phase: 'playing', gift: Boolean(gift), prize: gift?.prize, testOnly: gift?.testOnly };
@@ -405,14 +409,22 @@ window.kioskGames = (() => {
     const playing = round?.phase === 'playing';
     if (game === 'wheel') {
       const balanceWheel = Boolean(session.playGiftRound);
-      const sectors = (balanceWheel ? balanceWheelSectors : wheelSectors).map((value, index) => {
+      const values = balanceWheel ? balanceWheelSectors : wheelSectors;
+      const tier = value => !value ? 'empty' : value === (balanceWheel ? 25 : 3) ? 'jackpot' : value === (balanceWheel ? 10 : 2) ? 'gold' : 'blue';
+      const stops = values.map((value, index) => {
+        const angle = index * wheelSectorAngle;
+        return `var(--wheel-separator) ${angle}deg ${angle + 0.35}deg, var(--wheel-${tier(value)}) ${angle + 0.35}deg ${angle + wheelSectorAngle}deg`;
+      }).join(', ');
+      const sectors = values.map((value, index) => {
         const landed = round?.phase === 'settled' && round.sector === index;
-        const label = balanceWheel ? (value ? `${value} TL` : 'Boş') : (value ? value + '×' : '·');
-        return `<span${landed ? ' class="is-landing"' : ''}><b>${label}</b></span>`;
+        const angle = (index + 0.5) * wheelSectorAngle;
+        const label = value ? `<strong>${value}</strong><small>${balanceWheel ? 'TL' : '×'}</small>` : '<small>Boş</small>';
+        return `<span class="wheel-sector wheel-sector-${tier(value)}${landed ? ' is-landing' : ''}" style="--sector-angle:${angle}deg"><b>${label}</b></span>`;
       }).join('');
       return `<div class="arcade-wheel-machine${balanceWheel ? ' arcade-balance-wheel' : ''}"><div class="arcade-wheel" aria-hidden="true"><div class="arcade-wheel-rim"></div>
-        <div class="arcade-wheel-arrow"></div><div class="arcade-wheel-disc">${sectors}</div><i></i></div>
-        <div class="arcade-wheel-base" aria-hidden="true"></div></div>`;
+        <div class="arcade-wheel-disc" style="--wheel-segments:conic-gradient(${stops})">${sectors}</div>
+        <div class="arcade-wheel-hub"><img src="assets/brand-emblem.png" alt=""></div><div class="arcade-wheel-arrow"></div>
+      </div></div>`;
     }
     if (game === 'slots') return slotBoard(round);
     if (game === 'darts') {
@@ -449,23 +461,27 @@ window.kioskGames = (() => {
 
   function gameContent() {
     const { game, coins, rounds } = session;
-    const wallet = `<div class="arcade-wallet"><span class="arcade-coin" aria-hidden="true">◈</span><div><span>Deneme oyunu bakiyesi</span><strong data-game-coins>${format(coins)}</strong><small>coin</small></div></div>`;
+    const wallet = `<div class="arcade-wallet"><span class="arcade-coin" aria-hidden="true">◈</span><div><span>${session.designPreview ? 'Oyun bakiyesi' : 'Deneme oyunu bakiyesi'}</span><strong data-game-coins>${format(coins)}</strong><small>coin</small></div></div>`;
     if (!game) {
       return `<header class="arcade-heading arcade-banner"><div><h1>Oyunlar</h1><p>Bir oyun seç ve dene.</p>${session.sCoinText !== undefined ? '<p data-s-coin-balance></p>' : ''}</div>${session.playGiftRound ? '' : wallet}</header>
         <div class="arcade-grid">${Object.entries(games).map(([id, details]) => gameButton(
           `<span class="arcade-card-cover" aria-hidden="true"><span class="arcade-card-art">${details.symbol}</span></span>
-          <span class="arcade-card-text"><strong>${details.name}</strong><span>${id === 'wheel' ? details.summary : 'Hazırlık aşamasında'}</span></span>${id === 'wheel' ? '<span class="arcade-card-arrow" aria-hidden="true">→</span>' : ''}`,
-          'select', id, { classes: `arcade-card arcade-${id}`, disabled: id !== 'wheel' })).join('')}</div>`;
+          <span class="arcade-card-text"><strong>${details.name}</strong><span>${id === 'wheel' || session.designPreview ? details.summary : 'Hazırlık aşamasında'}</span></span>${id === 'wheel' ? '<span class="arcade-card-arrow" aria-hidden="true">→</span>' : ''}`,
+          'select', id, { classes: `arcade-card arcade-${id}`, disabled: id !== 'wheel' && !session.designPreview })).join('')}</div>`;
     }
     const details = games[game];
     const round = rounds[game];
     const active = Boolean(round && round.phase !== 'settled');
-    if (session.playGiftRound) {
+    if (session.playGiftRound && game === 'wheel') {
       return `<div class="arcade-game arcade-${game}">
-        <header class="arcade-heading arcade-game-heading"><div>${gameButton('← Tüm oyunlar', 'library', '', { classes: 'arcade-button arcade-back', disabled: session.giftBusy })}<h1>Şans çarkı</h1><p>Her tur 1 S Coin. 3 boş dilim, 4 adet 5 TL, 2 adet 10 TL ve 1 adet 25 TL.</p></div><p data-s-coin-balance></p></header>
+        <header class="arcade-heading arcade-game-heading"><div>${gameButton('← Tüm oyunlar', 'library', '', { classes: 'arcade-button arcade-back', disabled: session.giftBusy })}<h1>Şans çarkı</h1><p>Her tur 1 S Coin. 3 boş dilim, 4 adet 5 TL, 2 adet 10 TL ve 1 adet 25 TL.</p></div><p class="wheel-coin-balance" data-s-coin-balance></p></header>
         <div class="arcade-play-layout"><div class="arcade-stage">${boardMarkup(game, round)}</div>
           <section class="arcade-controls" aria-label="Çark ödülü">
-          ${round?.phase === 'settled' ? `<div class="arcade-result${round.prize ? ' is-win' : ''}" role="status"><strong>${round.prize ? e((round.testOnly ? 'Test ödülü · ' : 'Kazandın · ') + round.prize.title) : 'Bu turda ödül çıkmadı'}</strong>${round.prize && !round.testOnly ? `<p>${round.prize.amountKurus ? 'Ödülün oyun bakiyene aktarılacak.' : 'Hediyen için şube yetkilisine başvur.'}</p>` : ''}</div>` : ''}
+          ${round?.phase === 'settled' ? `<div class="arcade-result wheel-result${round.prize ? ' is-win' : ''}" role="status">
+            <strong class="wheel-result-title">${round.prize ? (round.testOnly ? 'Test ödülü' : 'Kazandın!') : 'Bu turda ödül çıkmadı'}</strong>
+            ${round.prize ? `<p class="wheel-result-prize">${e(round.prize.title)}</p>` : ''}
+            ${round.prize && !round.testOnly ? `<p class="wheel-result-detail">${round.prize.amountKurus ? 'Ödülün oyun bakiyene aktarılacak.' : 'Hediyen için şube yetkilisine başvur.'}</p>` : ''}
+          </div>` : ''}
           ${session.giftError ? `<p role="alert">${e(session.giftError)}</p>` : ''}
           ${gameButton(active ? 'Tur devam ediyor…' : session.giftBusy ? 'Tur hazırlanıyor…' : session.giftOperations[game] ? 'Sonucu tekrar al' : details.start + ' · 1 S Coin', 'gift-play', '', { classes: 'arcade-button arcade-primary', disabled: giftPlayDisabled() })}
           </section></div></div>`;
@@ -521,6 +537,7 @@ window.kioskGames = (() => {
     if (round.game === 'wheel') {
       const disc = root.querySelector('.arcade-wheel-disc');
       disc.style.transform = `rotate(${round.targetAngle}deg)`;
+      if (round.phase === 'settled') disc.style.setProperty('--wheel-stop-angle', `${round.targetAngle % 360}deg`);
       const elapsed = performance.now() - round.startedAt;
       if (round.phase === 'spinning' && elapsed < round.duration) {
         const angles = round.startAngle === round.endAngle
@@ -567,7 +584,7 @@ window.kioskGames = (() => {
     const value = button.dataset.gameValue;
     if (action === 'gift-play') { void playGiftGame(); return; }
     if (action === 'select' || action === 'library') {
-      if (action === 'select' && value !== 'wheel') return;
+      if (action === 'select' && value !== 'wheel' && !session.designPreview) return;
       session.game = action === 'select' ? value : undefined;
       const content = button.closest('.content');
       update();

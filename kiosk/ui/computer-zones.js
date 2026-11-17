@@ -124,9 +124,10 @@
     ];
     if (spot.flip) parts.reverse();
     const at = rect(a + 0.5, DEPTH + 0.32, a + 0.5, DEPTH + 0.32), [lx, ly] = point(at[0], at[1]);
-    const text = `<text class="iso-number" x="${lx.toFixed(1)}" y="${(ly + 7).toFixed(1)}" text-anchor="middle">${spot.number}</text>`;
-    const action = pc && (state === 'free') ? `data-action="computer-select:${esc(pc.id)}" tabindex="0" role="button"` : '';
-    return { depth: centre(tile), html: `<g class="iso-station iso-${state}${selected ? ' iso-selected' : ''}${action && selectable ? ' iso-pickable' : ''}" ${action} aria-label="${esc(zone.name)} ${spot.number}, ${label}${selected ? ', seçili' : ''}">${poly(tilePoints, 'iso-tile')}${parts.join('')}</g>`, text: `<g class="iso-label iso-${state}${selected ? ' iso-selected' : ''}" aria-hidden="true">${text}</g>`, ring: selected ? poly(tilePoints, 'iso-ring') : '' };
+    const action = pc && state === 'free' && selectable ? `data-action="computer-select:${esc(pc.id)}"` : '';
+    const control = action ? `${action} tabindex="0" role="button" aria-pressed="${Boolean(selected)}"` : '';
+    const text = `<text class="iso-number" ${action} x="${lx.toFixed(1)}" y="${(ly + 7).toFixed(1)}" text-anchor="middle">${spot.number}</text>`;
+    return { depth: centre(tile), html: `<g class="iso-station iso-${state}${selected ? ' iso-selected' : ''}${action ? ' iso-pickable' : ''}" ${control} aria-label="${esc(zone.name)} ${spot.number}, ${label}">${poly(tilePoints, 'iso-tile')}${parts.join('')}</g>`, text: `<g class="iso-label iso-${state}" aria-hidden="true">${text}</g>` };
   }
 
   function wall(w) {
@@ -145,7 +146,7 @@
       ...layout.pillars.map(p => { const r = place(p)(p.at + 0.05, 0, p.at + p.size - 0.05, 0.85); return { depth: centre(r), html: box(...r, 0, p.flip ? 0.5 : WALL, 'iso-pillar') }; }),
       ...layout.stations.map(s => station(zone, s, byNumber.get(s.number), selectedId, selectable)),
     ].sort((a, b) => a.depth - b.depth);
-    return `<svg class="iso-map" viewBox="${minX.toFixed(0)} ${minY.toFixed(0)} ${(maxX - minX).toFixed(0)} ${(maxY - minY).toFixed(0)}" role="group" aria-label="${esc(zone.name)} salon yerleşimi">${poly(layout.floor.map(([x, y]) => point(x, y)), 'iso-floor')}${(layout.blocks || []).map(b => box(b.x0, b.y0, b.x1, b.y1, 0, WALL, 'iso-pillar')).join('')}${layout.walls.map(wall).join('')}${items.map(i => i.html).join('')}${items.map(i => i.ring || '').join('')}${items.map(i => i.text || '').join('')}</svg>`;
+    return `<svg class="iso-map" viewBox="${minX.toFixed(0)} ${minY.toFixed(0)} ${(maxX - minX).toFixed(0)} ${(maxY - minY).toFixed(0)}" role="group" aria-label="${esc(zone.name)} salon yerleşimi">${poly(layout.floor.map(([x, y]) => point(x, y)), 'iso-floor')}${(layout.blocks || []).map(b => box(b.x0, b.y0, b.x1, b.y1, 0, WALL, 'iso-pillar')).join('')}${layout.walls.map(wall).join('')}${items.map(i => i.html).join('')}${items.map(i => i.text || '').join('')}</svg>`;
   }
 
   window.ComputerZones = { zones, classify, summarize, isoMap };

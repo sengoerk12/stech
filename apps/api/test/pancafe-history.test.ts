@@ -49,3 +49,16 @@ test("native history: malformed records and other members fail closed", () => {
   for (const change of invalid)
     assert.throws(() => map(record(change)));
 });
+test("native POS receipts accept the same credit marker and amount as the PanCafe bridge", () => {
+  const operation = "a8544b1a-34a8-46b2-8364-0002be2d3b4e";
+  const row = record({
+    RAW_AMOUNT_TL: "200.00", BALANCE_TL: "420.00",
+    NOTE: "Hesaba para yüklendi. STechPOS-" + operation.replaceAll("-", ""),
+    PAYMENT_ID: operation, PAID_KURUS: "20000", BONUS_KURUS: "2000", CREDIT_BALANCE_TL: "420.00",
+  });
+  const credits = mapPanCafeHistory(row, "kaans", "test-install", true);
+  assert.deepEqual(credits.map(item => [item.kind, item.amount, item.creditId]), [
+    ["bonus", 2000, operation], ["topup", 20000, operation],
+  ]);
+  assert.throws(() => map({ ...row, NOTE: row.NOTE + "1" }));
+});

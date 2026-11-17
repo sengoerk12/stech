@@ -135,6 +135,7 @@ class KioskSession {
         if (this.session === session) this.markActivity(session, Date.now());
       }
     }
+    else if (action === 'history') result = this.mode === 'demo' ? await this.demo.history(session.card) : await this.gateway.history(session.token);
     else if (action === 'transactions') result = this.mode === 'demo' ? await this.demo.transactions(session.card, payload.cursor) : await this.gateway.transactions(session.token, payload.cursor);
     else if (action === 'sessions') result = this.mode === 'demo' ? { items: [] } : await this.gateway.sessions(session.token, payload.cursor);
     else if (action === 'quote') result = this.mode === 'demo'

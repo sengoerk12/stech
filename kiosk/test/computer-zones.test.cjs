@@ -24,8 +24,10 @@ test('zone summary counts free computers and the map marks each seat state', () 
   const svg = zones.isoMap(groups[0].zone, groups[0].computers, '1', true);
   assert.equal((svg.match(/class="iso-station/g) || []).length, 17);
   assert.match(svg, /iso-free iso-selected iso-pickable" data-action="computer-select:1"/);
-  assert.equal((svg.match(/data-action=/g) || []).length, 1);
-  assert.equal((svg.match(/class="iso-ring"/g) || []).length, 1);
+  assert.equal((svg.match(/data-action="computer-select:1"/g) || []).length, 2);
+  assert.equal((svg.match(/tabindex="0"/g) || []).length, 1);
+  assert.doesNotMatch(zones.isoMap(groups[0].zone, groups[0].computers, undefined, false), /data-action=/);
+  assert.doesNotMatch(svg, /class="iso-ring"/);
   assert.match(svg, /iso-station iso-busy"/);
   assert.equal((svg.match(/iso-station iso-missing/g) || []).length, 15);
 });

@@ -59,6 +59,7 @@ import { createAdminController } from "./admin/controller";
 import { MemberProfileService, normalizePhone } from './profile/service';
 import { createWalletMemberSync } from "./cafe/firebase-sync";
 import { SCoinService } from "./cafe/s-coin";
+import { kioskHistory } from "./cafe/kiosk-history";
 import { calculateQuote } from "./payments/service";
 import { activePromotions, PromotionSync, walletCampaigns } from "./cafe/promotion-sync";
 import { openWallet } from "./cafe/open-wallet";
@@ -273,6 +274,21 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (!kioskAuth || !testSCoin) throw new ServiceUnavailableException("S Coin bağlantısı hazır değil.");
       kioskAuth.verifyDevice(key);
       return (liveSCoin ?? testSCoin).balance(await user(req));
+    }
+    @Get("kiosk/history")
+    @Header("Cache-Control", "no-store")
+    async kioskCreditHistory(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined) {
+      if (!kioskAuth) throw new ServiceUnavailableException("Kiosk bağlantısı yapılandırılmadı.");
+      kioskAuth.verifyDevice(key);
+      const id = await user(req);
+      const coins = liveSCoin ?? testSCoin;
+      const adapter: CafeSystemAdapter = odeal?.mode === "stage" ? posCafe
+        : odeal?.mode === "live" || nativeCredit ? cafe : paymentCafe;
+      return kioskHistory(db, async cursor => {
+        if (adapter instanceof PanCafeSystemAdapter) return adapter.getTransactionPage(id, cursor, true);
+        if (adapter.getTransactionPage) return adapter.getTransactionPage(id, cursor);
+        return pageTransactions(await adapter.getTransactions(id), cursor);
+      }, () => coins?.topupHistory(id) ?? Promise.resolve([]));
     }
     @Post(["kiosk/s-coin/play", "kiosk/s-coin/wheel"])
     async kioskSCoinPlay(@Req() req: Request, @Headers("x-kiosk-key") key: string | undefined, @Body() body: unknown) {

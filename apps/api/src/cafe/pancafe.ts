@@ -302,7 +302,7 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   async getTransactions(userId: string) {
     return (await this.getTransactionPage(userId)).items;
   }
-  async getTransactionPage(userId: string, cursor?: string): Promise<TransactionPage> {
+  async getTransactionPage(userId: string, cursor?: string, includeCreditId = false): Promise<TransactionPage> {
     if (cursor && (!/^[1-9]\d{0,9}$/.test(cursor) || Number(cursor) > 2147483647))
       throw new BadRequestException("Geçersiz geçmiş sayfası.");
     const member = await this.row(userId);
@@ -317,7 +317,7 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
         previousId = id;
       }
       const page = rows.slice(0, 100);
-      return { items: page.flatMap(row => mapPanCafeHistory(row, member.USERNAME!, this.config.installationId)),
+      return { items: page.flatMap(row => mapPanCafeHistory(row, member.USERNAME!, this.config.installationId, includeCreditId)),
         ...(rows.length > 100 ? { nextCursor: page.at(-1)!.HISTORY_ID! } : {}) };
     } catch {
       throw new ServiceUnavailableException("PanCafe işlem kayıtları doğrulanamadı. Lütfen tekrar dene.");

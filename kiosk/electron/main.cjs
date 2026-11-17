@@ -7,11 +7,17 @@ const { DemoStore } = require('./core.cjs');
 const { ApiGateway } = require('./gateway.cjs');
 const { KioskSession } = require('./session.cjs');
 
-let window, kiosk, config, exitAllowed = false, adminAttempts = [];
+let window, kiosk, config, previewGateway, exitAllowed = false, adminAttempts = [];
 // Varsayılan: monitöre sığacak şekilde ölçeklenen 1080×1920 pencere. Tam ekran kilitli kiosk için
 // `--fullscreen` argümanı veya kiosk.config.json içinde "fullscreen": true; `--windowed` serbest boyutlu penceredir.
 let portraitPreview = true, windowed = true;
-if (!app.isPackaged && process.env.STECH_KIOSK_DATA_DIR) app.setPath('userData', process.env.STECH_KIOSK_DATA_DIR);
+const designPreview = !app.isPackaged && process.argv.includes('--design-preview');
+if (designPreview) {
+  const previewData = process.env.STECH_KIOSK_DATA_DIR || path.resolve(__dirname, '../../.data/kiosk-design-preview');
+  app.setPath('userData', previewData);
+} else if (!app.isPackaged && process.env.STECH_KIOSK_DATA_DIR) {
+  app.setPath('userData', process.env.STECH_KIOSK_DATA_DIR);
+}
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
 else {
@@ -23,16 +29,25 @@ else {
 }
 async function boot() {
   const file = process.env.STECH_KIOSK_CONFIG || path.join(app.getPath('userData'), 'kiosk.config.json');
-  try { config = JSON.parse(await fs.readFile(file, 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; config = { mode: 'demo', idleSeconds: 90, station: 'S TECH · Merkez' }; }
+  const localConfig = { mode: 'demo', idleSeconds: 90, station: 'S TECH · Merkez' };
+  if (designPreview) {
+    config = { ...localConfig, mode: 'connected' };
+  } else {
+    try { config = JSON.parse(await fs.readFile(file, 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; config = localConfig; }
+  }
   if (!['demo', 'connected'].includes(config.mode)) throw new Error('Invalid mode');
   const fullscreen = (process.argv.includes('--fullscreen') || config.fullscreen === true) && !process.argv.includes('--portrait-preview');
   const freeWindow = !fullscreen && process.argv.includes('--windowed') && !process.argv.includes('--portrait-preview');
   portraitPreview = !fullscreen && !freeWindow; windowed = !fullscreen;
-  if (config.mode === 'connected' && !/^[0-9a-f]{128}$/.test(config.adminPinHash || '')) throw new Error('Admin PIN required');
+  if (!designPreview && config.mode === 'connected' && !/^[0-9a-f]{128}$/.test(config.adminPinHash || '')) throw new Error('Admin PIN required');
   const demo = new DemoStore(path.join(app.getPath('userData'), 'demo-wallets.json'));
-  if (config.mode === 'demo') await demo.initialize();
-  const gateway = config.mode === 'connected' ? new ApiGateway(config) : null;
+  if (designPreview || config.mode === 'demo') await demo.initialize();
+  if (designPreview) {
+    const { DesignPreviewGateway } = require('./design-preview.cjs');
+    previewGateway = new DesignPreviewGateway(demo);
+  }
+  const gateway = previewGateway ?? (config.mode === 'connected' ? new ApiGateway(config) : null);
   kiosk = new KioskSession({ demo, gateway,
     mode: config.mode, idleSeconds: Math.max(30, Math.min(120, Number(config.idleSeconds) || 90)),
     onLock: () => {
@@ -70,7 +85,7 @@ async function boot() {
       return { ok: false, error: 'İzin verilmeyen istek.' };
     try {
       if (typeof action !== 'string' || JSON.stringify(payload ?? {}).length > 2048) throw new Error('Geçersiz istek.');
-      if (action === 'info') return { ok: true, data: { mode: config.mode, station: config.station || 'S TECH · Merkez', reader: 'USB / klavye modu', pos: config.mode === 'demo' ? 'simulation' : 'unavailable' } };
+      if (action === 'info') return { ok: true, data: { mode: config.mode, designPreview, station: config.station || 'S TECH · Merkez', reader: 'USB / klavye modu', pos: config.mode === 'demo' ? 'simulation' : 'unavailable' } };
       if (action === 'adminExit') {
         const now = Date.now(); adminAttempts = adminAttempts.filter(t => now - t < 60000);
         if (adminAttempts.length >= 5) throw new Error('Bir dakika sonra tekrar dene.');
@@ -79,9 +94,16 @@ async function boot() {
         if (typeof pin !== 'string' || pin.length > 64) throw new Error('Geçersiz PIN.');
         const valid = config.adminPinHash
           ? timingSafeEqual(scryptSync(pin, 'stech-kiosk-admin-v1', 64), Buffer.from(config.adminPinHash, 'hex'))
-          : config.mode === 'demo' && pin === '2026';
+          : (designPreview || config.mode === 'demo') && pin === '2026';
         if (!valid) throw new Error('Yetkili PIN kodu hatalı.');
         kiosk.lock(); exitAllowed = true; app.quit(); return { ok: true };
+      }
+      if (action === 'preview-payment' && previewGateway) {
+        const session = kiosk.session;
+        await kiosk.run('payment', { id: payload?.id });
+        if (!session || kiosk.session !== session) throw new Error('Oturum kapandı.');
+        await previewGateway.settlePreviewPayment(session.token, payload);
+        return { ok: true, data: await kiosk.run('payment', { id: payload.id }) };
       }
       return { ok: true, data: await kiosk.run(action, payload) };
     } catch (error) { return { ok: false, error: error.message || 'İşlem tamamlanamadı.' }; }
@@ -99,7 +121,7 @@ async function boot() {
   await window.loadFile(uiFile);
   if (portraitPreview) window.webContents.setZoomFactor(previewScale);
   window.show();
-  if (gateway && new URL(config.apiBaseUrl).protocol === 'https:') {
+  if (!designPreview && gateway && new URL(config.apiBaseUrl).protocol === 'https:') {
     const reportPresence = () => void gateway.heartbeat().catch(() => {});
     const presenceTimer = setInterval(reportPresence, 30000).unref();
     window.once('closed', () => clearInterval(presenceTimer));

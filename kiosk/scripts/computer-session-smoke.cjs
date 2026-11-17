@@ -13,7 +13,7 @@ const { KioskSession } = require('../electron/session.cjs');
     const reply = value => res.end(JSON.stringify(value));
     if (req.url.endsWith('/card-login')) return reply({ accessToken: 'test-token' });
     if (req.url.endsWith('/dashboard')) return reply({ member: { name: 'Kaan', username: 'kaan', joinedAt: '2026-01-01' }, wallet: { balance: 50000 }, promotions: [], transactions: [], features: {} });
-    if (req.url.endsWith('/computers')) return reply({ startSupported: true, computers: [{ id: '1', name: 'PC-1', available: true, canStart: true, canWake: true, virtual: false, status: 'wakeable' }] });
+    if (req.url.endsWith('/computers')) return reply({ startSupported: true, computers: [{ id: '1', name: 'Beginner 1', available: true, canStart: true, canWake: true, virtual: false, status: 'wakeable' }] });
     if (req.url.endsWith('/start')) {
       let body = '';
       for await (const chunk of req) body += chunk;
@@ -43,8 +43,8 @@ const { KioskSession } = require('../electron/session.cjs');
     await page.locator('.shell').waitFor();
     await page.getByRole('button', { name: 'Bilgisayarlar', exact: true }).click();
     // Tür seçimi → bilgisayar seçimi (sarı çerçeve) → onay.
-    await page.getByRole('button', { name: /Diğer bilgisayarlar/ }).click();
-    const open = page.getByRole('button', { name: 'PC-1, Kapalı, açılabilir', exact: true });
+    await page.locator('[data-action="computer-zone:beginner"]').click();
+    const open = page.locator('.pc-chips').getByRole('button', { name: 'Beginner 1, Kapalı, açılabilir', exact: true });
     const confirm = page.getByRole('button', { name: 'Onayla ve oturumu başlat', exact: true });
     await open.click();
     assert.equal(await open.getAttribute('aria-pressed'), 'true');

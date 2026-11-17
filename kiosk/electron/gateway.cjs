@@ -63,6 +63,7 @@ class ApiGateway {
     }
   }
   transactions(token, cursor) { return this.read('/me/transactions' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
+  history(token) { return this.read('/kiosk/history', token); }
   sessions(token, cursor) { return this.read('/me/session-history' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
   logout(token) { return this.request('/auth/logout', token, {}); }
 }

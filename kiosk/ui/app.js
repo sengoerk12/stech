@@ -1,11 +1,12 @@
 'use strict';
 const $ = selector => document.querySelector(selector);
 const root = $('#app');
-const state = { info: null, data: null, page: 'home', epoch: 0, loading: false, walletStale: false, recentState: '', filter: 'all', history: [], sessions: [], cursor: undefined, sessionCursor: undefined, historyLoading: false, amount: '200', quote: null, promotionId: undefined, quoteError: '', payment: null, processing: false, quoteVersion: 0, modal: null, pin: '', seconds: 90, clock: '' };
+const state = { info: null, data: null, page: 'home', epoch: 0, loading: false, walletStale: false, recentState: '', filter: 'all', history: [], historyLoading: false, historyError: '', amount: '200', quote: null, promotionId: undefined, quoteError: '', payment: null, processing: false, quoteVersion: 0, modal: null, pin: '', seconds: 90, clock: '' };
 const e = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const cash = amount => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount / 100);
 const balanceText = () => Number.isSafeInteger(state.data?.wallet?.balance) ? cash(state.data.wallet.balance) : '—';
-const balanceCaption = () => state.info.mode === 'demo' ? 'Deneme bakiyesi · Gerçek para değildir'
+const isDesignPreview = () => state.info?.designPreview === true;
+const balanceCaption = () => isDesignPreview() ? 'Hesabındaki güncel bakiye' : state.info.mode === 'demo' ? 'Deneme bakiyesi · Gerçek para değildir'
   : state.walletStale ? 'Bakiye güncellenemedi. Son okunan değer gösteriliyor.' : 'PanCafe hesabındaki güncel bakiye';
 let pcAvailability = 'Bilgisayar durumu alınıyor…';
 let readingPcAvailability = false;
@@ -42,7 +43,7 @@ const paths = {
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.info}</svg>`;
 const button = (text, action, cls = '', disabled = false) => `<button class="button ${cls}" data-action="${action}" ${disabled ? 'disabled' : ''}>${text}</button>`;
 const logo = '<div class="brand"><img class="brand-wordmark" src="assets/brand-wordmark.png" alt="S TECH E-SPOR"></div>';
-const badge = () => `<span class="status ${state.info?.mode === 'demo' ? 'demo' : ''}"><i></i>${state.info?.mode === 'demo' ? 'DENEME MODU' : 'ÜYE NOKTASI'}</span>`;
+const badge = () => `<span class="status ${state.info?.mode === 'demo' && !isDesignPreview() ? 'demo' : ''}"><i></i>${state.info?.mode === 'demo' && !isDesignPreview() ? 'DENEME MODU' : 'ÜYE NOKTASI'}</span>`;
 function toast(message) {
   $('#toast').textContent = message; $('#toast').hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => { $('#toast').hidden = true; }, 6000);
@@ -55,7 +56,7 @@ async function call(action, payload) {
 }
 function reset() {
   kioskGames.endSession();
-  computerData = undefined; computersError = ''; computerZone = undefined; computerNotice = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.sessions = []; state.cursor = undefined; state.sessionCursor = undefined; state.payment = null; state.posAttempt = undefined; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
+  computerData = undefined; computersError = ''; computerZone = undefined; computerNotice = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.historyError = ''; state.payment = null; state.posAttempt = undefined; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
   $('#toast').hidden = true; render(); renderModal();
   void refreshPcAvailability();
 }
@@ -63,7 +64,7 @@ function welcome() {
   return `<div class="welcome"><header>${logo}<div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header>
     <main class="welcome-main"><div class="welcome-copy"><img class="hero-emblem" src="assets/brand-emblem.png" alt="S TECH E-SPOR 1999 aslan amblemi"><span class="eyebrow"><span class="tiny-line"></span> OYUN BURADA BAŞLAR</span><h1>Hazırsan,<br><span>oyuna devam.</span></h1><p>Bakiyen, avantajların ve hesabın.<br>Hepsi tek dokunuş uzağında.</p>${state.info?.mode === 'connected' ? `<div class="pc-availability">${icon('monitor')}<span id="pc-availability" role="status">${e(pcAvailability)}</span></div>` : ''}<div class="welcome-benefits"><span>${icon('topup')}Hızlı yükleme</span><span>${icon('campaigns')}Sana özel fırsatlar</span></div></div>
     <section class="tap-panel"><div class="panel-top"><span>01 / KARTINLA GİRİŞ YAP</span>${icon('shield')}</div><div class="tap-orbit"><div class="tap-ring"></div><div class="tap-ring second"></div><div class="member-card"><div class="member-card-head">S TECH ${icon('nfc')}</div><div class="card-chip"></div><div class="member-card-bottom">PLAYER CARD<span>•••• •••• ••••</span></div></div><span class="tap-symbol">${icon('nfc')}</span></div><h2>${state.loading ? 'Hesabın açılıyor…' : 'Üye kartını okut'}</h2><p>Kartını bilgisayarın yanındaki<br>NFC okuyucuya yaklaştır.</p><div class="reader-status"><i class="${state.loading ? 'pulse' : ''}"></i>${state.loading ? 'Bilgilerin kontrol ediliyor' : 'Kart okutmanı bekliyoruz'}</div>
-    ${state.info?.mode === 'demo' ? `<div class="demo-entry"><span>Keşfetmek için bir deneme hesabı seç</span>${button('Kaan olarak dene ' + icon('arrow'), 'demo1', 'primary', state.loading)}${button('Deniz olarak dene', 'demo2', 'quiet', state.loading)}</div>` : `<div class="password-entry"><span>Kartın yanında değil mi?</span>${button(icon('profile') + ' Kullanıcı adıyla giriş', 'open-password-login', 'secondary wide', state.loading)}</div><div class="secure-note">${icon('shield')} Oturumun işlem sonunda güvenle kapanır.</div>`}</section></main>
+    ${state.info?.mode === 'demo' ? `<div class="demo-entry"><span>${isDesignPreview() ? 'Hesabını seç' : 'Keşfetmek için bir deneme hesabı seç'}</span>${button((isDesignPreview() ? 'Kaan ' : 'Kaan olarak dene ') + icon('arrow'), 'demo1', 'primary', state.loading)}${button(isDesignPreview() ? 'Deniz' : 'Deniz olarak dene', 'demo2', 'quiet', state.loading)}</div>` : `<div class="password-entry"><span>Kartın yanında değil mi?</span>${button(icon('profile') + ' Kullanıcı adıyla giriş', 'open-password-login', 'secondary wide', state.loading)}</div><div class="secure-note">${icon('shield')} Oturumun işlem sonunda güvenle kapanır.</div>`}</section></main>
     <footer><span>${e(state.info?.station || 'S TECH')} <span class="footer-separator">/</span> MÜŞTERİ NOKTASI</span><span>İyi oyunlar. <span class="orange">İyi ki buradasın.</span></span></footer></div>`;
 }
 const originalNav = [
@@ -96,7 +97,8 @@ function render() {
   const campaignOffset = root.querySelector('.home-campaign-track')?.scrollLeft ?? 0;
   const member = state.data.member;
   const title = nav.find(item => item.id === state.page)?.label;
-  root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${e(n.label)}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${e(title)}</span><div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : state.page === 'games' ? kioskGames.render() : state.page === 'profile' ? profile() : ''}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Hareketsizlik <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
+  const zonePickerOpen = state.page === 'computers' && !computerZone;
+  root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${zonePickerOpen ? '' : logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${e(n.label)}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${e(title)}</span>${zonePickerOpen ? `<div class="zone-header-brand">${logo}</div>` : ''}<div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : state.page === 'games' ? kioskGames.render() : state.page === 'profile' ? profile() : ''}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Hareketsizlik <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
   window.kioskDesign?.apply(root, state.page);
   const campaignTrack = root.querySelector('.home-campaign-track');
   if (campaignTrack) campaignTrack.scrollLeft = campaignOffset;
@@ -105,7 +107,7 @@ function render() {
 }
 function rows(items) {
   if (!items.length) return '<div class="empty">' + icon('history') + '<h3>Henüz işlem yok</h3><p>Hesap hareketlerin burada görünecek.</p></div>';
-  return items.map(t => `<div class="transaction"><div class="transaction-icon ${e(t.kind)}">${icon(t.kind === 'usage' ? 'monitor' : t.kind === 'bonus' ? 'bolt' : 'topup')}</div><div class="transaction-description"><strong>${e(t.title)}</strong><span>${date(t.createdAt)}</span></div><div class="transaction-amount ${t.amount > 0 ? 'positive' : ''}"><strong>${t.amount > 0 ? '+' : ''}${cash(t.amount)}</strong><span>Bakiye ${cash(t.balanceAfter)}</span></div></div>`).join('');
+  return items.map(t => `<div class="transaction"><div class="transaction-icon ${e(t.kind)}">${icon(t.kind === 'usage' ? 'monitor' : ['bonus', 's_coin', 'game_reward'].includes(t.kind) ? 'bolt' : 'topup')}</div><div class="transaction-description"><strong>${e(t.title)}</strong><span>${date(t.createdAt)}</span></div><div class="transaction-amount ${t.amount > 0 ? 'positive' : ''}"><strong>${t.amount > 0 ? '+' : ''}${t.kind === 's_coin' ? e(t.amount) + ' S Coin' : cash(t.amount)}</strong>${Number.isSafeInteger(t.balanceAfter) ? '<span>Bakiye ' + cash(t.balanceAfter) + '</span>' : ''}</div></div>`).join('');
 }
 function campaignCard(p) {
   return `<article class="bonus-coupon campaign-ticket ${p.accent === 'blue' ? 'coupon-blue campaign-blue' : ''}"><div class="coupon-value"><strong>%${e(p.bonusPercent)}</strong><span>BONUS</span></div><div class="coupon-body"><span class="eyebrow">S TECH ÜYE KUPONU</span><h3>${e(p.title)}</h3><p class="ticket-description">${e(p.description)}</p><div class="coupon-bottom"><p>Alt limit<strong>${cash(p.minimumAmount)}</strong></p>${button('Kampanyayı incele ' + icon('arrow'), 'campaign:' + e(p.id), 'coupon-apply')}</div><small class="coupon-hint">Son gün: ${new Date(p.endsAt).toLocaleDateString('tr-TR')}</small></div></article>`;
@@ -121,7 +123,7 @@ function homeCampaigns(promotions) {
 function home() {
   const d = state.data;
   return `<div class="page-heading"><div><span class="eyebrow">TEKRAR HOŞ GELDİN</span><h1>Merhaba, ${e(d.member.name.split(' ')[0])}<span class="orange">.</span></h1><p>Yeni bir oyun, yeni bir heyecan. Hesabın hazır.</p></div><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span></div>
-  <div class="home-grid"><section class="balance-card"><div class="balance-top"><span>${icon('topup')} KULLANILABİLİR BAKİYEN</span><span class="balance-mark">S /</span></div><div class="balance-value" data-wallet-balance>${balanceText()}</div><div class="balance-caption" data-wallet-caption>${balanceCaption()}</div><div class="balance-bottom">${button('Bakiye yükle ' + icon('plus'), 'go-topup', 'primary')}<span>${icon('shield')} ${state.info.mode === 'demo' ? 'Deneme ortamı' : 'PanCafe bağlantısı'}</span></div><div class="balance-decoration"></div></section>
+  <div class="home-grid"><section class="balance-card"><div class="balance-top"><span>${icon('topup')} KULLANILABİLİR BAKİYEN</span><span class="balance-mark">S /</span></div><div class="balance-value" data-wallet-balance>${balanceText()}</div><div class="balance-caption" data-wallet-caption>${balanceCaption()}</div><div class="balance-bottom">${button('Bakiye yükle ' + icon('plus'), 'go-topup', 'primary')}<span>${icon('shield')} ${isDesignPreview() ? 'Üye hesabı' : state.info.mode === 'demo' ? 'Deneme ortamı' : 'PanCafe bağlantısı'}</span></div><div class="balance-decoration"></div></section>
   ${homeCampaigns(d.promotions)}</div>
   <div class="quick-strip"><div>${icon('nfc')}<span>Kartın yanında,<strong>hesabın elinin altında.</strong></span></div><p>Yükle, avantajları keşfet, oyuna devam et.</p>${button('Hesabımı görüntüle ' + icon('arrow'), 'go-profile', 'quiet')}</div>
   ${(d.pendingPayments || []).length ? `<section class="pending-banner">${icon('history')}<div><strong>Tamamlanmamış işlemin var</strong><span>Kaldığın yerden devam edebilirsin.</span></div>${button('İşlemi aç', 'resume:' + d.pendingPayments[0].id, 'secondary')}</section>` : ''}
@@ -147,7 +149,7 @@ function topup() {
   const amount = Number(state.amount || 0) * 100;
   const q = state.quote;
   return `<div class="page-heading"><div><span class="eyebrow">OYUNA ARA VERME</span><h1>Bir sonraki oyuna hazır ol.</h1><p>Yüklemek istediğin tutarı seç, kartınla öde, devam et.</p></div></div>
-  ${state.data.features.odealStage ? '<div class="notice">Ödeal test ortamı · Deneme bakiyesi</div>' : state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : state.data.features.topup ? '' : '<div class="notice">' + icon('info') + ' POS ile yükleme şu anda kapalı.</div>'}
+  ${isDesignPreview() ? '' : state.data.features.odealStage ? '<div class="notice">Ödeal test ortamı · Deneme bakiyesi</div>' : state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : state.data.features.topup ? '' : '<div class="notice">' + icon('info') + ' POS ile yükleme şu anda kapalı.</div>'}
   <div class="topup-grid"><section class="panel amount-panel"><div class="section-heading"><h2>Yükleme tutarı</h2><span>01 / 02</span></div><div class="amount-display"><span>₺</span><strong>${e(state.amount || '0')}</strong><span>TL</span></div><div class="amount-presets">${[100, 200, 500, 1000].map(n => button(`${n} TL`, `amount:${n}`, Number(state.amount) === n ? 'preset selected' : 'preset')).join('')}</div><div class="keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Temizle' : k === 'back' ? '⌫' : k, `key:${k}`, k === 'clear' ? 'key key-small' : 'key')).join('')}</div><p class="muted minimum">En az 1 TL · En fazla 10.000 TL</p></section>
   <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div><div class="summary-row s-coin-quote"><span>Kazanılacak S Coin</span><strong>${Number.isSafeInteger(q?.sCoinEarned) ? e(q.sCoinEarned) + ' S Coin' : '—'}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
 }
@@ -182,19 +184,23 @@ function paymentView() {
     ? button('Ödemeyi iptal et', 'pos-cancel', 'secondary', state.processing)
     : '';
   const title = done ? 'Hazırsın. İyi oyunlar!' : failed ? 'Ödeme tamamlanmadı.' : review ? 'Ödeme alındı, aktarım inceleme bekliyor.' : transferring ? 'Bakiye yükleniyor…' : waiting ? 'POS işlemi kontrol ediliyor…' : 'Kartını POS cihazına okut.';
-  const detail = done ? (p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : review ? 'Bu işlem için kasaya başvur. Tekrar ödeme yapmana gerek yok.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
+  const detail = done ? (isDesignPreview() ? 'Yüklemen ve bonusun hesabına eklendi.' : p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : review ? 'Bu işlem için kasaya başvur. Tekrar ödeme yapmana gerek yok.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
   return `<div class="payment-page">${!state.processing && !done && (!physical || failed) ? button(icon('back') + ' Tutara geri dön', 'payment-back', 'quiet') : ''}<div class="payment-steps"><span class="finished">1 <b>Tutar seçimi</b></span><i></i><span class="${done ? 'finished' : 'current'}">2 <b>POS ile ödeme</b></span><i></i><span class="${done ? 'finished' : ''}">3 <b>Bakiye onayı</b></span></div><section class="panel payment-panel"><div class="payment-illustration ${done ? 'success' : failed ? 'failure' : ''}">${icon(done ? 'check' : failed ? 'close' : 'topup')}</div><span class="eyebrow">${done ? 'İŞLEM TAMAMLANDI' : failed ? 'ÖDEME ONAYLANMADI' : 'POS İLE ÖDEME'}</span><h1>${title}</h1><p>${detail}</p><div class="payment-value">${cash(p.amount)}</div><div class="payment-receipt"><span>Yükleme <b>${cash(p.amount)}</b></span><span>Bonus <b class="positive">+${cash(p.bonus)}</b></span>${done ? '<span>Yeni bakiye <b>' + cash(p.balanceAfter) + '</b></span>' : ''}</div>
-  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + button('Durumu kontrol et', 'pos-status', 'secondary', state.processing) + cancel + '</div>' : `<div class="pos-demo"><span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span><div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
+  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + button('Durumu kontrol et', 'pos-status', 'secondary', state.processing) + cancel + (isDesignPreview() && p.status === 'pending' ? button('Ödemeyi onayla', 'approve', 'primary', state.processing) + button('Ödemeyi reddet', 'decline', 'secondary', state.processing) : '') + '</div>' : `<div class="pos-demo">${isDesignPreview() ? '' : '<span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span>'}<div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
   <div class="receipt-id">İşlem no: ${e(p.id)}</div></section></div>`;
 }
 function campaigns() {
   return `<div class="page-heading"><div><span class="eyebrow">DAHA FAZLA OYUN, DAHA FAZLA AVANTAJ</span><h1>Oyunun avantajlı hali.</h1><p>Geçerli fırsatları keşfet. Yüklemenden daha fazlasını al.</p></div></div><div class="campaign-grid">${state.data.promotions.length ? state.data.promotions.map(campaignCard).join('') : '<div class="panel empty">' + icon('campaigns') + '<h2>Şu an aktif kampanya yok.</h2><p>Yeni fırsatlar bu alanda görünecek.</p></div>'}</div><div class="notice neutral">${icon('info')} Bonuslar yükleme sırasında otomatik hesaplanır. Kampanya koşullarını inceleyebilirsin.</div>`;
 }
+const historyFilters = [['all','Tümü'], ['topup','Yüklemeler'], ['bonus','Bonus TL'], ['s_coin','S Coin'], ['game_reward','Oyun ödülleri']];
 function history() {
-  const filtered = state.history.filter(t => state.filter === 'all' || state.filter === t.kind);
-  return `<div class="page-heading"><div><span class="eyebrow">HESABININ KONTROLÜ SENDE</span><h1>Her hareket, tek yerde.</h1><p>Yüklemelerini, bonuslarını ve harcamalarını incele.</p></div>${button('Yenile', 'history-refresh', 'secondary', state.historyLoading)}</div><div class="filter-bar">${[['all','Tüm işlemler'],['topup','Yüklemeler'],['bonus','Bonuslar'],['usage','Harcamalar'],['adjustment','Diğer']].map(([id,label]) => button(label, 'filter:' + id, 'filter ' + (state.filter === id ? 'selected' : ''))).join('')}</div><section class="panel history-panel">${rows(filtered)}${state.historyLoading ? '<p class="loading-line">İşlemler yükleniyor…</p>' : ''}${state.cursor ? button('Daha eski işlemleri yükle', 'history-more', 'secondary wide', state.historyLoading) : ''}</section>
-  ${state.info.mode === 'connected' ? `<section class="panel session-panel"><h2>PC oturum ayrıntıları</h2>${state.sessions.length ? state.sessions.map(s => `<div class="transaction">${icon('monitor')}<div class="transaction-description"><strong>${e(s.terminal)} · ${e(s.durationMinutes)} dakika</strong><span>${date(s.startedAt)} – ${date(s.endedAt)}</span></div><strong>${cash(s.usageAmount)}</strong></div>`).join('') : '<p class="muted">Tamamlanmış PC oturumu bulunmuyor.</p>'}${state.sessionCursor ? button('Daha eski oturumlar', 'sessions-more', 'secondary wide', state.historyLoading) : ''}</section>` : ''}`;
+  const filtered = state.history.filter(item => state.filter === 'all' || state.filter === item.kind);
+  const content = state.historyLoading ? '<p class="loading-line" role="status">İşlemler yükleniyor…</p>'
+    : state.historyError ? '<p class="notice" role="alert">' + e(state.historyError) + '</p>' : rows(filtered);
+  return `<div class="page-heading"><div><h1>İşlem geçmişi</h1><p>Her kategorideki son 10 kayıt.</p></div>${button('Yenile', 'history-refresh', 'secondary', state.historyLoading)}</div>
+    <div class="filter-bar">${historyFilters.map(([id,label]) => `<button class="filter ${state.filter === id ? 'selected' : ''}" data-action="filter:${id}" aria-pressed="${state.filter === id}">${label}</button>`).join('')}</div><section class="panel history-panel">${content}</section>`;
 }
+
 function profile() {
   const m = state.data.member;
   return `<div class="page-heading"><div><span class="eyebrow">S TECH HESABIN</span><h1>Seni tanımak güzel.</h1><p>Üyelik bilgilerin ve hesabınla ilgili her şey.</p></div></div><div class="profile-grid"><section class="panel profile-card"><div class="avatar large">${e(m.name.charAt(0))}</div><h2>${e(m.name)}</h2><span class="muted">@${e(m.username)}</span><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span><div class="profile-balance"><span>Kullanılabilir bakiye</span><strong data-wallet-balance>${balanceText()}</strong></div></section><section class="panel profile-details"><h2>Hesap bilgilerim</h2>${[['Üye no',m.memberNumber || '—'],['Ad soyad',m.name],['Kullanıcı adı',m.username],['Telefon',m.phone || 'Belirtilmemiş'],['E-posta',m.email || 'Belirtilmemiş'],['Üyelik tarihi',new Date(m.joinedAt).toLocaleDateString('tr-TR')]].map(([label,value]) => `<div class="summary-row"><span>${label}</span><strong>${e(value)}</strong></div>`).join('')}<div class="notice neutral">${icon('info')} Bilgilerini güncellemek veya kartınla ilgili destek almak için S TECH yetkilisine başvurabilirsin.</div></section></div><section class="privacy-strip">${icon('shield')}<div><strong>Hesabın sana özel.</strong><p>İşin bittiğinde oturumunu kapat. Bir sonraki müşteri bilgilerini göremez.</p></div>${button('Oturumu bitir ' + icon('logout'), 'logout', 'secondary')}</section>`;
@@ -261,18 +267,22 @@ function renderModal() {
       <p>PanCafe hesabının kullanıcı adını ve şifresini gir.</p>
       <form id="password-login-form" class="password-login-form" autocomplete="off">
         <fieldset>
-          <label>Kullanıcı adı<input name="username" maxlength="120" inputmode="none" autocapitalize="none" spellcheck="false" required></label>
-          <label>Şifre<input name="password" type="password" maxlength="256" inputmode="none" required></label>
-          <p class="login-error" role="alert" hidden></p>
+          <div class="login-fields">
+            <label>Kullanıcı adı<input name="username" maxlength="120" inputmode="none" autocapitalize="none" spellcheck="false" required></label>
+            <label>Şifre<input name="password" type="password" maxlength="256" inputmode="none" required></label>
+            <p class="login-error" role="alert" hidden></p>
+          </div>
           <div class="login-keyboard" role="group" aria-label="Ekran klavyesi">${loginKeyboard()}</div>
-          <button type="submit" class="button primary wide">Giriş yap ${icon('arrow')}</button>
-          <button type="button" class="button quiet wide" data-action="close-modal">Kartla girişe dön</button>
+          <div class="login-form-actions">
+            <button type="submit" class="button primary wide">Giriş yap ${icon('arrow')}</button>
+            <button type="button" class="button quiet wide" data-action="close-modal">Kartla girişe dön</button>
+          </div>
         </fieldset>
       </form>`;
     resetLoginFormTimer();
   } else if (state.modal === 'idle') content = `<div class="modal-symbol">${icon('history')}</div><h2>Hâlâ burada mısın?</h2><p>Gizliliğin için oturumun <b id="idle-seconds">${Math.ceil(state.seconds)}</b> saniye sonra kapanacak.</p>${button('Buradayım, devam et', 'continue', 'primary wide')}${button('Oturumu bitir', 'confirm-logout', 'quiet wide')}`;
   else if (state.modal === 'logout') content = `<div class="modal-symbol">${icon('logout')}</div><h2>İşlemlerin tamam mı?</h2><p>Oturumun kapanacak ve ekran yeni müşteri için hazırlanacak.</p>${button('Evet, oturumu bitir', 'confirm-logout', 'primary wide')}${button('Hesabıma dön', 'close-modal', 'secondary wide')}`;
-  else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
+  else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' && !isDesignPreview() ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   else if (state.modal === 'computer-start' && selectedComputer) {
     content = `<div class="modal-symbol">${icon('monitor')}</div><h2>${e(selectedComputer.name)} açılsın mı?</h2><p>Oturum ${e(state.data.member.username)} üyeliğinle başlayacak. PanCafe’deki üye tarifesi ve varsa açılış ücreti uygulanır.</p>${button('Oturumu başlat', 'computer-confirm', 'primary wide')}${button('Vazgeç', 'close-modal', 'secondary wide')}`;
   } else {
@@ -335,7 +345,7 @@ function openHome(data) {
       else void refreshSCoin();
     }
     return result;
-  } : undefined);
+  } : undefined, isDesignPreview());
   state.data = data;
   state.seconds = 90;
   state.page = 'home';
@@ -404,22 +414,25 @@ async function refresh() {
   const data = await call('dashboard');
   if (epoch === state.epoch && state.data) { state.data = data; render(); }
 }
-async function loadHistory(more = false, sessionsOnly = false) {
+async function loadHistory() {
   if (state.historyLoading) return;
-  const epoch = state.epoch; state.historyLoading = true; render();
+  const epoch = state.epoch;
+  state.historyLoading = true;
+  state.historyError = '';
+  render();
   try {
-    if (!sessionsOnly) {
-      const data = await call('transactions', { cursor: more ? state.cursor : undefined });
-      if (epoch !== state.epoch) return;
-      state.history = more ? [...state.history, ...data.items] : data.items; state.cursor = data.nextCursor;
+    const data = await call('history');
+    if (epoch === state.epoch) state.history = data.items;
+  } catch (error) {
+    if (epoch === state.epoch) state.historyError = error.message;
+  } finally {
+    if (epoch === state.epoch) {
+      state.historyLoading = false;
+      if (state.page === 'history') render();
     }
-    if (state.info.mode === 'connected' && (!more || sessionsOnly)) {
-      const data = await call('sessions', { cursor: sessionsOnly ? state.sessionCursor : undefined });
-      if (epoch !== state.epoch) return;
-      state.sessions = sessionsOnly ? [...state.sessions, ...data.items] : data.items; state.sessionCursor = data.nextCursor;
-    }
-  } finally { if (epoch === state.epoch) { state.historyLoading = false; render(); } }
+  }
 }
+
 async function updateQuote() {
   const version = ++state.quoteVersion, epoch = state.epoch;
   state.quote = null; state.quoteError = ''; render();
@@ -532,8 +545,6 @@ async function action(value) {
   if (name.startsWith('go-')) return go(name.slice(3));
   if (name === 'filter') { state.filter = arg; render(); return; }
   if (name === 'history-refresh') return loadHistory();
-  if (name === 'history-more') return loadHistory(true);
-  if (name === 'sessions-more') return loadHistory(true, true);
   if (name === 'amount') { state.amount = arg; return updateQuote(); }
   if (name === 'key') {
     state.amount = arg === 'clear' ? '' : arg === 'back' ? state.amount.slice(0,-1) : (state.amount === '0' ? arg : (state.amount + arg).slice(0,5));
@@ -575,10 +586,10 @@ async function action(value) {
     return;
   }
   if (name === 'resume') { const epoch = state.epoch; const payment = await call('payment', { id: arg }); if (epoch !== state.epoch) return; state.payment = payment; state.page = 'topup'; render(); return; }
-  if ((name === 'approve' || name === 'decline') && state.info.mode === 'demo') {
+  if ((name === 'approve' || name === 'decline') && (state.info.mode === 'demo' || isDesignPreview())) {
     if (state.processing || !state.payment || state.payment.status !== 'pending') return;
     const epoch = state.epoch; state.processing = true; render();
-    try { const payment = await call('settle', { id: state.payment.id, outcome: name === 'approve' ? 'approved' : 'declined' }); if (epoch !== state.epoch) return; state.payment = payment; await refresh(); }
+    try { const payment = await call(isDesignPreview() ? 'preview-payment' : 'settle', { id: state.payment.id, outcome: name === 'approve' ? 'approved' : 'declined' }); if (epoch !== state.epoch) return; state.payment = payment; await refresh(); }
     finally { if (epoch === state.epoch) { state.processing = false; render(); } }
     return;
   }
@@ -587,11 +598,21 @@ async function action(value) {
   if (name === 'admin-exit') { await call('adminExit', { pin: state.pin }); return; }
 }
 document.addEventListener('click', event => {
-  const target = event.target.closest('button'); if (!target || target.disabled) return;
+  const target = event.target.closest('button, .iso-station[data-action], .iso-number[data-action]');
+  if (!target || target.disabled) return;
   if (target.matches('[data-login-key], [data-login-action]')) { typeLoginKey(target); return; }
   const epoch = state.epoch;
   const task = target.dataset.page ? go(target.dataset.page) : target.dataset.action ? action(target.dataset.action) : null;
   Promise.resolve(task).catch(error => { if (epoch === state.epoch) toast(error.message); });
+});
+document.addEventListener('keydown', event => {
+  if (state.modal || event.repeat || !['Enter', ' '].includes(event.key)) return;
+  const station = event.target.closest('.iso-station[data-action]');
+  if (!station) return;
+  event.preventDefault();
+  const selector = '.iso-station[data-action="' + CSS.escape(station.dataset.action) + '"]';
+  station.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  root.querySelector(selector)?.focus({ preventScroll: true });
 });
 document.addEventListener('focusin', event => {
   if (event.target.matches('#password-login-form input')) loginField = event.target.name;
@@ -765,17 +786,47 @@ async function loadComputers() {
 }
 function computerStatusText(pc) { return pc.canWake ? 'Kapalı, açılabilir' : pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'; }
 function computerStatusClass(pc) { return pc.available ? 'pc-free' : pc.status === 'occupied' ? 'pc-busy' : 'pc-off'; }
+const zoneNames = { beginner: 'Beginner', player: 'Player', gamer: 'Gamer', master: 'Master 1', master2: 'Master 2' };
+const computerPageAd = {
+  title: 'Yeni nesil oyun deneyimi',
+  subtitle: 'S TECH E-SPOR’da',
+  image: 'assets/computers-banner.png',
+};
+function computerZonePicker(groups, alerts) {
+  const cards = groups.map(({ zone, computers, total, available }) => {
+    const occupied = computers.filter(pc => pc.status === 'occupied').length;
+    const occupiedPercent = total ? (occupied / total) * 100 : 0;
+    const availablePercent = total ? (available / total) * 100 : 0;
+    return `<button class="zone-choice" data-action="computer-zone:${zone.id}" ${!computerData || computerStart ? 'disabled' : ''}>
+      <span class="zone-choice-icon">${icon('monitor')}</span>
+      <span class="zone-choice-info">
+        <strong class="zone-choice-name">${zoneNames[zone.id] || e(zone.name)}</strong>
+        <span class="zone-choice-count">${computerData ? `<b>${occupied}</b> / ${total} dolu` : 'Doluluk alınıyor'}</span>
+        <span class="zone-choice-meter" aria-hidden="true"><i style="width:${occupiedPercent}%"></i><i style="width:${availablePercent}%"></i></span>
+      </span>
+      <span class="zone-choice-next" aria-hidden="true"></span>
+    </button>`;
+  }).join('');
+  return `<section class="zone-picker" aria-labelledby="zone-picker-title">
+    <div class="zone-picker-top">${button(icon('back') + ' Ana ekrana dön', 'go-home', 'zone-back')}</div>
+    <div class="zone-picker-heading"><h1 id="zone-picker-title">Masanı seç</h1><p>Oyun alanını seç, deneyimine başla.</p></div>
+    ${alerts}
+    <div class="zone-choice-list">${cards}</div>
+    <section class="zone-ad" aria-label="S TECH duyurusu">
+      <img src="${e(computerPageAd.image)}" alt="">
+      <div class="zone-ad-copy"><strong>${e(computerPageAd.title)}</strong><span>${e(computerPageAd.subtitle)}</span></div>
+    </section>
+  </section>`;
+}
 function computersPage() {
-  const groups = computerData ? ComputerZones.summarize(computerData.computers) : [];
+  const groups = ComputerZones.summarize(computerData?.computers).filter(({ zone }) => zone.layout);
   const group = groups.find(g => g.zone.id === computerZone);
   const alerts = `${computersError ? `<div role="alert" class="notice">${e(computersError)}</div>` : ''}
     ${computerNotice ? `<div role="status" class="notice">${e(computerNotice)}</div>` : ''}
     ${computerStart ? `<div class="notice" role="status">${e(computerStart.waking ? 'Bilgisayarınız açılıyor. PanCafe bağlantısı bekleniyor…' : 'PanCafe’de oturumunuz başlatılıyor…')}</div>` : ''}
     ${!computerData && !computersError ? '<p role="status">Bilgisayarlar alınıyor…</p>' : ''}
     ${computerData && !computerData.startSupported ? '<div class="notice">Bu şubede kiosktan oturum açma etkin değil. Şube yetkilisine başvur.</div>' : ''}`;
-  if (!group) return `<div class="page-heading"><div><span class="eyebrow">OYUN ALANIN</span><h1>Bilgisayar türünü seç</h1><p>Önce oynamak istediğin alanı seç, sonra salon planından boş bir bilgisayar belirle.</p></div></div>
-    ${alerts}
-    <div class="zone-grid">${groups.map(g => `<button class="panel zone-card ${g.available ? '' : 'zone-full'}" data-action="computer-zone:${g.zone.id}" ${computerStart ? 'disabled' : ''}>${icon('monitor')}<h2>${e(g.zone.name)}</h2><p>${e(g.zone.description)}</p><div class="zone-count"><strong>${g.available}</strong><span>/ ${g.total} boş</span></div><div class="zone-meter" aria-hidden="true"><i style="width:${g.total ? Math.round(g.available / g.total * 100) : 0}%"></i></div></button>`).join('')}</div>`;
+  if (!group) return computerZonePicker(groups, alerts);
   const canPick = Boolean(computerData.startSupported) && !computerStart;
   const pick = selectedComputer && group.computers.some(pc => pc.id === selectedComputer.id) ? selectedComputer : undefined;
   const chip = pc => `<button class="pc-chip ${computerStatusClass(pc)} ${pick?.id === pc.id ? 'pc-picked' : ''}" ${pc.available && !computerStart ? `data-action="computer-select:${e(pc.id)}"` : 'disabled'} aria-pressed="${pick?.id === pc.id}" aria-label="${e(pc.name)}, ${computerStatusText(pc)}">${group.zone.layout && pc.number !== undefined ? pc.number : e(pc.name)}</button>`;

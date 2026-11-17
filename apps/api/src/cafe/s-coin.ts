@@ -73,6 +73,20 @@ export class SCoinService {
     return { units, unitsPerCoin: S_COIN_UNITS, playableCoins: Math.floor(units / S_COIN_UNITS), testOnly: this.testOnly };
   }
 
+  async topupHistory(userId: string) {
+    const { rows } = await this.db.query<{ payment_id: string; units: string; created_at: Date | string }>(
+      `SELECT a.payment_id,a.units,a.created_at FROM s_coin_awards a
+       JOIN payment_orders p ON p.id=a.payment_id
+       WHERE p.user_id=$1 AND a.installation_id=$2 AND a.test_only=$3 AND a.synced_at IS NOT NULL
+       ORDER BY a.created_at DESC, a.payment_id DESC LIMIT 10`,
+      [userId, this.installationId, this.testOnly],
+    );
+    return rows.map(row => ({
+      id: row.payment_id + ":s-coin", kind: "s_coin" as const, amount: Number(row.units) / S_COIN_UNITS,
+      createdAt: new Date(row.created_at).toISOString(), title: "Yüklemeden kazanılan S Coin",
+    }));
+  }
+
   async playGame(userId: string, operationId: string, game = "wheel") {
     if (game !== "wheel") throw new ConflictException("Bu oyun hazırlık aşamasında.");
     if (!this.testOnly && !this.credits)
