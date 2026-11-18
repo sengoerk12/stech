@@ -69,7 +69,7 @@ test("Admin HTTP: one-time setup, isolated sessions, role enforcement, dynamic q
     assert.equal(cashier.admin.role, "cashier");
     const cashierHeaders = { Authorization: "Bearer " + cashier.token };
     const id = randomUUID();
-    for (const route of ["overview", "members", "promotions", "adjustments", "audit", "accounts", "content/settings", "kiosk-design"]) {
+    for (const route of ["overview", "members", "promotions", "adjustments", "audit", "accounts", "content/settings", "kiosk-design", "payment-report"]) {
       assert.equal((await call("admin/" + route, undefined, "GET", cashierHeaders)).status, 403, route);
     }
     assert.equal((await call("admin/payments?status=completed", undefined, "GET", cashierHeaders)).status, 200);
@@ -154,6 +154,8 @@ test("Admin HTTP: one-time setup, isolated sessions, role enforcement, dynamic q
       })
     ).json();
     assert.equal(payment.bonus, 4000);
+    const overview = await (await call("admin/overview")).json();
+    assert.equal(overview.connections.paymentMode, "simulation");
     assert.equal(
       (
         await call(
@@ -190,6 +192,16 @@ test("Admin HTTP: one-time setup, isolated sessions, role enforcement, dynamic q
     const records = await (await call("admin/audit")).text();
     assert.ok(records.includes("admin.promotion.save"));
     assert.ok(!records.includes(input.password));
+    const paymentRows = await (await call(`admin/payments?search=${payment.id}&status=completed`)).json();
+    assert.deepEqual(paymentRows.map((row: { id: string }) => row.id), [payment.id]);
+    const detail = await (await call(`admin/payments/${payment.id}`)).json();
+    assert.equal(detail.payment.transfer_status, "completed");
+    assert.ok(detail.timeline.some((entry: { status: string }) => entry.status === "transferring"));
+    assert.equal((await call(`admin/payments/${payment.id}`, undefined, "GET", cashierHeaders)).status, 401);
+    const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Istanbul" }).format(new Date());
+    const report = await (await call(`admin/payment-report?from=${today}&to=${today}`)).json();
+    assert.deepEqual(report.summary, { captured: "20000", captured_count: 1, waiting: "0", waiting_count: 0, transferred: "20000", bonus: "4000" });
+    assert.equal((await call("admin/payment-report?from=2026-02-30&to=2026-03-01")).status, 400);
     await call("admin/auth/logout", {});
     assert.equal((await call("admin/overview")).status, 401);
   } finally {

@@ -43,6 +43,7 @@ export class PanCafeFirebaseSync {
   private running?: Promise<void>;
   private stopped = true;
   status: "pending" | "synced" | "error" = "pending";
+  lastSuccessfulSyncAt?: string;
 
   constructor(
     private readPage: (after: number) => Promise<PanCafeRow[]>,
@@ -78,7 +79,9 @@ export class PanCafeFirebaseSync {
     const tick = () => {
       const started = Date.now();
       this.running = this.syncOnce().then(() => {
+        if (this.stopped) return;
         this.status = "synced";
+        this.lastSuccessfulSyncAt = new Date().toISOString();
       }, () => {
         if (this.status !== "error") console.warn("PanCafe wallet sync failed. Check the local bridge and wallet store access.");
         this.status = "error";

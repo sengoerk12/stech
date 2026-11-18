@@ -1,6 +1,8 @@
 /* Admin tokens are kept in memory only. Every operation is authorized again by the API. */
 const root = document.querySelector("#app"),
   modal = document.querySelector("#modal");
+const hostedAdmin = document.querySelector('meta[name="stech-hosted-admin"]') !== null;
+const cloudAdmin = document.querySelector('meta[name="stech-cloud-admin"]') !== null;
 let token = "",
   admin = null,
   page = "overview",
@@ -8,19 +10,21 @@ let token = "",
   pendingAdjustment = null;
 const titles = {
   overview: "Genel bakış",
-  "kiosk-design": "Kiosk tasarım merkezi",
-  members: "Üyeler ve bakiye",
-  promotions: "Kampanya ve bonus",
   payments: "Ödemeler",
+  members: "Üyeler ve bakiye",
   adjustments: "Bakiye kayıtları",
+  "payment-report": "Gün sonu raporu",
+  promotions: "Kampanya ve bonus",
+  "kiosk-design": "Kiosk tasarım merkezi",
   announcements: "Duyurular",
-  "notification-plans": "Bildirim planları",
-  "membership-levels": "Üyelik seviyeleri",
-  "refund-requests": "İade talepleri",
   audit: "Yönetim kayıtları",
   settings: "Sistem ayarları",
   accounts: "Yöneticiler",
+  "notification-plans": "Bildirim planları",
+  "membership-levels": "Üyelik seviyeleri",
+  "refund-requests": "İade talepleri",
 };
+const secondaryPages = ["notification-plans", "membership-levels", "refund-requests"];
 const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -55,17 +59,25 @@ const statusLabel = {
   processing: "İşleniyor",
   draft: "Taslak",
   pending_provider: "Sağlayıcı bekliyor",
+  queued: "Sırada",
 };
 const badge = (s) =>
   `<span class="badge ${s === "completed" ? "ok" : "warn"}">${esc(statusLabel[s] ?? s)}</span>`;
 const cashier = () => admin?.role === "cashier";
 const canWrite = () => admin && !cashier() && admin.role !== "viewer";
 async function api(path, body, method = body ? "POST" : "GET", extra = {}) {
-  const r = await fetch("/api/v1/admin/" + path, {
+  let url = "/api/v1/admin/" + path;
+  if (hostedAdmin) {
+    const [route, query] = path.split("?", 2);
+    const params = new URLSearchParams(query);
+    params.set("route", route);
+    url = "./api.php?" + params;
+  }
+  const r = await fetch(url, {
     method,
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {}),
+      ...(token ? hostedAdmin ? { "X-STech-Admin-Session": token } : { Authorization: "Bearer " + token } : {}),
       ...extra,
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -91,7 +103,7 @@ function table(headers, rows) {
   return `<div class="table-wrap"><table><thead><tr>${headers.map((x) => `<th>${esc(x)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.map((x) => `<tr>${x.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${headers.length}" class="empty">Henüz kayıt yok.</td></tr>`}</tbody></table></div>`;
 }
 function button(label, action, id = "", primary = false) {
-  return `<button ${primary ? 'class="primary"' : ""} data-action="${action}" data-id="${esc(id)}">${esc(label)}</button>`;
+  return `<button type="button" ${primary ? 'class="primary"' : ""} data-action="${action}" data-id="${esc(id)}">${esc(label)}</button>`;
 }
 function field(label, name, value = "", type = "text", attrs = "") {
   return `<label>${esc(label)}<input name="${name}" type="${type}" value="${esc(value)}" ${attrs}></label>`;
@@ -127,6 +139,10 @@ async function loginScreen() {
   const state = await api("auth/status");
   const setup = state.setupRequired;
   const fragment = new URLSearchParams(location.hash.slice(1));
+  if (setup && hostedAdmin) {
+    root.innerHTML = '<section class="login card"><h1>Yerel kurulum gerekli</h1><p>İlk yönetici hesabını A bilgisayarında S TECH Başlat menüsünden oluştur. Sonra bu sayfayı yenile.</p></section>';
+    return;
+  }
   const setupKey = fragment.get("setup") ?? "";
   history.replaceState(null, "", location.pathname);
   root.innerHTML = `<section class="login card"><div class="brand">S TECH<small>YÖNETİM MERKEZİ</small></div><h1>${setup ? "Yönetici hesabını oluştur" : "Yönetici girişi"}</h1><p class="muted">${setup ? "Bu bilgisayar için kurucu hesabını tanımla. En az 12 karakterli bir şifre kullan." : "İşletmenin hesaplarını, kampanyalarını ve bakiyelerini yönet."}</p><form>${setup ? field("Kurulum anahtarı", "setup", setupKey, "password", 'required autocomplete="off"') : ""}${field("Yönetici kullanıcı adı", "username", "", "text", 'required autocomplete="username"')}${field("Şifre", "password", "", "password", `required minlength="${setup ? 12 : 1}" autocomplete="${setup ? "new-password" : "current-password"}"`)}<p class="error" role="alert"></p><button class="primary">${setup ? "Hesabı oluştur" : "Giriş yap"}</button></form><p class="muted"><small>Üye hesaplarından ayrı yönetici yetkilendirmesi.</small></p></section>`;
@@ -166,21 +182,43 @@ async function render() {
     titles,
   )
     .filter(
-      ([k]) => cashier() ? k === "payments" : !["accounts", "settings"].includes(k) || admin.role === "owner",
+      ([k]) => cloudAdmin ? ["overview", "payments", "payment-report"].includes(k) :
+        cashier() ? k === "payments" : !["accounts", "settings"].includes(k) || admin.role === "owner",
     )
     .map(
       ([k, v]) =>
-        `<button data-page="${k}" class="${page === k ? "active" : ""}">${v}</button>`,
+        `${k === secondaryPages[0] ? '<div class="nav-group">Taslaklar ve talepler</div>' : ""}<button data-page="${k}" class="${page === k ? "active" : ""}" ${page === k ? 'aria-current="page"' : ""}>${v}</button>`,
     )
     .join(
       "",
-    )}</nav><footer><div>${esc(admin.username)} · ${esc({ owner: "Kurucu", operator: "Operatör", viewer: "İzleyici", cashier: "Kasa" }[admin.role])}</div>${cashier() ? "" : button("Şifremi değiştir", "password")}${button("Güvenli çıkış", "logout")}</footer></aside><main class="workspace"><header><div><p class="eyebrow">S TECH / İŞLETME YÖNETİMİ</p><h1>${titles[page]}</h1><span class="muted">Kontrol sende. Her değişiklik kayıt altında.</span></div>${button("Yenile", "refresh")}</header><div id="content"><div class="loading">Kayıtlar yükleniyor…</div></div></main></div>`;
+    )}</nav><footer><div>${esc(admin.username)} · ${esc({ owner: "Kurucu", operator: "Operatör", viewer: "İzleyici", cashier: "Kasa" }[admin.role])}</div>${cashier() || cloudAdmin ? "" : button("Şifremi değiştir", "password")}${button("Güvenli çıkış", "logout")}</footer></aside><main class="workspace"><header><div><p class="eyebrow">S TECH / İŞLETME YÖNETİMİ</p><h1>${titles[page]}</h1></div>${button("Yenile", "refresh")}</header><div id="content"><div class="loading">Kayıtlar yükleniyor…</div></div></main></div>`;
+  const content = document.querySelector("#content");
   try {
     await renderPage();
   } catch (error) {
-    document.querySelector("#content").innerHTML =
-      `<div class="card error">${esc(error.message)}</div>`;
+    if (content.isConnected) content.innerHTML = `<div class="card error">${esc(error.message)}</div>`;
   }
+}
+const reportDay = (offset = 0) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Istanbul" })
+  .format(new Date(Date.now() + offset * 86400000));
+const reportMetrics = [
+  ["Tahsil edilen", "captured"],
+  ["Aktarılan ana tutar", "transferred"],
+  ["Aktarılan bonus", "bonus"],
+  ["Aktarım bekleyen ana tutar", "waiting"],
+];
+function exportReport(report) {
+  const values = reportMetrics.map(([, key]) => (Number(report.summary[key]) / 100).toFixed(2).replace(".", ","));
+  const csv = [
+    ["Başlangıç", "Bitiş", "Kaynak", ...reportMetrics.map(([label]) => label + " (TL)"), "Tahsilat adedi", "Bekleyen adet"],
+    [report.from, report.to, report.live ? "Canlı Ödeal" : "Deneme", ...values, report.summary.captured_count, report.summary.waiting_count],
+  ].map(row => row.join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `stech-gun-sonu-${report.from}-${report.to}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 async function renderPage() {
   const c = document.querySelector("#content");
@@ -188,29 +226,54 @@ async function renderPage() {
   if (page === "overview") {
     const d = await api("overview"),
       s = d.summary;
-    cache.overview = d;
-    c.innerHTML = `<div class="cards">${[
-      ["Tamamlanan yükleme", money(s.amount)],
-      ["Verilen yükleme bonusu", money(s.bonus)],
-      ["Tamamlanan ödeme", s.completed],
-      ["Kontrol bekleyen", s.waiting],
-    ]
-      .map(
-        ([t, v]) =>
-          `<div class="card"><small>${t}</small><div class="metric">${v}</div></div>`,
-      )
-      .join(
-        "",
-      )}</div><div class="split"><div class="card"><h2>Bağlantılar</h2><p class="status-line"><span class="dot ${d.connected ? "" : "off"}"></span>PanCafe · ${d.connected ? "Bağlı" : "Kontrol gerekli"}</p><p>Ödeme: <span class="badge warn">Deneme ödemesi</span></p><p>Bakiye yönetimi: ${d.balanceAdjustment ? "Açık" : "Bağlantı aracında izin gerekli"}</p><p class="muted">Tutarlar mobil yüklemelere aittir. Kasa cirosu veya toplam işletme geliri değildir.</p></div><div class="card"><h2>Hızlı işlemler</h2><div class="toolbar">${button("Üye ve bakiye", "goto-members", "", true)}${button("Bonus ayarla", "goto-promotions")}</div><p class="muted">Bakiye değişiklikleri PanCafe hesabına uygulanır. Bonus kampanyaları yeni ödeme işlemlerinde kullanılır.</p></div></div><div class="notice">Gerçek kart tahsilatı, banka iadesi ve telefona push gönderimi henüz bağlı değil. Bu alanların hazırlıkları panelden yönetilebilir; gönderilmiş veya iade edilmiş olarak gösterilmez.</div>`;
+    if (!c.isConnected) return;
+    const connection = d.connections ?? {};
+    const kioskOnline = connection.kioskLastSeenAt && Date.now() - Date.parse(connection.kioskLastSeenAt) <= 90000;
+    const wallet = connection.walletSync;
+    const paymentMode = { live: "Ödeal canlı mod", stage: "Ödeal test modu", simulation: "Deneme ödemesi", disabled: "Ödeme kapalı" };
+    c.innerHTML = `${cloudAdmin ? `<p class="notice">${d.lastSnapshotAt ? `A’dan alınan son veri ${date(d.lastSnapshotAt)}` : 'A bilgisayarından henüz veri alınmadı.'}</p>` : ''}<div class="split"><section class="card"><h2>Aktarım bekleyen ödemeler</h2><div class="metric">${esc(s.waiting)}</div><p class="muted">Onayı alınan ve bakiye aktarımı tamamlanmamış ödemeler.</p>${button("Bekleyen ödemeleri aç", "payment-queue", "", true)}</section><section class="card"><h2>Günlük işlemler</h2><div class="toolbar">${cloudAdmin ? "" : button("Üye ve bakiye", "goto-members")}${button("Gün sonu raporu", "goto-payment-report")}</div></section></div>
+      <section class="card"><h2>Bağlantılar</h2><dl class="connection-list">
+        <div><dt>Ödeme</dt><dd>${esc(paymentMode[connection.paymentMode] ?? "Durum alınamadı")} · ${d.topupEnabled && connection.paymentMode !== "disabled" ? "Yeni yükleme açık" : "Yeni yükleme kapalı"}</dd></div>
+        <div><dt>PanCafe</dt><dd>${d.connected ? "Bağlı" : d.cafe === "Mock" ? "Deneme modu" : "Bağlantı kontrolü gerekli"}</dd></div>
+        <div><dt>Bakiye düzenleme</dt><dd>${d.balanceAdjustment ? "Açık" : "Köprüde izin gerekli"}</dd></div>
+        <div><dt>Kiosk</dt><dd>${!connection.kioskConfigured ? "Yapılandırılmadı" : kioskOnline ? "Çevrimiçi" : "Bağlantı alınamıyor"}${connection.kioskLastSeenAt ? `<small>Son bağlantı ${date(connection.kioskLastSeenAt)}</small>` : ""}</dd></div>
+        <div><dt>Cüzdan eşitlemesi</dt><dd>${wallet ? esc({ synced: "Eşitlendi", pending: "Bekliyor", error: "Eşitleme hatası" }[wallet.status]) : "Kapalı"}${wallet?.lastSuccessfulSyncAt ? `<small>Son başarılı eşitleme ${date(wallet.lastSuccessfulSyncAt)}</small>` : ""}</dd></div>
+      </dl></section>`;
+    return;
+  }
+  if (page === "payment-report") {
+    const range = cache.reportRange ?? { from: reportDay(), to: reportDay() };
+    c.innerHTML = `<form id="report-range" class="toolbar">${field("Başlangıç", "from", range.from, "date", "required")}${field("Bitiş", "to", range.to, "date", "required")}<button class="primary">Raporu getir</button>${button("Bugün", "report-today")}${button("Dün", "report-yesterday")}</form><div id="report-results" aria-live="polite">Rapor yükleniyor…</div>`;
+    const form = c.querySelector("form");
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      cache.reportRange = Object.fromEntries(new FormData(form));
+      void render();
+    };
+    const result = c.querySelector("#report-results");
+    try {
+      const report = await api("payment-report?" + new URLSearchParams(range));
+      if (!c.isConnected) return;
+      cache.report = report;
+      result.innerHTML = `<div class="cards">${reportMetrics.map(([label, key]) => `<div class="card"><small>${label}</small><div class="metric">${money(report.summary[key])}</div></div>`).join("")}</div>
+        <div class="card"><p>${report.live ? "Canlı Ödeal işlemleri" : "Deneme işlemleri"} · ${report.summary.captured_count} tahsilat · ${report.summary.waiting_count} bekleyen</p>
+        <p class="muted">Türkiye saatine göre tahsilat ve aktarım kendi işlem tarihinde sayılır. Bekleyen tutar, seçili tarihlerde tahsil edilip henüz aktarılmamış ödemeleri gösterir.</p>${button("CSV indir", "report-csv")}</div>`;
+    } catch (error) {
+      result.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`;
+    }
     return;
   }
   if (page === "members") {
-    c.innerHTML = `<form id="search" class="toolbar"><input name="search" aria-label="Kullanıcı adı" placeholder="PanCafe kullanıcı adıyla ara" value="${esc(cache.search ?? "")}"><button class="primary">Ara</button></form><div id="members-table"></div>`;
+    c.innerHTML = `<form id="search" class="toolbar">${select("Arama türü", "field", [["username", "Kullanıcı adı"], ["number", "Üye no"], ["name", "Ad soyad"], ["phone", "Telefon"]], cache.memberField ?? "username")}${field("Aranacak değer", "search", cache.search ?? "", "search", 'maxlength="65"')}<button class="primary">Ara</button></form><div id="members-table" aria-live="polite"></div>`;
     document.querySelector("#search").onsubmit = async (e) => {
       e.preventDefault();
-      cache.search = new FormData(e.currentTarget).get("search");
+      const form = new FormData(e.currentTarget);
+      cache.search = form.get("search").trim();
+      cache.memberField = cache.search ? form.get("field") : "username";
       cache.after = "0";
-      await loadMembers();
+      const results = c.querySelector("#members-table");
+      try { await loadMembers(); }
+      catch (error) { results.innerHTML = `<p class="error" role="alert">${esc(error.message)}</p>`; }
     };
     await loadMembers();
     return;
@@ -243,35 +306,38 @@ async function renderPage() {
   }
   if (page === "payments") {
     const status = cashier() ? "transferring" : cache.paymentStatus ?? "";
-    cache.payments = await api(
-      "payments?status=" +
-        status +
-        (cache.paymentBefore
-          ? "&before=" + encodeURIComponent(cache.paymentBefore)
-          : ""),
-    );
-    c.innerHTML = `<div class="toolbar">${cashier() ? badge(status) : select("Durum", "paymentStatus", [["", "Tümü"], ...Object.entries(statusLabel).filter(([k]) => ["pending", "transferring", "completed", "failed"].includes(k))], status)}</div>${table(
+    const params = new URLSearchParams({ status, search: cache.paymentSearch ?? "", ...(cache.paymentBefore ?? {}) });
+    const payments = await api("payments?" + params);
+    if (!c.isConnected) return;
+    cache.payments = payments;
+    c.innerHTML = `<div class="toolbar">${cashier() ? "" : button("Aktarım bekleyenler", "payment-queue", "", status === "transferring")}</div>
+      <form class="toolbar" id="payment-filter">${cashier() ? badge(status) : select("Durum", "paymentStatus", [["", "Tümü"], ["pending", "POS onayı bekliyor"], ["transferring", "Bakiye aktarımı bekliyor"], ["completed", "Tamamlandı"], ["failed", "Başarısız"]], status)}${field("Kullanıcı adı veya işlem numarası", "search", params.get("search"), "search", 'maxlength="36"')}<button class="primary">Ara</button>${button("Filtreleri temizle", "payment-clear")}</form>${table(
       ["Üye / işlem", "Yükleme", "Bonus", "Durum", "Aktarım", "Tarih", ""],
       cache.payments.map((p) => [
-        `${esc(p.username ?? p.user_id)}<small>${esc(p.id)}</small>`,
+        `${esc(p.username ?? p.user_id)}<small>${esc(p.id)}</small><small>${p.payment_provider === "odeal" ? p.transfer_target === "pancafe" ? "Ödeal canlı" : "Ödeal test" : "Deneme"}</small>`,
         money(p.amount),
         money(p.bonus),
-        badge(p.status),
+        badge(p.pos_cancelled_at && p.status === "failed" ? "İptal edildi" : p.status),
         badge(p.completed_manually ? "Manuel olarak aktarıldı" : p.transfer_status ?? "—"),
         date(p.created_at),
         [
-          canWrite() && p.status === "transferring" && ["retry", "reconciliation"].includes(p.transfer_status)
+          button("Ayrıntı", "payment-detail", p.id),
+          canWrite() && !p.pos_cancelled_at && p.status === "transferring" && ["retry", "reconciliation"].includes(p.transfer_status)
             ? button("Aktarımı yeniden dene", "payment-retry", p.id) : "",
           (canWrite() || cashier()) && p.can_complete_manually ? button("Manuel olarak aktarıldı", "payment-manual", p.id) : "",
         ].filter(Boolean).join(" "),
       ]),
     )}<div class="toolbar">${cache.payments.length === 100 ? button("Daha eski ödemeler", "payments-more") : ""}${cache.paymentBefore ? button("En yeni ödemeler", "payments-first") : ""}</div>`;
-    const statusSelect = c.querySelector("select");
-    if (statusSelect) statusSelect.onchange = (e) => {
-      cache.paymentStatus = e.target.value;
-      cache.paymentBefore = "";
+    const form = c.querySelector("form");
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const filters = new FormData(form);
+      cache.paymentStatus = filters.get("paymentStatus") ?? "";
+      cache.paymentSearch = filters.get("search").trim();
+      cache.paymentBefore = undefined;
       void render();
     };
+    form.querySelector("select")?.addEventListener("change", () => form.requestSubmit());
     return;
   }
   if (page === "adjustments") {
@@ -382,14 +448,16 @@ async function renderPage() {
   )}`;
 }
 async function loadMembers() {
+  const target = document.querySelector("#members-table");
   const d = await api(
     "members?search=" +
       encodeURIComponent(cache.search ?? "") +
       "&after=" +
-      (cache.after ?? "0"),
+      (cache.after ?? "0") + "&field=" + encodeURIComponent(cache.memberField ?? "username"),
   );
+  if (!target?.isConnected) return;
   cache.members = d;
-  document.querySelector("#members-table").innerHTML =
+  target.innerHTML =
     table(
       ["Üye", "Ad soyad", "Toplam bakiye", "İçindeki bonus", "Durum", ""],
       d.items.map((m) => [
@@ -516,7 +584,12 @@ async function memberDialog(id) {
     `members/${m.id}?username=${encodeURIComponent(m.username)}`,
   );
   cache.selected = data.member;
-  modal.innerHTML = `<h2>${esc(data.member.username)} · Üye no ${m.id}</h2><div class="cards"><div class="card"><small>Toplam bakiye</small><div class="metric">${money(data.member.balance)}</div></div><div class="card"><small>Bakiyenin içindeki bonus</small><div class="metric">${money(data.member.bonus)}</div></div></div><p class="muted">${esc(data.member.name)} · ${esc(data.member.phone || "Telefon yok")} · ${esc(data.member.email || "E-posta yok")}</p><div class="toolbar">${canWrite() && data.member.active ? button("Bakiye / bonus düzenle", "adjust-new", "", true) : ""}${button("Kapat", "close")}</div><h2>PanCafe işlem geçmişi</h2>${table(
+  modal.innerHTML = `<h2>${esc(data.member.username)} · Üye no ${m.id}</h2><div class="cards"><div class="card"><small>Toplam bakiye</small><div class="metric">${money(data.member.balance)}</div></div><div class="card"><small>Bakiyenin içindeki bonus</small><div class="metric">${money(data.member.bonus)}</div></div></div><p class="muted">${esc(data.member.name)} · ${esc(data.member.phone || "Telefon yok")} · ${esc(data.member.email || "E-posta yok")}</p><div class="toolbar">${canWrite() && data.member.active ? button("Bakiye / bonus düzenle", "adjust-new", "", true) : ""}${button("Kapat", "close")}</div><h2>Son hesap hareketleri</h2>${table(
+    ["Tarih", "Kaynak", "İşlem", "Tutar", "Kalan"],
+    (data.activity ?? []).map(item => [date(item.createdAt), esc(item.source),
+      `${esc(item.title)}${item.description ? `<small>${esc(item.description)}</small>` : ""}${item.status ? badge(item.status) : ""}`,
+      money(item.amount), item.balanceAfter == null ? "—" : money(item.balanceAfter)]),
+  )}<details class="native-history"><summary>PanCafe kaynak kayıtları</summary>${table(
     ["Tarih", "Tutar", "Kalan", "Açıklama"],
     data.history
       .slice(0, 100)
@@ -526,7 +599,24 @@ async function memberDialog(id) {
         esc(h.BALANCE_TL + " TL"),
         esc(h.NOTE),
       ]),
-  )}`;
+  )}</details>`;
+  modal.showModal();
+}
+async function paymentDialog(id) {
+  const { payment: p, timeline } = await api("payments/" + encodeURIComponent(id));
+  if (page !== "payments") return;
+  const failure = { active_session: "Üyenin açık PanCafe oturumu var", manual_review: "PanCafe aktarımının kontrol edilmesi gerekiyor", transfer_unavailable: "PanCafe aktarımı tamamlanamadı" };
+  const pos = p.payment_provider === "odeal";
+  const confirmation = timeline.find(entry => entry.status === "transferring");
+  const decision = confirmation ? `Onaylandı · ${date(confirmation.created_at)}` :
+    p.pos_cancelled_at ? "İptal edildi" : p.status === "failed" ? "Başarısız" : "Onay bekleniyor";
+  modal.innerHTML = `<h2>Ödeme ayrıntısı</h2><p>${esc(p.username ?? p.user_id)} · ${money(p.amount)}${p.bonus ? ` + ${money(p.bonus)} bonus` : ""} <small>${esc(p.id)}</small></p>
+    <dl class="connection-list"><div><dt>${pos ? "Ödeal POS" : "Deneme ödemesi"}</dt><dd>${decision}</dd></div>
+    <div><dt>Bakiye aktarımı</dt><dd>${badge(p.completed_manually ? "Elle aktarıldı" : p.transfer_status ?? "Başlamadı")}${p.attempts != null ? `<small>${p.attempts} kayıtlı deneme</small>` : ""}</dd></div>
+    <div><dt>Son aktarım sorunu</dt><dd>${esc(failure[p.last_failure_code] ?? "Kayıt yok")}${p.last_failure_at ? `<small>${date(p.last_failure_at)}</small>` : ""}</dd></div></dl>
+    <h3>İşlem geçmişi</h3>${table(["Tarih", "İşlem", "Yönetici"], timeline.map(entry => [date(entry.created_at),
+      esc(entry.event === "admin.payment.retry" ? "Aktarımı yeniden denedi" : entry.event === "admin.payment.manual_transfer" ? "Elle aktarıldığını işaretledi" : statusLabel[entry.status] ?? entry.status),
+      esc(entry.administrator ?? "Sistem")]))}<div class="actions">${button("Kapat", "close")}</div>`;
   modal.showModal();
 }
 function adjustmentForm() {
@@ -732,6 +822,20 @@ document.addEventListener("click", async (e) => {
         },
       );
     if (a === "refresh") return void render();
+    if (a === "report-csv") return exportReport(cache.report);
+    if (a === "report-today" || a === "report-yesterday") {
+      const day = reportDay(a === "report-yesterday" ? -1 : 0);
+      cache.reportRange = { from: day, to: day };
+      return void render();
+    }
+    if (a === "payment-queue" || a === "payment-clear") {
+      cache.paymentStatus = a === "payment-queue" ? "transferring" : "";
+      cache.paymentSearch = "";
+      cache.paymentBefore = undefined;
+      page = "payments";
+      return void render();
+    }
+    if (a === "payment-detail") return await paymentDialog(id);
     if (a.startsWith("goto-")) {
       page = a.slice(5);
       return void render();
@@ -754,11 +858,12 @@ document.addEventListener("click", async (e) => {
       return await loadMembers();
     }
     if (a === "payments-more") {
-      cache.paymentBefore = cache.payments.at(-1).created_at;
+      const last = cache.payments.at(-1);
+      cache.paymentBefore = { before: last.cursor_date, beforeId: last.id };
       return void render();
     }
     if (a === "payments-first") {
-      cache.paymentBefore = "";
+      cache.paymentBefore = undefined;
       return void render();
     }
     if (a === "audit-more") {

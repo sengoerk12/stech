@@ -21,6 +21,7 @@ export interface PanCafeBridgeConfig {
   allowVirtualSessionStart?: boolean;
 }
 export class PanCafeBridgeClient {
+  get installationId() { return this.config.installationId; }
   constructor(
     private config: PanCafeBridgeConfig,
     private baseUrl = `http://127.0.0.1:${config.port ?? 3002}`,

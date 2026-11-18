@@ -48,9 +48,10 @@ export function createAdminController(service: AdminService) {
       @Req() req: Request,
       @Query("search") search?: string,
       @Query("after") after?: string,
+      @Query("field") field?: string,
     ) {
       await service.authorize(req.headers.authorization);
-      return service.members(search, after);
+      return service.members(search, after, field);
     }
     @Get("members/:id") async member(
       @Req() req: Request,
@@ -86,9 +87,19 @@ export function createAdminController(service: AdminService) {
       @Req() req: Request,
       @Query("status") status?: string,
       @Query("before") before?: string,
+      @Query("search") search?: string,
+      @Query("beforeId") beforeId?: string,
     ) {
       const actor = await service.authorize(req.headers.authorization, false, false, true);
-      return service.paymentList(status, before, actor.role === "cashier");
+      return service.paymentList(status, before, actor.role === "cashier", search, beforeId);
+    }
+    @Get("payment-report") async paymentReport(@Req() req: Request, @Query("from") from: string, @Query("to") to: string) {
+      await service.authorize(req.headers.authorization);
+      return service.paymentReport(from, to);
+    }
+    @Get("payments/:id") async paymentDetail(@Req() req: Request, @Param("id") id: string) {
+      const actor = await service.authorize(req.headers.authorization, false, false, true);
+      return service.paymentDetail(id, actor.role === "cashier");
     }
     @Post("payments/:id/retry") async retry(
       @Req() req: Request,

@@ -146,6 +146,30 @@ nav button.active {
   color: var(--orange);
   border-color: #594321;
 }
+.nav-group {
+  margin: 12px 0 2px;
+  padding: 8px 12px 0;
+  border-top: 1px solid #304055;
+  color: #92acc4;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.connection-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.connection-list > div {
+  padding: 12px;
+  border: 1px solid #304055;
+  border-radius: 10px;
+}
+.connection-list dt { color: #92acc4; font-size: 13px; }
+.connection-list dd { margin: 4px 0 0; }
+.connection-list small { display: block; margin-top: 4px; }
+.native-history { margin-top: 16px; }
+.native-history summary { cursor: pointer; margin-bottom: 8px; }
 aside footer {
   margin-top: auto;
   display: grid;

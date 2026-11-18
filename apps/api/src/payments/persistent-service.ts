@@ -344,7 +344,8 @@ export class PersistentPaymentService {
       if (!retryForUser && error instanceof ActiveCafeSessionError) {
         await this.db.query(
           `UPDATE transfer_jobs SET status='retry',lease_until=NULL,next_attempt_at=now()+interval '5 seconds',
-           attempts=GREATEST(attempts-1,0) WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
+           attempts=GREATEST(attempts-1,0),last_failure_code='active_session',last_failure_at=now()
+           WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
           [paymentId, leaseToken],
         );
         return;
@@ -352,12 +353,14 @@ export class PersistentPaymentService {
       const needsReview = retryForUser !== undefined || error instanceof PanCafeCreditReviewError;
       const delay = Math.min(300000, 1000 * 2 ** Math.min(attempts - 1, 8));
       await this.db.query(
-        `UPDATE transfer_jobs SET status=$3,lease_until=NULL,next_attempt_at=$4 WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
+        `UPDATE transfer_jobs SET status=$3,lease_until=NULL,next_attempt_at=$4,last_failure_code=$5,last_failure_at=now()
+         WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
         [
           paymentId,
           leaseToken,
           needsReview || attempts >= 10 ? "reconciliation" : "retry",
           new Date(Date.now() + delay),
+          needsReview ? "manual_review" : "transfer_unavailable",
         ],
       );
       console.warn(

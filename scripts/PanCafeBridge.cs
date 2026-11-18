@@ -49,6 +49,9 @@ public static class PanCafeBridge
         Array.Clear(left,0,left.Length);Array.Clear(right,0,right.Length);return diff==0;
     }
     static List<Dictionary<string,string>> Query(string sql) {return PanCafeReadOnly.Query(database,clientDirectory,sql);}
+    static string PhoneDigits(string column) {
+        return "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE("+column+",''),' ',''),'-',''),'(',''),')',''),'+',''),'.','')";
+    }
     static string FirebaseColumn(string key,string pattern) {
         string name=Setting(key).Trim().ToUpperInvariant();
         if(!Regex.IsMatch(name,pattern)) throw new InvalidOperationException("Invalid Firebase member column");
@@ -86,7 +89,7 @@ public static class PanCafeBridge
                 Reply(response,200,PanCafeProfileWriter.Update(database,clientDirectory,id,Field(body,"username"),Field(body,"firstName").Trim(),Field(body,"lastName").Trim(),Field(body,"phone"),Field(body,"address"),Field(body,"currentPassword"),Field(body,"newPassword"),Field(body,"revision"),Field(body,"operationId"),Field(body,"requestHash"),apiKey,Field(body,"cardUid").Trim().ToUpperInvariant()));return;
             }
             if(request.HttpMethod=="GET" && route=="/capabilities") {
-                Reply(response,200,new[]{new Dictionary<string,string>{{"ADMIN_ADJUSTMENTS",Enabled("allowAdminAdjustments")?"true":"false"},{"FIREBASE_BALANCE_WRITE",FirebaseBalanceWriteEnabled()?"true":"false"},{"MEMBER_LIST","true"}}});return;
+                Reply(response,200,new[]{new Dictionary<string,string>{{"ADMIN_ADJUSTMENTS",Enabled("allowAdminAdjustments")?"true":"false"},{"FIREBASE_BALANCE_WRITE",FirebaseBalanceWriteEnabled()?"true":"false"},{"MEMBER_LIST","true"},{"MEMBER_SEARCH_FIELDS","true"}}});return;
             }
             if(request.HttpMethod=="GET" && route=="/health") {
                 VerifyDatabase();
@@ -119,9 +122,27 @@ public static class PanCafeBridge
                 Reply(response,200,PanCafeNativeSessions.Status(database,clientDirectory,folder,terminalId,memberId,request.QueryString["username"],request.QueryString["operationId"]));return;
             }
             if(request.HttpMethod=="GET" && route=="/admin/members") {
-                int after=0;string search=request.QueryString["search"]??"";
-                if(!Int32.TryParse(request.QueryString["after"]??"0",out after)||after<0||!Regex.IsMatch(search,@"\A[a-zA-Z0-9_.]{0,32}\z")) {Reply(response,400,new {error="invalid_search"});return;}
-                Reply(response,200,Query("SELECT FIRST 101 "+projection+" FROM MEMBERS WHERE ID>"+after+" AND LOWER(USERNAME) CONTAINING '"+search.ToLowerInvariant()+"' ORDER BY ID"));return;
+                int after;
+                if(!Int32.TryParse(request.QueryString["after"]??"0",out after)||after<0) {Reply(response,400,new {error="invalid_search"});return;}
+                string search=request.QueryString["search"]??"", field=request.QueryString["field"]??"username";
+                string predicate=null;int memberId;
+                if(field=="username" && Regex.IsMatch(search,@"\A[a-zA-Z0-9_.]{0,32}\z"))
+                    predicate=search.Length==0 ? "1=1" : "USERNAME CONTAINING ?";
+                else if(field=="number" && Regex.IsMatch(search,@"\A[1-9][0-9]{0,9}\z") && Int32.TryParse(search,out memberId))
+                    predicate="ID=CAST(? AS INTEGER)";
+                else if(field=="name" && Regex.IsMatch(search,@"\A[\p{L}\p{M} .'’\-]{1,65}\z"))
+                    predicate="POSITION(CAST(? AS VARCHAR(65) CHARACTER SET UTF8) COLLATE UNICODE_CI_AI IN "+
+                        "CAST(TRIM(COALESCE(NAME,''))||' '||TRIM(COALESCE(LASTNAME,'')) AS VARCHAR(65) CHARACTER SET UTF8) COLLATE UNICODE_CI_AI)>0";
+                else if(field=="phone" && Regex.IsMatch(search,@"\A[0-9+().\s-]{3,32}\z")) {
+                    search=Regex.Replace(search,"[^0-9]","");
+                    if(search.Length==12 && search.StartsWith("90")) search=search.Substring(2);
+                    else if(search.Length==11 && search.StartsWith("0")) search=search.Substring(1);
+                    if(search.Length>=3) predicate="("+PhoneDigits("GSM")+" CONTAINING ? OR "+PhoneDigits("PHONE")+" CONTAINING ?)";
+                }
+                if(predicate==null) {Reply(response,400,new {error="invalid_search"});return;}
+                string[] parameters=predicate=="1=1" ? null : field=="phone" ? new[]{search,search} : new[]{search};
+                string sql="SELECT FIRST 101 "+projection+" FROM MEMBERS WHERE ID>"+after+" AND "+predicate+" ORDER BY ID";
+                Reply(response,200,PanCafeReadOnly.Query(database,clientDirectory,sql,parameters));return;
             }
             if(request.HttpMethod=="GET" && route=="/firebase/members") {
                 if(!config.ContainsKey("allowFirebaseSync") || !Convert.ToBoolean(config["allowFirebaseSync"])) {Reply(response,503,new {error="firebase_sync_disabled"});return;}

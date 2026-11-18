@@ -2,6 +2,8 @@
 
 Panel: http://localhost:3001/admin/
 
+PHP 7.4 barındırmada çalışan web rapor paneli ve Ödeal bildirim kuyruğu kurulumu için [cPanel rehberi](../scripts/admin-cloud/KURULUM.md).
+
 ## Çalışan özellikler
 - Ayrı yönetici hesabı; kurucu, operatör ve izleyici yetkileri. Şifreler scrypt ile türetilir; oturum anahtarlarının yalnızca hash'i saklanır. Üye oturumları yönetici API'lerine giremez.
 - Tek kullanımlık, yalnızca yerel bağlantıdan erişilen kurulum; ADMIN_SETUP_TOKEN gizli ortam ayarı gerekir. İlk kurulumdan sonra bu yol yeniden hesap oluşturamaz.

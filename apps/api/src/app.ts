@@ -58,6 +58,7 @@ import { AdminService } from "./admin/service";
 import { createAdminController } from "./admin/controller";
 import { MemberProfileService, normalizePhone } from './profile/service';
 import { createWalletMemberSync } from "./cafe/firebase-sync";
+import { HostedAdminSync } from "./admin/hosted-sync";
 import { SCoinService } from "./cafe/s-coin";
 import { kioskHistory } from "./cafe/kiosk-history";
 import { calculateQuote } from "./payments/service";
@@ -163,7 +164,13 @@ class SafeErrors implements ExceptionFilter {
 export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   assertDevelopment(env);
   const panCafe = env.CAFE_ADAPTER === "pancafe";
-  const odeal = odealSettings(env);
+  const hostedUrl = env.HOSTED_ADMIN_URL ? new URL(env.HOSTED_ADMIN_URL) : null;
+  const hostedKey = env.HOSTED_ADMIN_BRIDGE_KEY ?? "";
+  const hostedRelay = env.HOSTED_ADMIN_ODEAL_RELAY === "true";
+  if ((hostedUrl && (hostedUrl.href !== "https://stechespor.com/wallet/admin/" || !/^[a-f0-9]{64}$/.test(hostedKey))) ||
+      (hostedRelay && !hostedUrl)) throw new Error("Hosted admin configuration is invalid.");
+  const odeal = odealSettings(hostedRelay ? { ...env, ODEAL_WEBHOOK_BASE_URL: new URL("odeal", hostedUrl!).href } : env);
+  if (hostedRelay && !odeal) throw new Error("Hosted Ödeal relay requires local Ödeal configuration.");
   if (odeal && !env.KIOSK_DEVICE_KEY)
     throw new Error("Ödeal requires kiosk device authentication.");
   if (odeal?.mode === "live" && (!panCafe || env.PANCAFE_BALANCE_CREDIT !== "true"))
@@ -218,7 +225,19 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const posPayments = odeal && odealProvider
     ? new PersistentPaymentService(db, posCafe, odealProvider, odeal.mode === "live" ? "pancafe" : "mock", liveSCoin, odeal.deviceCode)
     : null;
-  const admin = new AdminService(db, bridge, payments, env, posPayments ?? undefined);
+  let kioskLastSeenAt: string | undefined;
+  const admin = new AdminService(db, bridge, payments, env, posPayments ?? undefined, () => ({
+    kioskConfigured: Boolean(env.KIOSK_DEVICE_KEY),
+    kioskLastSeenAt,
+    paymentMode: odeal?.mode === "live" ? "live" : odeal?.mode === "stage" ? "stage" :
+      panCafe && !simulation ? "disabled" : "simulation",
+    walletSync: walletMemberSync && {
+      status: walletMemberSync.status,
+      lastSuccessfulSyncAt: walletMemberSync.lastSuccessfulSyncAt,
+    },
+  }));
+  const hostedAdmin = hostedUrl ? new HostedAdminSync(hostedUrl, hostedKey, db, () => admin.overview(),
+    hostedRelay && odeal && posPayments && odealProvider ? { payments: posPayments, provider: odealProvider, device: odeal.deviceCode } : undefined) : null;
   const AdminController = createAdminController(admin);
  const kioskManagement = new KioskManagement(db); await kioskManagement.init();
  const KioskManagementController = createKioskManagementController(kioskManagement, admin);
@@ -254,7 +273,6 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   function user(req: Request) {
     return auth.user(token(req));
   }
-  let kioskLastSeenAt: string | undefined;
   @Controller()
   class ApiController {
     @Post("kiosk/heartbeat")
@@ -643,8 +661,10 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       promotionSync?.start();
       testSCoin?.start();
       liveSCoin?.start();
+      hostedAdmin?.start();
     }
     async onModuleDestroy() {
+      await hostedAdmin?.stop();
       await payments.stopWorker();
       await posPayments?.stopWorker();
       await Promise.all([testSCoin?.stop(), liveSCoin?.stop()]);

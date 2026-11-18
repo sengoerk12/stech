@@ -1,0 +1,6 @@
+RewriteEngine On
+RewriteRule ^odeal/(payment-succeeded|basket-cancelled|payment-cancelled|payment-failed)/?$ webhook.php [END]
+
+<FilesMatch "^(runtime|odeal-notification)\.php$">
+    Require all denied
+</FilesMatch>

@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 import type { Database, SqlExecutor } from "../database/database";
 import { PanCafeBridgeClient } from "../cafe/pancafe";
 import { panCafeMoney, type PanCafeRow } from "../cafe/pancafe-reader";
+import { mapPanCafeHistory } from "../cafe/pancafe-history";
 import type { PersistentPaymentService } from "../payments/persistent-service";
 import type { Promotion } from "@stech/contracts";
 const derive = promisify(scrypt);
@@ -59,6 +60,19 @@ function date(value: unknown): string {
     throw new BadRequestException("Geçersiz tarih.");
   return new Date(result).toISOString();
 }
+function dayStart(value: string) {
+  const d = new Date(`${value}T00:00:00+03:00`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(d.getTime()) ||
+      new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Istanbul" }).format(d) !== value)
+    throw new BadRequestException("Geçerli bir tarih seç.");
+  return d;
+}
+type ConnectionStatus = {
+  kioskConfigured: boolean;
+  kioskLastSeenAt?: string;
+  paymentMode: "live" | "stage" | "simulation" | "disabled";
+  walletSync: { status: string; lastSuccessfulSyncAt?: string } | null;
+};
 export async function adminAudit(
   tx: SqlExecutor,
   actor: Admin,
@@ -83,6 +97,7 @@ export class AdminService {
     private payments: PersistentPaymentService,
     private env: NodeJS.ProcessEnv,
     private posPayments?: PersistentPaymentService,
+    private connections?: () => ConnectionStatus,
   ) {}
   async status() {
     return {
@@ -289,10 +304,15 @@ export class AdminService {
     });
   }
   async overview() {
+    const connections = this.connections?.();
     const summary = (
       await this.db.query(
-        "SELECT count(*)::int AS payments, count(*) FILTER(WHERE status='completed')::int AS completed, count(*) FILTER(WHERE status='transferring')::int AS waiting, count(*) FILTER(WHERE status='failed')::int AS failed, COALESCE(sum(amount) FILTER(WHERE status='completed'),0)::text AS amount, COALESCE(sum(bonus) FILTER(WHERE status='completed'),0)::text AS bonus FROM payment_orders WHERE transfer_target=$1",
-        [this.bridge ? "pancafe" : "mock"],
+        `SELECT count(*)::int AS payments, count(*) FILTER(WHERE status='completed')::int AS completed,
+          count(*) FILTER(WHERE status='transferring')::int AS waiting, count(*) FILTER(WHERE status='failed')::int AS failed,
+          COALESCE(sum(amount) FILTER(WHERE status='completed'),0)::text AS amount,
+          COALESCE(sum(bonus) FILTER(WHERE status='completed'),0)::text AS bonus FROM payment_orders
+         WHERE transfer_target=$1 OR ($2::boolean AND transfer_target='mock' AND payment_provider='odeal')`,
+        [this.bridge ? "pancafe" : "mock", connections?.paymentMode === "stage"],
       )
     ).rows[0];
     let connected = false,
@@ -300,7 +320,7 @@ export class AdminService {
     try {
       if (this.bridge) {
         const caps = await this.bridge.request("/capabilities");
-        await this.bridge.request("/admin/members?after=0&search=");
+        await this.bridge.request("/admin/members?after=2147483647&search=");
         connected = true;
         balanceAdjustment = caps?.[0]?.ADMIN_ADJUSTMENTS === "true";
       }
@@ -309,13 +329,43 @@ export class AdminService {
       summary,
       connected,
       cafe: this.bridge ? "PanCafe" : "Mock",
-      paymentProvider: "simulation",
+      connections,
+      paymentProvider: connections?.paymentMode ?? "disabled",
+      topupEnabled: await this.topupEnabled(),
       pushDelivery: false,
       refunds: false,
       activeSessions: false,
       balanceAdjustment,
       timeZone: "Europe/Istanbul",
     };
+  }
+  async paymentReport(from: string, to: string) {
+    const start = dayStart(from);
+    const end = dayStart(to);
+    end.setUTCDate(end.getUTCDate() + 1);
+    const days = (end.getTime() - start.getTime()) / 86400000;
+    if (days < 1 || days > 366)
+      throw new BadRequestException("Rapor için 1–366 günlük bir tarih aralığı seç.");
+    const live = Boolean(this.bridge);
+    const { rows: [summary] } = await this.db.query(`
+      WITH captured AS (
+        SELECT p.id,p.amount,p.status FROM payment_orders p
+        WHERE p.transfer_target=$3 AND p.payment_provider=$4 AND p.status IN ('transferring','completed')
+          AND (SELECT min(a.created_at) FROM audit_logs a WHERE a.resource_id=p.id::text
+            AND a.event='payment.status' AND a.metadata->>'status'='transferring') <@ tstzrange($1,$2,'[)')
+      ), credited AS (
+        SELECT l.kind,l.amount FROM transfer_ledger l JOIN payment_orders p ON p.id=l.payment_id
+        WHERE p.transfer_target=$3 AND p.payment_provider=$4 AND l.created_at >= $1 AND l.created_at < $2
+      )
+      SELECT (SELECT COALESCE(sum(amount),0)::text FROM captured) AS captured,
+        (SELECT count(*)::int FROM captured) AS captured_count,
+        (SELECT COALESCE(sum(amount),0)::text FROM captured WHERE status='transferring') AS waiting,
+        (SELECT count(*)::int FROM captured WHERE status='transferring') AS waiting_count,
+        (SELECT COALESCE(sum(amount),0)::text FROM credited WHERE kind='topup') AS transferred,
+        (SELECT COALESCE(sum(amount),0)::text FROM credited WHERE kind='bonus') AS bonus`,
+      [start, end, live ? "pancafe" : "mock", live ? "odeal" : "mock"],
+    );
+    return { from, to, live, summary };
   }
   private source() {
     if (!this.bridge)
@@ -337,16 +387,24 @@ export class AdminService {
       joinedAt: row.JOINED_AT,
     };
   }
-  async members(search = "", after = "0") {
+  async members(search = "", after = "0", field = "username") {
+    search = typeof search === "string" ? search.trim() : "\0";
+    const valid = field === "username" ? /^[a-zA-Z0-9_.]{0,32}$/.test(search) :
+      field === "number" ? /^[1-9]\d{0,9}$/.test(search) && Number(search) <= 2147483647 :
+      field === "phone" ? /^[\d+().\s-]{3,32}$/.test(search) && search.replace(/\D/g, "").length >= 3 :
+      field === "name" && /^[\p{L}\p{M} .'’\-]{1,65}$/u.test(search);
     if (
-      !/^[a-zA-Z0-9_.]{0,32}$/.test(search) ||
+      !valid ||
       !/^\d{1,10}$/.test(after) ||
       Number(after) > 2147483647
     )
-      throw new BadRequestException("Kullanıcı adıyla ara.");
+      throw new BadRequestException("Arama türüne uygun bir değer gir.");
+    const bridge = this.source();
+    if (field !== "username" && (await bridge.request("/capabilities"))?.[0]?.MEMBER_SEARCH_FIELDS !== "true")
+      throw new ServiceUnavailableException("Bu arama için PanCafe köprüsünü güncelleyip yeniden başlat.");
     const rows =
-      (await this.source().request(
-        `/admin/members?search=${encodeURIComponent(search)}&after=${after}`,
+      (await bridge.request(
+        `/admin/members?search=${encodeURIComponent(search)}&after=${after}${field === "username" ? "" : `&field=${field}`}`,
       )) ?? [];
     return {
       items: rows.slice(0, 100).map((row) => this.member(row)),
@@ -361,10 +419,36 @@ export class AdminService {
     );
     if (!rows?.[0] || rows[0].ID !== id || rows[0].USERNAME !== username)
       throw new NotFoundException("Üye bulunamadı.");
-    const history = await this.source().request(
-      `/transactions?id=${id}&username=${encodeURIComponent(username)}`,
-    );
-    return { member: this.member(rows[0]), history: history ?? [] };
+    const bridge = this.source();
+    const [history, payments] = await Promise.all([
+      rows[0].ACCSTATUS === "1" ? bridge.request(`/transactions?id=${id}&username=${encodeURIComponent(username)}`) : [],
+      this.db.query<{ id: string; amount: number; bonus: number; balance_after: string | null; happened_at: Date; status: string; completed_manually: boolean }>(`
+        SELECT p.id,p.amount,p.bonus,p.status,p.balance_after,COALESCE(l.created_at,p.created_at) AS happened_at,
+          EXISTS(SELECT 1 FROM audit_logs a WHERE a.resource_id=p.id::text AND a.event='admin.payment.manual_transfer') AS completed_manually
+        FROM payment_orders p JOIN cafe_member_links m ON m.user_id=p.user_id
+        LEFT JOIN transfer_ledger l ON l.payment_id=p.id AND l.kind='topup'
+        WHERE m.member_id=$1 AND m.installation_id=$2 AND p.transfer_target='pancafe' AND p.payment_provider='odeal'
+        ORDER BY happened_at DESC,p.id DESC LIMIT 100`, [id, bridge.installationId]),
+    ]);
+    const paymentIds = new Set(payments.rows.map(payment => payment.id));
+    const activity = (history ?? []).flatMap(row => {
+      try {
+        return mapPanCafeHistory(row, username, bridge.installationId, true).map(tx => ({
+          ...tx, description: tx.description?.replace(/^S TECH admin [0-9a-f-]{36} /i, ""),
+          source: tx.creditId && paymentIds.has(tx.creditId.toLowerCase()) ? "Ödeal POS" :
+            row.TERMINALNAME === "S TECH Admin" ? "Yönetici" : "PanCafe",
+        }));
+      } catch { return []; } // Expose unclassified native records separately rather than guessing their amount or date.
+    });
+    const nativeIds = new Set(activity.map(tx => tx.creditId?.toLowerCase()));
+    const pos = payments.rows.filter(p => !nativeIds.has(p.id)).map(p => ({
+      id: p.id, amount: p.amount, createdAt: new Date(p.happened_at).toISOString(), source: "Ödeal POS",
+      title: p.completed_manually ? "Manuel aktarım" : "POS yüklemesi", status: p.status,
+      balanceAfter: p.balance_after == null ? undefined : Number(p.balance_after),
+      description: p.bonus ? `Bonus: ${p.bonus / 100} TL` : undefined,
+    }));
+    return { member: this.member(rows[0]), history: history ?? [],
+      activity: [...activity, ...pos].sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100) };
   }
   async adjust(actor: Admin, input: unknown) {
     const d = object(input),
@@ -550,7 +634,7 @@ export class AdminService {
       return { ok: true };
     });
   }
-  async paymentList(status = "", before = "", cashier = false) {
+  async paymentList(status = "", before = "", cashier = false, search = "", beforeId = "", paymentId = "") {
     if (cashier) status = "transferring";
     if (
       status &&
@@ -558,31 +642,54 @@ export class AdminService {
     )
       throw new BadRequestException("Geçersiz durum.");
     const until = before ? date(before) : "2100-01-01T00:00:00Z";
+    const cursorDate = beforeId && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(before) ? before : until;
+    if (beforeId) uuid(beforeId);
+    if (paymentId) uuid(paymentId);
+    if (typeof search !== "string" || !/^[a-zA-Z0-9_.-]{0,36}$/.test(search.trim()))
+      throw new BadRequestException("Kullanıcı adı veya işlem numarasıyla ara.");
     return (
       await this.db.query(
         `SELECT p.id,p.user_id,p.amount,p.bonus,p.status,p.transfer_target,p.created_at,p.balance_after,
-          l.member_username AS username,j.status AS transfer_status,j.attempts,
+          p.payment_provider,p.pos_cancelled_at,
+          to_char(p.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_date,
+          COALESCE(l.member_username,d.username) AS username,j.status AS transfer_status,j.attempts,j.last_failure_code,j.last_failure_at,
           ($4::boolean AND p.status='transferring' AND p.transfer_target='pancafe' AND p.payment_provider='odeal'
            AND p.pos_cancelled_at IS NULL AND j.status IN ('queued','retry','reconciliation')
            AND EXISTS(SELECT 1 FROM payment_events e WHERE e.payment_id=p.id AND e.provider='odeal')) AS can_complete_manually,
           (p.status='completed' AND EXISTS(SELECT 1 FROM audit_logs a
             WHERE a.resource_id=p.id::text AND a.event='admin.payment.manual_transfer')) AS completed_manually
           FROM payment_orders p LEFT JOIN cafe_member_links l ON l.user_id=p.user_id
+          LEFT JOIN demo_members d ON d.user_id=p.user_id AND p.transfer_target='mock'
           LEFT JOIN transfer_jobs j ON j.payment_id=p.id
-          WHERE ($1='' OR p.status=$1) AND p.created_at<$2 AND p.transfer_target=$3
+          WHERE ($1='' OR p.status=$1) AND (p.created_at<$2 OR (p.created_at=$2 AND p.id<$6::uuid))
+            AND (p.transfer_target=$3 OR ($9::boolean AND p.transfer_target='mock' AND p.payment_provider='odeal'))
+            AND ($7='' OR strpos(lower(COALESCE(l.member_username,d.username,'')),lower($7))>0 OR strpos(p.id::text,lower($7))=1)
+            AND ($8::uuid IS NULL OR p.id=$8::uuid)
             AND (NOT $5::boolean OR (p.payment_provider='odeal' AND p.pos_cancelled_at IS NULL
               AND EXISTS(SELECT 1 FROM payment_events e WHERE e.payment_id=p.id AND e.provider='odeal')))
-          ORDER BY p.created_at DESC LIMIT 100`,
-        [status, until, this.bridge || cashier ? "pancafe" : "mock", Boolean(this.posPayments), cashier],
+          ORDER BY p.created_at DESC,p.id DESC LIMIT 100`,
+        [status, cursorDate, this.bridge || cashier ? "pancafe" : "mock", Boolean(this.posPayments), cashier,
+          beforeId || null, search.trim(), paymentId || null, !cashier && this.connections?.().paymentMode === "stage"],
       )
     ).rows;
+  }
+  async paymentDetail(id: string, cashier: boolean) {
+    const [payment] = await this.paymentList("", "", cashier, "", "", uuid(id));
+    if (!payment) throw new NotFoundException("Ödeme bulunamadı.");
+    const { rows: timeline } = await this.db.query(`
+      SELECT event,created_at,metadata->>'status' AS status,metadata->>'username' AS administrator
+      FROM audit_logs WHERE resource_id=$1 AND event IN ('payment.status','admin.payment.retry','admin.payment.manual_transfer')
+      ORDER BY created_at,id`, [id]);
+    return { payment, timeline };
   }
   async retryPayment(actor: Admin, id: string) {
     uuid(id);
     const result = await this.db.transaction(async (tx) => {
       const claimed = await tx.query(
-        "UPDATE transfer_jobs SET status='retry',next_attempt_at=now() WHERE payment_id=$1 AND status IN ('retry','reconciliation') AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=$1 AND p.status='transferring' AND p.transfer_target=$2 AND p.pos_cancelled_at IS NULL) RETURNING payment_id",
-        [id, this.bridge ? "pancafe" : "mock"],
+        `UPDATE transfer_jobs SET status='retry',next_attempt_at=now() WHERE payment_id=$1 AND status IN ('retry','reconciliation')
+         AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=$1 AND p.status='transferring' AND p.pos_cancelled_at IS NULL
+           AND (p.transfer_target=$2 OR ($3::boolean AND p.transfer_target='mock' AND p.payment_provider='odeal'))) RETURNING payment_id`,
+        [id, this.bridge ? "pancafe" : "mock", this.connections?.().paymentMode === "stage"],
       );
       if (!claimed.rows.length)
         throw new ConflictException("Bu ödeme yeniden aktarıma uygun değil.");

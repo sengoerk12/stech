@@ -12,6 +12,7 @@ $bridgeHome = Join-Path $serverHome 'Bridge'
 $bridgeConfig = Join-Path $bridgeHome 'connection.json'
 $pairingFile = Join-Path $serverHome 'pairing.json'
 $walletEnv = Join-Path $serverHome 'wallet-api.env'
+$hostedAdminEnv = Join-Path $serverHome 'hosted-admin.env'
 $activeKiosk = Join-Path $project 'kiosk\dist\current'
 $port = 3091
 $healthUrl = "http://127.0.0.1:$port/api/v1/health"
@@ -234,6 +235,9 @@ function Start-Api($Config, $Pairing) {
             if (Test-Path -LiteralPath $walletEnv -PathType Leaf) {
                 $arguments += ('"' + "--env-file=$walletEnv" + '"')
             }
+            if (Test-Path -LiteralPath $hostedAdminEnv -PathType Leaf) {
+                $arguments += ('"' + "--env-file=$hostedAdminEnv" + '"')
+            }
             $arguments += ('"' + $entry + '"')
             $started = Start-Background $node $arguments $cwd (Join-Path $serverHome 'launcher-api') { Get-Health $healthUrl }
             if ($started.kioskTicketRedeem -ne $true) { throw 'Baslatilan API bilet islemini desteklemiyor.' }
@@ -246,8 +250,17 @@ function Start-Api($Config, $Pairing) {
     if (!$connected) { throw 'API acik ancak PanCafe veya kiosk eslestirmesi dogrulanamadi.' }
 }
 
+function Test-HostedOdealRelay {
+    return (Test-Path -LiteralPath $hostedAdminEnv -PathType Leaf) -and
+        ((Get-Content -LiteralPath $hostedAdminEnv) -ccontains 'HOSTED_ADMIN_ODEAL_RELAY=true')
+}
+
 function Start-Pos {
     if (!(Test-Path -LiteralPath (Join-Path $posHome 'odeal-api.env'))) { return }
+    if (Test-HostedOdealRelay) {
+        Write-Host 'Odeal bildirimleri stechespor.com uzerinden aliniyor.' -ForegroundColor Green
+        return
+    }
     $gateway = Join-Path $PSScriptRoot 'odeal-webhook-gateway.cjs'
     $node = (Get-Command node.exe).Source
     if (!(Test-Listener 3011)) {
@@ -435,7 +448,8 @@ try {
             Write-Host ('B kiosku: {0} (son baglanti {1})' -f $state, $lastSeen.ToLocalTime().ToString('dd.MM.yyyy HH:mm:ss'))
         }
         else { Write-Host 'B kiosku: henuz baglanti sinyali alinmadi.' }
-        Write-Host ('Odeal tuneli: ' + $(if ((Get-Health 'http://127.0.0.1:4040/api/tunnels').tunnels) { 'acik' } else { 'kapali' }))
+        if (Test-HostedOdealRelay) { Write-Host 'Odeal bildirim adresi: stechespor.com' }
+        else { Write-Host ('Odeal tuneli: ' + $(if ((Get-Health 'http://127.0.0.1:4040/api/tunnels').tunnels) { 'acik' } else { 'kapali' })) }
         Write-Host "Yonetim paneli: $adminUrl"
         if ($interactive) { [void](Read-Host 'Kapatmak icin Enter') }
         return

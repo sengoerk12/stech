@@ -46,12 +46,12 @@ public static class PanCafeReadOnly
         } finally { pin.Free(); }
     }
 
-    public static List<Dictionary<string,string>> Query(string database, string clientDirectory, string sql)
+    public static List<Dictionary<string,string>> Query(string database, string clientDirectory, string sql, string[] parameters = null)
     {
         if (IntPtr.Size != 4) throw new InvalidOperationException("PanCafe requires the x86 PowerShell host.");
         if (!sql.TrimStart().StartsWith("SELECT ", StringComparison.OrdinalIgnoreCase) || sql.Contains(";"))
             throw new InvalidOperationException("Only a single SELECT is accepted.");
-        return Run(database,clientDirectory,sql,false,null);
+        return Run(database,clientDirectory,sql,false,parameters);
     }
     internal static List<Dictionary<string,string>> Write(string database,string clientDirectory,string sql,string[] parameters) {
         return Run(database,clientDirectory,sql,true,parameters);

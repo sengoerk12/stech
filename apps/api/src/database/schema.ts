@@ -19,11 +19,14 @@ export const schema = [
   `CREATE TABLE IF NOT EXISTS transfer_jobs (
     payment_id uuid PRIMARY KEY REFERENCES payment_orders(id), status text NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','processing','retry','completed','reconciliation')),
     attempts integer NOT NULL DEFAULT 0, lease_token uuid, lease_until timestamptz, next_attempt_at timestamptz NOT NULL DEFAULT now())`,
+  `ALTER TABLE transfer_jobs ADD COLUMN IF NOT EXISTS last_failure_code text`,
+  `ALTER TABLE transfer_jobs ADD COLUMN IF NOT EXISTS last_failure_at timestamptz`,
   `CREATE TABLE IF NOT EXISTS transfer_ledger (
     payment_id uuid NOT NULL REFERENCES payment_orders(id), kind text NOT NULL CHECK(kind IN ('topup','bonus')),
     amount integer NOT NULL CHECK(amount > 0), remote_reference text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(payment_id, kind))`,
   `CREATE TABLE IF NOT EXISTS notification_preferences (user_id text PRIMARY KEY REFERENCES app_users(id), marketing boolean NOT NULL DEFAULT false, transactions boolean NOT NULL DEFAULT true, low_balance boolean NOT NULL DEFAULT true)`,
   `CREATE TABLE IF NOT EXISTS audit_logs (id uuid PRIMARY KEY, event text NOT NULL, resource_id text NOT NULL, metadata jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS audit_resource_created ON audit_logs(resource_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS app_promotions (id text PRIMARY KEY, definition jsonb NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS demo_wallets (user_id text PRIMARY KEY REFERENCES app_users(id), balance bigint NOT NULL CHECK(balance >= 0 AND balance <= 9007199254740991), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS demo_wallet_operations (operation_id text PRIMARY KEY, user_id text NOT NULL REFERENCES demo_wallets(user_id), amount integer NOT NULL, bonus integer NOT NULL, balance_after bigint NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
