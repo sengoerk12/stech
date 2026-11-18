@@ -158,6 +158,41 @@ export class PersistentPaymentService {
     );
     return result.rows.map(publicPayment);
   }
+  async retryTransfer(userId: string, paymentId: string): Promise<Payment> {
+    const payment = await this.get(userId, paymentId);
+    if (payment.transferNeedsReview && this.posDevice) {
+      await this.processPayment(paymentId, userId);
+      return this.get(userId, paymentId);
+    }
+    return payment;
+  }
+  async completeManualTransfer(paymentId: string, recordOperator: (tx: SqlExecutor) => Promise<void>) {
+    if (!this.posDevice || this.target !== "pancafe") {
+      throw new ConflictException("Manuel aktarım yalnızca onaylanmış PanCafe POS ödemelerinde kullanılabilir.");
+    }
+    const eligible = `p.id=$1 AND p.transfer_target='pancafe' AND p.payment_provider='odeal'
+      AND p.status='transferring' AND p.pos_cancelled_at IS NULL
+      AND EXISTS(SELECT 1 FROM payment_events e WHERE e.payment_id=p.id AND e.provider='odeal')`;
+    const readyStatuses = "('queued','retry','reconciliation')";
+    const conflict = () => new ConflictException("Ödeme aktarım için uygun değil veya şu anda işleniyor. Durumu yenile.");
+    const { rows: [payment] } = await this.db.query<PaymentRow>(
+      `SELECT p.* FROM payment_orders p WHERE ${eligible}
+        AND EXISTS(SELECT 1 FROM transfer_jobs j WHERE j.payment_id=p.id AND j.status IN ${readyStatuses})`, [paymentId],
+    );
+    if (!payment) throw conflict();
+    const { balance } = await this.cafe.getBalance(payment.user_id);
+    await this.db.transaction(async tx => {
+      const updated = await tx.query(
+        `UPDATE transfer_jobs SET status='completed',lease_token=NULL,lease_until=NULL
+          WHERE payment_id=$1 AND status IN ${readyStatuses}
+          AND EXISTS(SELECT 1 FROM payment_orders p WHERE ${eligible}) RETURNING payment_id`, [paymentId],
+      );
+      if (!updated.rows.length) throw conflict();
+      await this.finishTransfer(tx, payment, balance);
+      await recordOperator(tx);
+    });
+    return { ok: true };
+  }
   async deleteOdealUnpaidBasket(
     id: string,
     deleteBasket: (id: string) => Promise<boolean>,
@@ -268,14 +303,18 @@ export class PersistentPaymentService {
       );
     });
   }
-  async processPayment(paymentId: string): Promise<void> {
+  async processPayment(paymentId: string, retryForUser?: string): Promise<void> {
     const leaseToken = randomUUID();
     const claimed = await this.db.query<{ attempts: number }>(
       `UPDATE transfer_jobs SET status='processing',lease_token=$2,
       lease_until=now()+interval '30 seconds', attempts=attempts+1 WHERE payment_id=$1 AND
-      ((status IN ('queued','retry') AND next_attempt_at<=now()) OR (status='processing' AND lease_until<now()))
-      AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=transfer_jobs.payment_id AND p.transfer_target=$3 AND p.payment_provider=$4 AND p.status='transferring' AND p.pos_cancelled_at IS NULL) RETURNING attempts`,
-      [paymentId, leaseToken, this.target, this.providerName],
+      (($5::text IS NULL AND ((status IN ('queued','retry') AND next_attempt_at<=now()) OR (status='processing' AND lease_until<now())))
+        OR ($5::text IS NOT NULL AND status='reconciliation'))
+      AND EXISTS(SELECT 1 FROM payment_orders p WHERE p.id=transfer_jobs.payment_id AND p.transfer_target=$3 AND p.payment_provider=$4
+        AND p.status='transferring' AND p.pos_cancelled_at IS NULL
+        AND ($5::text IS NULL OR (p.user_id=$5 AND EXISTS(SELECT 1 FROM payment_events e WHERE e.payment_id=p.id AND e.provider=p.payment_provider))))
+      RETURNING attempts`,
+      [paymentId, leaseToken, this.target, this.providerName, retryForUser ?? null],
     );
     if (!claimed.rows.length) return;
     const attempts = claimed.rows[0].attempts;
@@ -291,6 +330,7 @@ export class PersistentPaymentService {
         row.amount,
         row.bonus,
         row.id,
+        retryForUser !== undefined,
       );
       await this.db.transaction(async (tx) => {
         const job = await tx.query(
@@ -298,24 +338,10 @@ export class PersistentPaymentService {
           [paymentId, leaseToken],
         );
         if (!job.rows.length) return; // A newer lease owns completion.
-        await tx.query(
-          `INSERT INTO transfer_ledger(payment_id,kind,amount,remote_reference) VALUES($1::uuid,'topup',$2,$1::text) ON CONFLICT DO NOTHING`,
-          [paymentId, row.amount],
-        );
-        if (row.bonus)
-          await tx.query(
-            `INSERT INTO transfer_ledger(payment_id,kind,amount,remote_reference) VALUES($1::uuid,'bonus',$2,$1::text) ON CONFLICT DO NOTHING`,
-            [paymentId, row.bonus],
-          );
-        await tx.query(
-          `UPDATE payment_orders SET status='completed',balance_after=$2 WHERE id=$1`,
-          [paymentId, wallet.balance],
-        );
-        await audit(tx, paymentId, "completed");
-        if (this.target === "pancafe") await this.sCoin?.enqueue(tx, row);
+        await this.finishTransfer(tx, row, wallet.balance);
       });
     } catch (error) {
-      if (error instanceof ActiveCafeSessionError) {
+      if (!retryForUser && error instanceof ActiveCafeSessionError) {
         await this.db.query(
           `UPDATE transfer_jobs SET status='retry',lease_until=NULL,next_attempt_at=now()+interval '5 seconds',
            attempts=GREATEST(attempts-1,0) WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
@@ -323,7 +349,7 @@ export class PersistentPaymentService {
         );
         return;
       }
-      const needsReview = error instanceof PanCafeCreditReviewError;
+      const needsReview = retryForUser !== undefined || error instanceof PanCafeCreditReviewError;
       const delay = Math.min(300000, 1000 * 2 ** Math.min(attempts - 1, 8));
       await this.db.query(
         `UPDATE transfer_jobs SET status=$3,lease_until=NULL,next_attempt_at=$4 WHERE payment_id=$1 AND lease_token=$2 AND status='processing'`,
@@ -342,6 +368,23 @@ export class PersistentPaymentService {
         }),
       );
     }
+  }
+  private async finishTransfer(tx: SqlExecutor, payment: PaymentRow, balance: number) {
+    await tx.query(
+      `INSERT INTO transfer_ledger(payment_id,kind,amount,remote_reference)
+        VALUES($1::uuid,'topup',$2,$1::text) ON CONFLICT DO NOTHING`,
+      [payment.id, payment.amount],
+    );
+    if (payment.bonus) {
+      await tx.query(
+        `INSERT INTO transfer_ledger(payment_id,kind,amount,remote_reference)
+          VALUES($1::uuid,'bonus',$2,$1::text) ON CONFLICT DO NOTHING`,
+        [payment.id, payment.bonus],
+      );
+    }
+    await tx.query("UPDATE payment_orders SET status='completed',balance_after=$2 WHERE id=$1", [payment.id, balance]);
+    await audit(tx, payment.id, "completed");
+    if (this.target === "pancafe") await this.sCoin?.enqueue(tx, payment);
   }
   async drain(): Promise<void> {
     if (this.draining) return this.draining;

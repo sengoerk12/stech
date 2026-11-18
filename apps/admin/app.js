@@ -58,7 +58,8 @@ const statusLabel = {
 };
 const badge = (s) =>
   `<span class="badge ${s === "completed" ? "ok" : "warn"}">${esc(statusLabel[s] ?? s)}</span>`;
-const canWrite = () => admin && admin.role !== "viewer";
+const cashier = () => admin?.role === "cashier";
+const canWrite = () => admin && !cashier() && admin.role !== "viewer";
 async function api(path, body, method = body ? "POST" : "GET", extra = {}) {
   const r = await fetch("/api/v1/admin/" + path, {
     method,
@@ -148,6 +149,8 @@ async function loginScreen() {
       });
       token = result.token;
       admin = result.admin;
+      page = cashier() ? "payments" : "overview";
+      cache = {};
       await render();
     } catch (error) {
       f.querySelector(".error").textContent = error.message;
@@ -158,11 +161,12 @@ async function loginScreen() {
 }
 async function render() {
   if (!admin) return loginScreen();
+  if (cashier()) page = "payments";
   root.innerHTML = `<div class="shell"><aside><div class="brand">S TECH<small>YÖNETİM MERKEZİ</small></div><nav>${Object.entries(
     titles,
   )
     .filter(
-      ([k]) => !["accounts", "settings"].includes(k) || admin.role === "owner",
+      ([k]) => cashier() ? k === "payments" : !["accounts", "settings"].includes(k) || admin.role === "owner",
     )
     .map(
       ([k, v]) =>
@@ -170,7 +174,7 @@ async function render() {
     )
     .join(
       "",
-    )}</nav><footer><div>${esc(admin.username)} · ${esc({ owner: "Kurucu", operator: "Operatör", viewer: "İzleyici" }[admin.role])}</div>${button("Şifremi değiştir", "password")}${button("Güvenli çıkış", "logout")}</footer></aside><main class="workspace"><header><div><p class="eyebrow">S TECH / İŞLETME YÖNETİMİ</p><h1>${titles[page]}</h1><span class="muted">Kontrol sende. Her değişiklik kayıt altında.</span></div>${button("Yenile", "refresh")}</header><div id="content"><div class="loading">Kayıtlar yükleniyor…</div></div></main></div>`;
+    )}</nav><footer><div>${esc(admin.username)} · ${esc({ owner: "Kurucu", operator: "Operatör", viewer: "İzleyici", cashier: "Kasa" }[admin.role])}</div>${cashier() ? "" : button("Şifremi değiştir", "password")}${button("Güvenli çıkış", "logout")}</footer></aside><main class="workspace"><header><div><p class="eyebrow">S TECH / İŞLETME YÖNETİMİ</p><h1>${titles[page]}</h1><span class="muted">Kontrol sende. Her değişiklik kayıt altında.</span></div>${button("Yenile", "refresh")}</header><div id="content"><div class="loading">Kayıtlar yükleniyor…</div></div></main></div>`;
   try {
     await renderPage();
   } catch (error) {
@@ -238,7 +242,7 @@ async function renderPage() {
     return;
   }
   if (page === "payments") {
-    const status = cache.paymentStatus ?? "";
+    const status = cashier() ? "transferring" : cache.paymentStatus ?? "";
     cache.payments = await api(
       "payments?status=" +
         status +
@@ -246,21 +250,24 @@ async function renderPage() {
           ? "&before=" + encodeURIComponent(cache.paymentBefore)
           : ""),
     );
-    c.innerHTML = `<div class="toolbar">${select("Durum", "paymentStatus", [["", "Tümü"], ...Object.entries(statusLabel).filter(([k]) => ["pending", "transferring", "completed", "failed"].includes(k))], status)}</div>${table(
+    c.innerHTML = `<div class="toolbar">${cashier() ? badge(status) : select("Durum", "paymentStatus", [["", "Tümü"], ...Object.entries(statusLabel).filter(([k]) => ["pending", "transferring", "completed", "failed"].includes(k))], status)}</div>${table(
       ["Üye / işlem", "Yükleme", "Bonus", "Durum", "Aktarım", "Tarih", ""],
       cache.payments.map((p) => [
         `${esc(p.username ?? p.user_id)}<small>${esc(p.id)}</small>`,
         money(p.amount),
         money(p.bonus),
         badge(p.status),
-        badge(p.transfer_status ?? "—"),
+        badge(p.completed_manually ? "Manuel olarak aktarıldı" : p.transfer_status ?? "—"),
         date(p.created_at),
-        canWrite() && ["retry", "reconciliation"].includes(p.transfer_status)
-          ? button("Aktarımı yeniden dene", "payment-retry", p.id)
-          : "",
+        [
+          canWrite() && p.status === "transferring" && ["retry", "reconciliation"].includes(p.transfer_status)
+            ? button("Aktarımı yeniden dene", "payment-retry", p.id) : "",
+          (canWrite() || cashier()) && p.can_complete_manually ? button("Manuel olarak aktarıldı", "payment-manual", p.id) : "",
+        ].filter(Boolean).join(" "),
       ]),
     )}<div class="toolbar">${cache.payments.length === 100 ? button("Daha eski ödemeler", "payments-more") : ""}${cache.paymentBefore ? button("En yeni ödemeler", "payments-first") : ""}</div>`;
-    c.querySelector("select").onchange = (e) => {
+    const statusSelect = c.querySelector("select");
+    if (statusSelect) statusSelect.onchange = (e) => {
       cache.paymentStatus = e.target.value;
       cache.paymentBefore = "";
       void render();
@@ -320,7 +327,7 @@ async function renderPage() {
       cache.accounts.map((a) => [
         esc(a.username),
         esc(
-          { owner: "Kurucu", operator: "Operatör", viewer: "İzleyici" }[a.role],
+          { owner: "Kurucu", operator: "Operatör", viewer: "İzleyici", cashier: "Kasa" }[a.role],
         ),
         badge(a.active ? "Aktif" : "Kapalı"),
         a.role === "owner"
@@ -768,6 +775,16 @@ document.addEventListener("click", async (e) => {
       toast("Aktarım yeniden kontrol edildi.");
       return void render();
     }
+    if (a === "payment-manual") {
+      const payment = cache.payments.find((p) => p.id === id);
+      if (!payment?.can_complete_manually) return;
+      const bonus = payment.bonus ? ` ve ${money(payment.bonus)} bonus` : "";
+      if (!confirm(`${payment.username ?? payment.user_id} için ${money(payment.amount)}${bonus} PanCafe’ye elle aktarıldı mı? Ödeme tamamlandı olarak kaydedilecek.`)) return;
+      el.disabled = true;
+      await api("payments/" + id + "/manual-transfer", {});
+      toast("Ödeme manuel olarak aktarıldı.");
+      return void render();
+    }
     if (a === "adjust-retry") {
       const x = cache.adjustments.find((x) => x.id === id);
       el.disabled = true;
@@ -801,6 +818,7 @@ document.addEventListener("click", async (e) => {
             [
               ["operator", "Operatör"],
               ["viewer", "İzleyici"],
+              ["cashier", "Kasa"],
             ],
             "viewer",
           ),

@@ -10,7 +10,7 @@ $runtime = Join-Path $env:WINDIR 'Microsoft.NET\assembly\GAC_MSIL\System.Runtime
 $winRuntime = Join-Path (Split-Path -Parent $compiler) 'System.Runtime.WindowsRuntime.dll'
 $sources = @('PanCafeReadOnly.cs','PanCafeMemberWriter.cs','PanCafeBalanceWriter.cs','PanCafeHistoryReader.cs',
     'PanCafeAdminWriter.cs','PanCafeProfileWriter.cs','PanCafeConnectedTerminals.cs','PanCafeNativeSessions.cs',
-    'PanCafeNativeCredits.cs','PanCafeNativeNavigation.cs','PanCafeScreenText.cs','PanCafeBridge.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+    'PanCafeNativeCredits.cs','PanCafeNativeTickets.cs','PanCafeNativeNavigation.cs','PanCafeScreenText.cs','PanCafeBridge.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 & $compiler /nologo /platform:x86 /target:winexe /main:PanCafeBridge /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:Accessibility.dll "/reference:$runtime" "/reference:$winRuntime" "/win32manifest:$(Join-Path $PSScriptRoot 'pancafe-bridge.manifest')" "/out:$(Join-Path $OutputDirectory 'PanCafeBridge.exe')" $winReferences $sources
 if($LASTEXITCODE -ne 0) {throw 'Bridge build failed.'}
 Write-Output "Bridge built in $OutputDirectory. Start explicitly and approve Windows elevation yourself."

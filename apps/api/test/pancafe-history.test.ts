@@ -62,3 +62,14 @@ test("native POS receipts accept the same credit marker and amount as the PanCaf
   ]);
   assert.throws(() => map({ ...row, NOTE: row.NOTE + "1" }));
 });
+
+test("native history: POS deposit uses the recorded paid and bonus split", () => {
+  const operation = "a8544b1a-34a8-46b2-8364-0002be2d3b4e";
+  const row = record({ RAW_AMOUNT_TL: "1150.00", BALANCE_TL: "1350.00",
+    NOTE: "Nakit. STechPOS-" + operation.replaceAll("-", ""), PAYMENT_ID: operation,
+    PAID_KURUS: "100000", BONUS_KURUS: "15000", CREDIT_BALANCE_TL: "1350.00" });
+  assert.deepEqual(map(row).map(({ amount, balanceAfter }) => [amount, balanceAfter]),
+    [[15000, 135000], [100000, 120000]]);
+  assert.deepEqual(map({ ...row, RAW_AMOUNT_TL: "1000.00" }), map(row));
+  assert.throws(() => map({ ...row, NOTE: "Hesaba para yüklendi." }));
+});

@@ -43,7 +43,7 @@ export class PanCafeBridgeClient {
           "Content-Type": "application/json",
         },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(path === "/sessions/start" ? 105_000 : path === "/credit" ? 25_000 : 10_000),
+        signal: AbortSignal.timeout(path === "/sessions/start" ? 105_000 : ["/credit", "/tickets/redeem"].includes(path) ? 25_000 : 10_000),
       });
     } catch {
       throw new ServiceUnavailableException(
@@ -251,21 +251,30 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   }
   async getComputers(userId: string) {
     await this.row(userId);
+    return this.readComputers();
+  }
+  async getFloorAvailability() {
+    const { computers } = await this.readComputers();
+    return computers.map(({ name, available, status }) => ({ name, available, status }));
+  }
+  private async readComputers() {
     const rows = await this.client.request("/computers");
     if (!rows) throw new ServiceUnavailableException("Bilgisayar listesi alınamıyor.");
     return { startSupported: this.config.allowVirtualSessionStart === true, computers: rows.map(row => {
       if (!/^[1-9]\d*$/.test(row.ID ?? '') || !row.NAME || !/^\d+$/.test(row.TERMINALSTATUS ?? ''))
         throw new ServiceUnavailableException("Bilgisayar bilgileri doğrulanamadı.");
-      const canWake = row.WAKABLE === '1';
+      const occupied = ['3', '4', '5'].includes(row.TERMINALSTATUS!);
+      const reserved = row.RESERVED === '1' && !occupied;
+      const canWake = !reserved && row.WAKABLE === '1';
       return {
         id: row.ID!,
         name: row.NAME!,
         virtual: row.ISVIRTUAL === '1',
-        canStart: this.config.allowVirtualSessionStart === true &&
+        canStart: !reserved && this.config.allowVirtualSessionStart === true &&
           (row.STARTSUPPORTED === '1' || (row.STARTSUPPORTED == null && row.ISVIRTUAL === '1')),
         canWake,
-        available: row.TERMINALSTATUS === '1' || canWake,
-        status: canWake ? 'wakeable' : row.TERMINALSTATUS === '1' ? 'available' : ['3', '4', '5'].includes(row.TERMINALSTATUS!) ? 'occupied' : 'unavailable',
+        available: !reserved && (row.TERMINALSTATUS === '1' || canWake),
+        status: reserved ? 'reserved' : canWake ? 'wakeable' : row.TERMINALSTATUS === '1' ? 'available' : occupied ? 'occupied' : 'unavailable',
       };
     }) };
   }
@@ -282,7 +291,7 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
           terminalId: Number(terminalId), memberId: Number(member.ID), username: member.USERNAME, operationId,
         });
     const result = rows?.[0];
-    if (!result || !['started', 'waking', 'pending', 'failed', 'busy', 'occupied', 'unsupported', 'member', 'active', 'ambiguous', 'conflict', 'review', 'not_started'].includes(result.RESULT_CODE ?? ''))
+    if (!result || !['started', 'waking', 'pending', 'failed', 'busy', 'occupied', 'unsupported', 'member', 'insufficient_balance', 'active', 'ambiguous', 'conflict', 'review', 'not_started'].includes(result.RESULT_CODE ?? ''))
       throw new ServiceUnavailableException('PanCafe bağlantısı bekleniyor.');
     if (result.RESULT_CODE === 'started') {
       await this.db.query(`INSERT INTO audit_logs(id,event,resource_id,metadata) VALUES($1,'kiosk.session.started',$2,$3::jsonb) ON CONFLICT(id) DO NOTHING`,
@@ -363,7 +372,26 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
     await this.row(userId);
     return "";
   }
-  async addBalance(userId: string, amount: number, bonus: number, operationId: string): Promise<Wallet> {
+  async assertCreditReady() {
+    const readiness = await this.client.request("/credit/readiness");
+    if (readiness?.[0]?.READY !== "true")
+      throw new ServiceUnavailableException("POS ile yükleme için PanCafe otomatik üye bonusu kapatılmalı. Şube yetkilisine başvur.");
+  }
+  async redeemTicket(userId: string, barcode: string) {
+    const member = await this.row(userId);
+    const response = (await this.client.request("/tickets/redeem", {
+      memberId: Number(member.ID), username: member.USERNAME, barcode,
+    }))?.[0];
+    const status = response?.RESULT_CODE;
+    if (status === "ok" && /^\d+$/.test(response?.AMOUNT_KURUS ?? "")) {
+      const amount = Number(response!.AMOUNT_KURUS);
+      if (Number.isSafeInteger(amount) && amount > 0) return { status, amount };
+    }
+    if (status === "already_credited" || status === "unavailable" || status === "pending" || status === "active")
+      return { status, message: response?.MESSAGE };
+    throw new ServiceUnavailableException("PanCafe bilet sonucunu doğrulamadı. Aynı bileti tekrar okut.");
+  }
+  async addBalance(userId: string, amount: number, bonus: number, operationId: string, retryUnconfirmed = false): Promise<Wallet> {
     if (!this.config.allowBalanceCredit)
       throw new ServiceUnavailableException("PanCafe bakiye yükleme entegrasyonu henüz etkin değil.");
     if (!Number.isSafeInteger(amount) || amount < 100 || amount > 1000000 ||
@@ -373,6 +401,7 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
     const member = await this.row(userId);
     const rows = await this.client.request("/credit", {
       memberId: Number(member.ID), username: member.USERNAME, amount, bonus, operationId,
+      ...(retryUnconfirmed ? { retryUnconfirmed: true } : {}),
     });
     if (rows?.[0]?.RESULT_CODE === "active") throw new ActiveCafeSessionError();
     if (rows?.[0]?.RESULT_CODE === "credit_ui_review") throw new PanCafeCreditReviewError();

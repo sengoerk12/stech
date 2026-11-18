@@ -26,6 +26,7 @@ export interface CafeSystemAdapter {
     amount: number,
     bonus: number,
     operationId: string,
+    retryUnconfirmed?: boolean,
   ): Promise<Wallet>;
   getTransactions(userId: string): Promise<Transaction[]>;
   getTransactionPage?(userId: string, cursor?: string): Promise<TransactionPage>;

@@ -118,11 +118,11 @@ export class PersistentAuthService {
       throw new UnauthorizedException("Oturumun sona erdi. Tekrar giriş yap.");
     return result;
   }
-  async user(token: string): Promise<string> {
+  async user(token: string, kioskOnly = false): Promise<string> {
     const session = (
       await this.db.query<SessionRow>(
-        `SELECT s.* FROM auth_sessions s JOIN auth_families f ON f.id=s.family_id WHERE s.token_hash=$1 AND s.kind='access' AND NOT s.revoked AND NOT f.revoked AND s.expires_at>now()`,
-        [hash(token)],
+        `SELECT s.* FROM auth_sessions s JOIN auth_families f ON f.id=s.family_id WHERE s.token_hash=$1 AND s.kind='access' AND NOT s.revoked AND NOT f.revoked AND s.expires_at>now() AND (NOT $2::boolean OR f.is_kiosk)`,
+        [hash(token), kioskOnly],
       )
     ).rows[0];
     if (!session)

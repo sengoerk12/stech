@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createApp } from "../src/app";
-import { openDatabase } from "../src/database/database";
+import { openDatabase, type SqlExecutor } from "../src/database/database";
 import { OdealPaymentProvider, odealSettings } from "../src/payments/odeal";
 import { PersistentPaymentService } from "../src/payments/persistent-service";
 import { ActiveCafeSessionError, PanCafeCreditReviewError, type CafeSystemAdapter } from "../src/cafe/adapter";
@@ -19,17 +19,23 @@ test("Ödeal report recovers an unreported capture once and rejects mismatched r
   t.after(() => db.close());
   let balance = 0, credits = 0, activeSession = true;
   let uiReview = false, uiAttempts = 0;
+  const retryModes: boolean[] = [];
+  const earned: string[] = [];
   const cafe = {
-    async addBalance(_user: string, amount: number, bonus: number) {
+    async getBalance() { return { balance }; },
+    async addBalance(_user: string, amount: number, bonus: number, _id: string, retryUnconfirmed = false) {
       if (activeSession) throw new ActiveCafeSessionError();
       uiAttempts++;
+      retryModes.push(retryUnconfirmed);
       if (uiReview) throw new PanCafeCreditReviewError();
       credits++;
       balance += amount + bonus;
       return { balance };
     },
   } as unknown as CafeSystemAdapter;
-  const service = new PersistentPaymentService(db, cafe, provider, "pancafe", undefined, settings.deviceCode);
+  const service = new PersistentPaymentService(db, cafe, provider, "pancafe", {
+    async enqueue(_tx, payment) { earned.push(payment.id); },
+  }, settings.deviceCode);
   const id = "00000000-0000-4000-8000-000000000001";
   await db.query("INSERT INTO app_users (id,cafe_member_id) VALUES ('member','1')");
   await db.query(`INSERT INTO payment_orders
@@ -56,8 +62,8 @@ test("Ödeal report recovers an unreported capture once and rejects mismatched r
   const job = (await db.query("SELECT status,attempts FROM transfer_jobs WHERE payment_id=$1", [id])).rows[0];
   assert.deepEqual(job, { status: "retry", attempts: 0 });
   await db.query(`INSERT INTO payment_orders
-    (id,user_id,idempotency_key,amount,bonus,status,transfer_target,payment_provider,pos_device_code)
-    VALUES(gen_random_uuid(),'member','order-2',100,0,'pending','pancafe','odeal','KIOSK1')`);
+    (id,user_id,idempotency_key,amount,bonus,status,transfer_target,payment_provider,pos_device_code,checkout_started)
+    VALUES(gen_random_uuid(),'member','order-2',100,0,'pending','pancafe','odeal','KIOSK1',true)`);
   activeSession = false;
   uiReview = true;
   await db.query("UPDATE transfer_jobs SET next_attempt_at=now() WHERE payment_id=$1", [id]);
@@ -70,15 +76,47 @@ test("Ödeal report recovers an unreported capture once and rejects mismatched r
   assert.equal((await service.pending("member")).find(payment => payment.id === id)?.transferNeedsReview, true);
   assert.equal(uiAttempts, 1);
   assert.equal(credits, 0);
+  await assert.rejects(() => service.retryTransfer("different-member", id));
+  assert.equal((await service.retryTransfer("member", id)).transferNeedsReview, true);
+  assert.equal(uiAttempts, 2);
+  assert.equal(credits, 0);
   uiReview = false;
-  await db.query("UPDATE transfer_jobs SET status='retry',next_attempt_at=now() WHERE payment_id=$1", [id]);
-  await service.drain();
+  await Promise.all([service.retryTransfer("member", id), service.retryTransfer("member", id)]);
   const completed = await service.get("member", id);
   assert.equal(completed.status, "completed");
   assert.equal(completed.transferNeedsReview, undefined);
   await service.accept({ paymentId: id, eventId: "provider-1", amount: 20000, currency: "TRY", status: "succeeded" });
+  assert.equal((await service.retryTransfer("member", id)).status, "completed");
+  assert.equal(uiAttempts, 3);
+  assert.deepEqual(retryModes, [false, true, true]);
   assert.equal(balance, 21000);
   assert.equal(credits, 1);
+
+  const manual = (await db.query<{ id: string }>("SELECT id FROM payment_orders WHERE idempotency_key='order-2'")).rows[0].id;
+  await assert.rejects(() => service.completeManualTransfer(manual, async () => {}));
+  uiReview = true;
+  await service.accept({ paymentId: manual, eventId: "provider-2", amount: 100, currency: "TRY", status: "succeeded" });
+  await service.drain();
+  assert.equal((await service.get("member", manual)).transferNeedsReview, true);
+  balance += 100; // Applied by the cashier in PanCafe.
+  const recordOperator = async (tx: SqlExecutor) => {
+    await tx.query("INSERT INTO audit_logs(id,event,resource_id,metadata) VALUES(gen_random_uuid(),'admin.payment.manual_transfer',$1,'{}')", [manual]);
+  };
+  const outcomes = await Promise.allSettled([
+    service.completeManualTransfer(manual, recordOperator),
+    service.completeManualTransfer(manual, recordOperator),
+  ]);
+  assert.equal(outcomes.filter(outcome => outcome.status === "fulfilled").length, 1);
+  const closed = await service.retryTransfer("member", manual);
+  assert.equal(closed.status, "completed");
+  assert.equal(closed.balanceAfter, 21100);
+  assert.equal(closed.transferNeedsReview, undefined);
+  assert.equal((await service.pending("member")).some(payment => payment.id === manual), false);
+  assert.equal(uiAttempts, 4);
+  assert.equal(credits, 1);
+  assert.deepEqual(earned, [id, manual]);
+  const ledger = await db.query("SELECT amount FROM transfer_ledger WHERE payment_id=$1", [manual]);
+  assert.deepEqual(ledger.rows, [{ amount: 100 }]);
 });
 
 test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verified notification", async (t) => {

@@ -40,6 +40,9 @@ class DesignPreviewGateway {
   async pcAvailability() {
     return { total: this.terminals.length, available: this.terminals.filter(pc => pc.available).length };
   }
+  async floorAvailability() {
+    return this.terminals.map(({ name, available, status }) => ({ name, available, status }));
+  }
   async computers() {
     return { startSupported: true, computers: structuredClone(this.terminals) };
   }

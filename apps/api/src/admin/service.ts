@@ -21,7 +21,7 @@ import type { PersistentPaymentService } from "../payments/persistent-service";
 import type { Promotion } from "@stech/contracts";
 const derive = promisify(scrypt);
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
-type Role = "owner" | "operator" | "viewer";
+type Role = "owner" | "operator" | "viewer" | "cashier";
 export type Admin = { id: string; username: string; role: Role };
 function object(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input))
@@ -183,6 +183,7 @@ export class AdminService {
     header: string | undefined,
     write = false,
     owner = false,
+    allowCashier = false,
   ): Promise<Admin> {
     if (!header?.startsWith("Bearer "))
       throw new UnauthorizedException("Yönetici girişi gerekli.");
@@ -193,7 +194,8 @@ export class AdminService {
       )
     ).rows[0];
     if (!row) throw new UnauthorizedException("Yönetici oturumu sona erdi.");
-    if ((write && row.role === "viewer") || (owner && row.role !== "owner"))
+    if ((write && row.role === "viewer") || (owner && row.role !== "owner") ||
+      (row.role === "cashier" && !allowCashier))
       throw new ForbiddenException("Bu işlem için yetkin yok.");
     return row;
   }
@@ -246,8 +248,8 @@ export class AdminService {
   async createAccount(actor: Admin, input: unknown) {
     const data = this.credentials(input),
       role = object(input).role;
-    if (!["operator", "viewer"].includes(String(role)))
-      throw new BadRequestException("Operatör veya izleyici rolü seç.");
+    if (role !== "operator" && role !== "viewer" && role !== "cashier")
+      throw new BadRequestException("Operatör, izleyici veya kasa rolü seç.");
     const salt = randomBytes(32).toString("hex"),
       password = ((await derive(data.password, salt, 64)) as Buffer).toString(
         "hex",
@@ -548,7 +550,8 @@ export class AdminService {
       return { ok: true };
     });
   }
-  async paymentList(status = "", before = "") {
+  async paymentList(status = "", before = "", cashier = false) {
+    if (cashier) status = "transferring";
     if (
       status &&
       !["pending", "transferring", "completed", "failed"].includes(status)
@@ -557,8 +560,20 @@ export class AdminService {
     const until = before ? date(before) : "2100-01-01T00:00:00Z";
     return (
       await this.db.query(
-        "SELECT p.id,p.user_id,p.amount,p.bonus,p.status,p.transfer_target,p.created_at,p.balance_after,l.member_username AS username,j.status AS transfer_status,j.attempts FROM payment_orders p LEFT JOIN cafe_member_links l ON l.user_id=p.user_id LEFT JOIN transfer_jobs j ON j.payment_id=p.id WHERE ($1='' OR p.status=$1) AND p.created_at<$2 AND p.transfer_target=$3 ORDER BY p.created_at DESC LIMIT 100",
-        [status, until, this.bridge ? "pancafe" : "mock"],
+        `SELECT p.id,p.user_id,p.amount,p.bonus,p.status,p.transfer_target,p.created_at,p.balance_after,
+          l.member_username AS username,j.status AS transfer_status,j.attempts,
+          ($4::boolean AND p.status='transferring' AND p.transfer_target='pancafe' AND p.payment_provider='odeal'
+           AND p.pos_cancelled_at IS NULL AND j.status IN ('queued','retry','reconciliation')
+           AND EXISTS(SELECT 1 FROM payment_events e WHERE e.payment_id=p.id AND e.provider='odeal')) AS can_complete_manually,
+          (p.status='completed' AND EXISTS(SELECT 1 FROM audit_logs a
+            WHERE a.resource_id=p.id::text AND a.event='admin.payment.manual_transfer')) AS completed_manually
+          FROM payment_orders p LEFT JOIN cafe_member_links l ON l.user_id=p.user_id
+          LEFT JOIN transfer_jobs j ON j.payment_id=p.id
+          WHERE ($1='' OR p.status=$1) AND p.created_at<$2 AND p.transfer_target=$3
+            AND (NOT $5::boolean OR (p.payment_provider='odeal' AND p.pos_cancelled_at IS NULL
+              AND EXISTS(SELECT 1 FROM payment_events e WHERE e.payment_id=p.id AND e.provider='odeal')))
+          ORDER BY p.created_at DESC LIMIT 100`,
+        [status, until, this.bridge || cashier ? "pancafe" : "mock", Boolean(this.posPayments), cashier],
       )
     ).rows;
   }
@@ -577,6 +592,13 @@ export class AdminService {
     await this.payments.processPayment(id);
     await this.posPayments?.processPayment(id);
     return result;
+  }
+  async completeManualPayment(actor: Admin, id: string) {
+    uuid(id);
+    if (!this.posPayments) throw new ConflictException("PanCafe POS aktarımı hazır değil.");
+    return this.posPayments.completeManualTransfer(id, tx =>
+      adminAudit(tx, actor, "payment.manual_transfer", id, {}),
+    );
   }
   async audit(before = "") {
     return (

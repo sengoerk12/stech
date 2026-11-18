@@ -126,6 +126,23 @@ test(`HTTP: PanCafe mock checkout uses the ${nativeCredit ? "native" : "isolated
     assert.equal((await realFetch(base + "/api/v1/me/session-history")).status, 401);
     assert.equal((await realFetch(base + "/api/v1/me/transactions?cursor=unsafe", { headers })).status, 400);
     if (nativeCredit) {
+      const ticket = (ticketHeaders: Record<string, string>, body: object = { barcode: "0123456789" }) =>
+        realFetch(base + "/api/v1/kiosk/tickets/redeem", {
+          method: "POST", headers: ticketHeaders, body: JSON.stringify(body),
+        });
+      assert.equal((await ticket(headers)).status, 401);
+      assert.equal((await ticket({ ...headers, "X-Kiosk-Key": kioskKey })).status, 401);
+      const kioskLogin = await realFetch(base + "/api/v1/kiosk/password-login", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Kiosk-Key": kioskKey },
+        body: JSON.stringify({ identifier: "kaan2", password: "PanCafePassword!" }),
+      });
+      assert.equal(kioskLogin.status, 201);
+      const kioskHeaders = { "Content-Type": "application/json", "X-Kiosk-Key": kioskKey,
+        Authorization: "Bearer " + (await kioskLogin.json() as { accessToken: string }).accessToken };
+      assert.equal((await ticket(kioskHeaders, { barcode: "0123456789", amount: 100000 })).status, 400);
+      assert.equal(bridge.ticketRequests.length, 0);
+      assert.deepEqual(await (await ticket(kioskHeaders)).json(), { status: "ok", amount: 2500 });
+      assert.deepEqual(bridge.ticketRequests, [{ barcode: "0123456789", memberId: 2, username: "kaan2" }]);
       historyUnavailable = true;
       bridge.rows[1].BALANCE_TL = "148.75";
       bridge.rows[1].USERNAME = "kaan_renamed";
@@ -389,6 +406,7 @@ function fixture(id: string, username: string): PanCafeRow {
 }
 class TestBridge extends PanCafeBridgeClient {
   sessionStarts = new Map<string, unknown>();
+  ticketRequests: unknown[] = [];
   historyRows: PanCafeRow[] = [];
   sessionRows: PanCafeRow[] = [];
   credits = new Map<string, { memberId: number; username: string; amount: number; bonus: number; balance: string }>();
@@ -412,6 +430,10 @@ class TestBridge extends PanCafeBridgeClient {
     if (path === "/card-member") {
       const matches = this.rows.filter(row => row.LASTNAME?.trim().toUpperCase() === body.cardUid);
       return matches.length === 1 && matches[0].ACCSTATUS === "1" ? matches : null;
+    }
+    if (path === "/tickets/redeem") {
+      this.ticketRequests.push(body);
+      return [{ RESULT_CODE: "ok", AMOUNT_KURUS: "2500", BALANCE_TL: "445.00" }];
     }
     if (path === "/credit") {
       const previous = this.credits.get(body.operationId);
@@ -628,6 +650,8 @@ test('computer list distinguishes ready, occupied and unavailable terminals', as
         { ID: '4', NAME: 'PC-4', TERMINALSTATUS: '5' },
         { ID: '5', NAME: 'PC-5', TERMINALSTATUS: '4' },
         { ID: '6', NAME: 'PC-6', ISVIRTUAL: '0', WAKABLE: '1', STARTSUPPORTED: '1', TERMINALSTATUS: '0' },
+        { ID: '7', NAME: 'PC-7', ISVIRTUAL: '0', RESERVED: '1', WAKABLE: '1', STARTSUPPORTED: '1', TERMINALSTATUS: '0' },
+        { ID: '8', NAME: 'PC-8', ISVIRTUAL: '0', RESERVED: '1', STARTSUPPORTED: '1', TERMINALSTATUS: '1' },
       ];
       return super.request(path, body);
     }
@@ -637,8 +661,9 @@ test('computer list distinguishes ready, occupied and unavailable terminals', as
     const member = await cafe.authenticate('first', 'PanCafePassword!');
     assert(member);
     const result = await cafe.getComputers(member.id);
-    assert.deepEqual(result.computers.map(pc => pc.status), ['available', 'occupied', 'unavailable', 'occupied', 'occupied', 'wakeable']);
-    assert.deepEqual(result.computers.map(pc => pc.canStart), [true, false, false, false, false, true]);
+    assert.deepEqual(result.computers.map(pc => pc.status), ['available', 'occupied', 'unavailable', 'occupied', 'occupied', 'wakeable', 'reserved', 'reserved']);
+    assert.deepEqual(result.computers.map(pc => pc.canStart), [true, false, false, false, false, true, false, false]);
     assert.equal(result.computers[5].available, true);
+    assert.ok(result.computers.slice(6).every(pc => !pc.available && !pc.canWake));
   } finally { await db.close(); }
 });

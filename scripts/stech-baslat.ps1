@@ -97,20 +97,24 @@ function Stop-Bridge {
     Stop-LauncherProcess 'PanCafeBridge' 'PanCafe koprusu' { param($p) $p.ExecutablePath -eq $bridgeExe }
 }
 
+function Stop-Api {
+    $entry = Join-Path $PSScriptRoot 'start-server.cjs'
+    $serverEnvironments = @((Join-Path $serverHome 'launcher-api.env'), (Join-Path $serverHome 'api.env'), (Join-Path $posHome 'odeal-api.env'))
+    Stop-LauncherProcess 'node' 'S TECH sunucusu' { param($p)
+        (Test-LaunchArgument $p $entry) -and
+            [bool]($serverEnvironments | Where-Object { Test-LaunchArgument $p "--env-file=$_" })
+    }
+}
+
 function Stop-Server {
     $gateway = Join-Path $PSScriptRoot 'odeal-webhook-gateway.cjs'
     $caddyConfig = Join-Path $serverHome 'Caddyfile'
-    $entry = Join-Path $PSScriptRoot 'start-server.cjs'
-    $serverEnvironments = @((Join-Path $serverHome 'launcher-api.env'), (Join-Path $serverHome 'api.env'), (Join-Path $posHome 'odeal-api.env'))
     Stop-LauncherProcess 'ngrok' 'Odeal tuneli' { param($p)
         (Test-LaunchArgument $p 'http://127.0.0.1:3011') -and (Test-LaunchArgument $p '--inspect=false') -and (Test-LaunchArgument $p '--log=stdout')
     }
     Stop-LauncherProcess 'node' 'Odeal bildirim servisi' { param($p) Test-LaunchArgument $p $gateway }
     Stop-LauncherProcess 'caddy' 'Yerel HTTPS' { param($p) Test-LaunchArgument $p $caddyConfig }
-    Stop-LauncherProcess 'node' 'S TECH sunucusu' { param($p)
-        (Test-LaunchArgument $p $entry) -and
-            [bool]($serverEnvironments | Where-Object { Test-LaunchArgument $p "--env-file=$_" })
-    }
+    Stop-Api
 }
 
 function Initialize-Server($SetupMode) {
@@ -198,23 +202,24 @@ $adminSetupSetting
 
 function Start-Api($Config, $Pairing) {
     $existing = Get-Health $healthUrl
-    if ($existing) {
-        if ($existing.cafe -ne 'pancafe') { throw "Port $port uzerindeki API PanCafe modunda degil." }
-    } else {
-        if (Test-Listener $port) { throw "Port $port baska bir uygulama tarafindan kullaniliyor." }
-        $app = Join-Path $project 'apps\api\dist\apps\api\src\app.js'
+    if ($existing -and $existing.cafe -ne 'pancafe') { throw "Port $port uzerindeki API PanCafe modunda degil." }
+    if (!$existing -or $existing.kioskTicketRedeem -ne $true) {
+        if (!$existing -and (Test-Listener $port)) { throw "Port $port baska bir uygulama tarafindan kullaniliyor." }
         $walletDependency = Join-Path $project 'node_modules\mysql2'
         $needsWalletDependency = (Test-Path -LiteralPath $walletEnv -PathType Leaf) -and !(Test-Path -LiteralPath $walletDependency)
-        if (!(Test-Path -LiteralPath $app) -or $needsWalletDependency) {
-            Push-Location -LiteralPath $project
-            try {
-                if (!(Test-Path -LiteralPath 'node_modules\typescript') -or $needsWalletDependency) {
-                    & npm.cmd ci --workspace '@stech/api' --include-workspace-root=false | Out-Host
-                    if ($LASTEXITCODE) { throw 'API bagimliliklari kurulamadi.' }
-                }
-                & npm.cmd run build:api | Out-Host
-                if ($LASTEXITCODE) { throw 'API derlenemedi.' }
-            } finally { Pop-Location }
+        Push-Location -LiteralPath $project
+        try {
+            if (!(Test-Path -LiteralPath 'node_modules\typescript') -or $needsWalletDependency) {
+                & npm.cmd ci --workspace '@stech/api' --include-workspace-root=false | Out-Host
+                if ($LASTEXITCODE) { throw 'API bagimliliklari kurulamadi.' }
+            }
+            & npm.cmd run build:api | Out-Host
+            if ($LASTEXITCODE) { throw 'API derlenemedi.' }
+        } finally { Pop-Location }
+        if ($existing) {
+            Write-Host 'Bilet islemini destekleyen API surumu baslatiliyor.'
+            Stop-Api
+            [void](Wait-Ready { !(Get-Health $healthUrl) } "Eski API kapatilamadi. Port: $port")
         }
         $envFile = Get-ServerEnvironment $Config $Pairing
         $node = (Get-Command node.exe).Source
@@ -230,7 +235,8 @@ function Start-Api($Config, $Pairing) {
                 $arguments += ('"' + "--env-file=$walletEnv" + '"')
             }
             $arguments += ('"' + $entry + '"')
-            [void](Start-Background $node $arguments $cwd (Join-Path $serverHome 'launcher-api') { Get-Health $healthUrl })
+            $started = Start-Background $node $arguments $cwd (Join-Path $serverHome 'launcher-api') { Get-Health $healthUrl }
+            if ($started.kioskTicketRedeem -ne $true) { throw 'Baslatilan API bilet islemini desteklemiyor.' }
         } finally {
             $env:ADMIN_WEB_DIR = $oldAdminDir
             $env:KIOSK_UI_DIR = $oldKioskDir

@@ -10,6 +10,34 @@ const balanceCaption = () => isDesignPreview() ? 'Hesabındaki güncel bakiye' :
   : state.walletStale ? 'Bakiye güncellenemedi. Son okunan değer gösteriliyor.' : 'PanCafe hesabındaki güncel bakiye';
 let pcAvailability = 'Bilgisayar durumu alınıyor…';
 let readingPcAvailability = false;
+let readingFloorAvailability = false;
+function floorMapGallery(computers) {
+  const groups = new Map(ComputerZones.summarize(computers).map(group => [group.zone.id, group]));
+  const sections = [['gamer', 'Gamer'], ['master', 'Master 1'], ['master2', 'Master 2'], ['beginner', 'Beginner'], ['player', 'Player']];
+  return `<div class="floor-sheet floor-sheet-overview">${ComputerZones.floorMap(computers)}</div>${sections.map(([id, name]) => {
+    const { zone, computers: rows, total, available } = groups.get(id);
+    return `<section class="floor-sheet${id === 'beginner' || id === 'player' ? ' floor-sheet-wide' : ''}">
+      <div class="floor-sheet-heading"><h3>${name}</h3>${total ? `<span>${available}/${total} kullanılabilir</span>` : ''}</div>
+      ${ComputerZones.isoMap(zone, rows, null, false)}</section>`;
+  }).join('')}`;
+}
+async function refreshFloorAvailability() {
+  const map = $('#floor-map-content');
+  if (state.modal !== 'floor-map' || !map || readingFloorAvailability) return;
+  readingFloorAvailability = true;
+  try {
+    const computers = await call('floorAvailability');
+    if (map.isConnected) {
+      map.innerHTML = floorMapGallery(computers);
+      $('#floor-map-status').textContent = '';
+    }
+  } catch {
+    if (map.isConnected) {
+      map.innerHTML = floorMapGallery([]);
+      $('#floor-map-status').textContent = 'Canlı bilgisayar durumu alınamıyor.';
+    }
+  } finally { readingFloorAvailability = false; }
+}
 async function refreshPcAvailability() {
   if (state.info?.mode !== 'connected' || state.data || readingPcAvailability) return;
   readingPcAvailability = true;
@@ -20,6 +48,7 @@ async function refreshPcAvailability() {
   finally { readingPcAvailability = false; }
   const label = $('#pc-availability');
   if (label && label.textContent !== pcAvailability) label.textContent = pcAvailability;
+  void refreshFloorAvailability();
 }
 const date = value => new Intl.DateTimeFormat('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 const paths = {
@@ -38,6 +67,7 @@ const paths = {
  plus: '<path d="M12 5v14M5 12h14"/>',
  back: '<path d="M20 12H4m6-6-6 6 6 6"/>',
  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/>',
+ barcode: '<path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M7 8v8m3-8v8m4-8v8m3-8v8"/>',
  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/>'
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.info}</svg>`;
@@ -48,6 +78,12 @@ function toast(message) {
   $('#toast').textContent = message; $('#toast').hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => { $('#toast').hidden = true; }, 6000);
 }
+function showInsufficientBalance() {
+  const alert = $('#balance-warning');
+  alert.hidden = false;
+  clearTimeout(showInsufficientBalance.timer);
+  showInsufficientBalance.timer = setTimeout(() => { alert.hidden = true; }, 5000);
+}
 async function call(action, payload) {
   if (!window.stech) throw new Error('Bu ekranı kiosk uygulamasından açın.');
   const result = await window.stech.call(action, payload);
@@ -56,13 +92,15 @@ async function call(action, payload) {
 }
 function reset() {
   kioskGames.endSession();
+  clearTimeout(showInsufficientBalance.timer);
+  $('#balance-warning').hidden = true;
   computerData = undefined; computersError = ''; computerZone = undefined; computerNotice = ''; selectedComputer = undefined; computerStart = undefined; startingComputer = false; state.epoch++; state.quoteVersion++; state.data = null; state.loading = false; state.walletStale = false; state.recentState = ''; state.historyLoading = false; state.page = 'home'; state.history = []; state.historyError = ''; state.payment = null; state.posAttempt = undefined; state.processing = false; state.modal = null; state.pin = ''; state.quote = null; state.promotionId = undefined; state.quoteError = ''; state.amount = '200'; state.filter = 'all'; cardBuffer = '';
   $('#toast').hidden = true; render(); renderModal();
   void refreshPcAvailability();
 }
 function welcome() {
   return `<div class="welcome"><header>${logo}<div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header>
-    <main class="welcome-main"><div class="welcome-copy"><img class="hero-emblem" src="assets/brand-emblem.png" alt="S TECH E-SPOR 1999 aslan amblemi"><span class="eyebrow"><span class="tiny-line"></span> OYUN BURADA BAŞLAR</span><h1>Hazırsan,<br><span>oyuna devam.</span></h1><p>Bakiyen, avantajların ve hesabın.<br>Hepsi tek dokunuş uzağında.</p>${state.info?.mode === 'connected' ? `<div class="pc-availability">${icon('monitor')}<span id="pc-availability" role="status">${e(pcAvailability)}</span></div>` : ''}<div class="welcome-benefits"><span>${icon('topup')}Hızlı yükleme</span><span>${icon('campaigns')}Sana özel fırsatlar</span></div></div>
+    <main class="welcome-main"><div class="welcome-copy"><img class="hero-emblem" src="assets/brand-emblem.png" alt="S TECH E-SPOR 1999 aslan amblemi"><span class="eyebrow"><span class="tiny-line"></span> OYUN BURADA BAŞLAR</span><h1>Hazırsan,<br><span>oyuna devam.</span></h1><p>Bakiyen, avantajların ve hesabın.<br>Hepsi tek dokunuş uzağında.</p>${state.info?.mode === 'connected' ? `<button type="button" class="pc-availability" data-action="open-floor-map" aria-haspopup="dialog" aria-label="Salon haritasını aç" aria-describedby="pc-availability">${icon('monitor')}<span id="pc-availability" role="status">${e(pcAvailability)}</span>${icon('arrow')}</button>` : ''}<div class="welcome-benefits"><span>${icon('topup')}Hızlı yükleme</span><span>${icon('campaigns')}Sana özel fırsatlar</span></div></div>
     <section class="tap-panel"><div class="panel-top"><span>01 / KARTINLA GİRİŞ YAP</span>${icon('shield')}</div><div class="tap-orbit"><div class="tap-ring"></div><div class="tap-ring second"></div><div class="member-card"><div class="member-card-head">S TECH ${icon('nfc')}</div><div class="card-chip"></div><div class="member-card-bottom">PLAYER CARD<span>•••• •••• ••••</span></div></div><span class="tap-symbol">${icon('nfc')}</span></div><h2>${state.loading ? 'Hesabın açılıyor…' : 'Üye kartını okut'}</h2><p>Kartını bilgisayarın yanındaki<br>NFC okuyucuya yaklaştır.</p><div class="reader-status"><i class="${state.loading ? 'pulse' : ''}"></i>${state.loading ? 'Bilgilerin kontrol ediliyor' : 'Kart okutmanı bekliyoruz'}</div>
     ${state.info?.mode === 'demo' ? `<div class="demo-entry"><span>${isDesignPreview() ? 'Hesabını seç' : 'Keşfetmek için bir deneme hesabı seç'}</span>${button((isDesignPreview() ? 'Kaan ' : 'Kaan olarak dene ') + icon('arrow'), 'demo1', 'primary', state.loading)}${button(isDesignPreview() ? 'Deniz' : 'Deniz olarak dene', 'demo2', 'quiet', state.loading)}</div>` : `<div class="password-entry"><span>Kartın yanında değil mi?</span>${button(icon('profile') + ' Kullanıcı adıyla giriş', 'open-password-login', 'secondary wide', state.loading)}</div><div class="secure-note">${icon('shield')} Oturumun işlem sonunda güvenle kapanır.</div>`}</section></main>
     <footer><span>${e(state.info?.station || 'S TECH')} <span class="footer-separator">/</span> MÜŞTERİ NOKTASI</span><span>İyi oyunlar. <span class="orange">İyi ki buradasın.</span></span></footer></div>`;
@@ -80,24 +118,34 @@ const nav = originalNav;
 let campaignRotationTimer;
 let campaignPointerId;
 function scheduleCampaignRotation() {
-  clearTimeout(campaignRotationTimer);
   const track = root.querySelector('.home-campaign-track');
-  if (window.kioskDesign?.config?.behavior.autoplay === false || !track || track.children.length < 2 || state.modal || document.hidden || campaignPointerId !== undefined) return;
+  if (window.kioskDesign?.config?.behavior.autoplay === false || !track || track.children.length < 2 || state.modal || document.hidden || campaignPointerId !== undefined) {
+    clearTimeout(campaignRotationTimer);
+    campaignRotationTimer = undefined;
+    return;
+  }
+  if (campaignRotationTimer !== undefined) return;
   campaignRotationTimer = setTimeout(() => {
-    const next = (Math.round(track.scrollLeft / track.clientWidth) + 1) % track.children.length;
-    track.scrollTo({ left: next * track.clientWidth,
-      behavior: next === 0 || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    campaignRotationTimer = undefined;
+    const current = root.querySelector('.home-campaign-track');
+    if (current?.clientWidth && current.children.length > 1) {
+      const next = (Math.round(current.scrollLeft / current.clientWidth) + 1) % current.children.length;
+      current.scrollTo({ left: next * current.clientWidth,
+        behavior: next === 0 || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    }
     scheduleCampaignRotation();
-  }, (window.kioskDesign?.config?.behavior.sliderSeconds || 4) * 1000);
+  }, 3000);
 }
 
+let zoneAdStartedAt;
 function render() {
   window.kioskDesign?.navigation(nav, originalNav);
-  if (!state.data) { root.innerHTML = welcome(); window.kioskDesign?.apply(root, "welcome"); scheduleCampaignRotation(); return; }
+  if (!state.data) { zoneAdStartedAt = undefined; root.innerHTML = welcome(); window.kioskDesign?.apply(root, "welcome"); scheduleCampaignRotation(); return; }
   const campaignOffset = root.querySelector('.home-campaign-track')?.scrollLeft ?? 0;
   const member = state.data.member;
   const title = nav.find(item => item.id === state.page)?.label;
   const zonePickerOpen = state.page === 'computers' && !computerZone;
+  zoneAdStartedAt = zonePickerOpen ? zoneAdStartedAt ?? performance.now() : undefined;
   root.innerHTML = `<div class="shell ${state.page === 'topup' && !state.payment ? 'topup-screen' : ''}"><aside>${zonePickerOpen ? '' : logo}<div class="station-label">MÜŞTERİ NOKTASI</div><nav aria-label="Ana menü">${nav.map(n => `<button data-page="${n.id}" class="nav-item ${state.page === n.id ? 'active' : ''}" ${state.page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon)}${e(n.label)}${state.page === n.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="member-mini"><div class="avatar">${e(member.name.charAt(0))}</div><div><strong>${e(member.name)}</strong><span>${e(member.username)}</span></div></div>${button(icon('logout') + ' Oturumu bitir', 'logout', 'logout-button')}<span class="sidebar-foot">${icon('shield')} Bu bilgisayar ortak kullanımdadır.</span></div></aside><div class="workspace"><header><span class="breadcrumb">S TECH <span>/</span> ${e(title)}</span>${zonePickerOpen ? `<div class="zone-header-brand">${logo}</div>` : ''}<div class="header-right">${badge()}<span class="clock">${e(state.clock)}</span></div></header><main class="content">${state.page === 'home' ? home() : state.page === 'topup' ? topup() : state.page === 'campaigns' ? campaigns() : state.page === 'history' ? history() : state.page === 'computers' ? computersPage() : state.page === 'games' ? kioskGames.render() : state.page === 'profile' ? profile() : ''}</main><footer><span>${icon('shield')} İşlemin bittiğinde oturumunu kapatmayı unutma.</span><button class="session-time" data-action="continue">Hareketsizlik <b id="seconds">${Math.ceil(state.seconds)}</b> sn ${icon('history')}</button></footer></div></div>`;
   window.kioskDesign?.apply(root, state.page);
   const campaignTrack = root.querySelector('.home-campaign-track');
@@ -123,7 +171,7 @@ function homeCampaigns(promotions) {
 function home() {
   const d = state.data;
   return `<div class="page-heading"><div><span class="eyebrow">TEKRAR HOŞ GELDİN</span><h1>Merhaba, ${e(d.member.name.split(' ')[0])}<span class="orange">.</span></h1><p>Yeni bir oyun, yeni bir heyecan. Hesabın hazır.</p></div><span class="member-badge">${icon('nfc')} S TECH ÜYESİ</span></div>
-  <div class="home-grid"><section class="balance-card"><div class="balance-top"><span>${icon('topup')} KULLANILABİLİR BAKİYEN</span><span class="balance-mark">S /</span></div><div class="balance-value" data-wallet-balance>${balanceText()}</div><div class="balance-caption" data-wallet-caption>${balanceCaption()}</div><div class="balance-bottom">${button('Bakiye yükle ' + icon('plus'), 'go-topup', 'primary')}<span>${icon('shield')} ${isDesignPreview() ? 'Üye hesabı' : state.info.mode === 'demo' ? 'Deneme ortamı' : 'PanCafe bağlantısı'}</span></div><div class="balance-decoration"></div></section>
+  <div class="home-grid"><section class="balance-card"><div class="balance-top"><span>${icon('topup')} KULLANILABİLİR BAKİYEN</span><span class="balance-mark">S /</span></div><div class="balance-value" data-wallet-balance>${balanceText()}</div><div class="balance-caption" data-wallet-caption>${balanceCaption()}</div><div class="balance-bottom">${button('Bakiye yükle ' + icon('plus'), 'go-topup', 'primary')}${state.info.mode === 'connected' && !isDesignPreview() ? button(icon('barcode') + ' Biletler', 'open-ticket-scan', 'secondary ticket-entry') : ''}<span>${icon('shield')} ${state.info.mode === 'demo' ? 'Deneme ortamı' : 'PanCafe bağlantısı'}</span></div><div class="balance-decoration"></div></section>
   ${homeCampaigns(d.promotions)}</div>
   <div class="quick-strip"><div>${icon('nfc')}<span>Kartın yanında,<strong>hesabın elinin altında.</strong></span></div><p>Yükle, avantajları keşfet, oyuna devam et.</p>${button('Hesabımı görüntüle ' + icon('arrow'), 'go-profile', 'quiet')}</div>
   ${(d.pendingPayments || []).length ? `<section class="pending-banner">${icon('history')}<div><strong>Tamamlanmamış işlemin var</strong><span>Kaldığın yerden devam edebilirsin.</span></div>${button('İşlemi aç', 'resume:' + d.pendingPayments[0].id, 'secondary')}</section>` : ''}
@@ -146,9 +194,13 @@ function campaignPicker(amount) {
 }
 function topup() {
   if (state.payment) return paymentView();
+  const pending = state.info.mode === 'connected' ? (state.data.pendingPayments || []) : [];
+  if (pending.length) return `<div class="page-heading"><div><h1>Bekleyen ödeme</h1><p>Devam etmek için mevcut ödeme kaydını aç.</p></div></div>
+    ${pending.map(payment => `<section class="pending-banner">${icon('history')}<div><strong>${cash(payment.amount)} · ${payment.status === 'transferring' ? 'Ödeme alındı' : 'Ödeme bekliyor'}</strong><span>${date(payment.createdAt)}</span></div>${button('Ödeme kaydını aç', 'resume:' + e(payment.id), 'secondary')}</section>`).join('')}`;
   const amount = Number(state.amount || 0) * 100;
   const q = state.quote;
-  return `<div class="page-heading"><div><span class="eyebrow">OYUNA ARA VERME</span><h1>Bir sonraki oyuna hazır ol.</h1><p>Yüklemek istediğin tutarı seç, kartınla öde, devam et.</p></div></div>
+  return `<div class="page-heading"><div><span class="eyebrow">OYUNA ARA VERME</span><h1>Bir sonraki oyuna hazır ol.</h1><p>Yüklemek istediğin tutarı seç, kartınla öde, devam et.</p></div>
+    ${state.info.mode === 'connected' && !isDesignPreview() ? button(icon('barcode') + ' Bilet aktive et', 'open-ticket-scan', 'secondary ticket-entry') : ''}</div>
   ${isDesignPreview() ? '' : state.data.features.odealStage ? '<div class="notice">Ödeal test ortamı · Deneme bakiyesi</div>' : state.info.mode === 'demo' ? '<div class="notice">' + icon('info') + ' Deneme ortamındasın. POS ve bakiye işlemleri temsili olarak çalışır.</div>' : state.data.features.topup ? '' : '<div class="notice">' + icon('info') + ' POS ile yükleme şu anda kapalı.</div>'}
   <div class="topup-grid"><section class="panel amount-panel"><div class="section-heading"><h2>Yükleme tutarı</h2><span>01 / 02</span></div><div class="amount-display"><span>₺</span><strong>${e(state.amount || '0')}</strong><span>TL</span></div><div class="amount-presets">${[100, 200, 500, 1000].map(n => button(`${n} TL`, `amount:${n}`, Number(state.amount) === n ? 'preset selected' : 'preset')).join('')}</div><div class="keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Temizle' : k === 'back' ? '⌫' : k, `key:${k}`, k === 'clear' ? 'key key-small' : 'key')).join('')}</div><p class="muted minimum">En az 1 TL · En fazla 10.000 TL</p></section>
   <section class="summary-column"><div class="panel summary"><span class="eyebrow">İŞLEM ÖZETİ</span><h2>Oyunun kesilmesin.</h2>${campaignPicker(amount)}${state.quoteError ? '<p role="alert" class="quote-error">' + e(state.quoteError) + '</p>' : ''}<div class="summary-row"><span>Yüklenecek tutar</span><strong>${cash(amount)}</strong></div><div class="summary-row"><span>Kampanya bonusu</span><strong class="positive">${q ? '+' + cash(q.bonus) : '—'}</strong></div><div class="summary-row s-coin-quote"><span>Kazanılacak S Coin</span><strong>${Number.isSafeInteger(q?.sCoinEarned) ? e(q.sCoinEarned) + ' S Coin' : '—'}</strong></div><div class="summary-total"><span>Hesabına eklenecek</span><strong>${q ? cash(q.total) : '—'}</strong></div>${q?.bonus ? '<div class="bonus-note">' + icon('bolt') + ' Bu yüklemeyle bonus kazanıyorsun.</div>' : '<p class="muted">Geçerli kampanyalar otomatik uygulanır.</p>'}${button('POS ile ödemeye geç ' + icon('arrow'), 'pay', 'primary wide', !q || !state.data.features.topup || state.processing)}<div class="secure-note">${icon('shield')} Kart bilgilerin bu bilgisayarda tutulmaz.</div></div><div class="payment-how"><span>NASIL ÇALIŞIR?</span><p><b>1</b> Yükleme tutarını seç.</p><p><b>2</b> POS cihazındaki adımları izle.</p><p><b>3</b> Bakiye onayını ekranda gör.</p></div></section></div>`;
@@ -184,9 +236,9 @@ function paymentView() {
     ? button('Ödemeyi iptal et', 'pos-cancel', 'secondary', state.processing)
     : '';
   const title = done ? 'Hazırsın. İyi oyunlar!' : failed ? 'Ödeme tamamlanmadı.' : review ? 'Ödeme alındı, aktarım inceleme bekliyor.' : transferring ? 'Bakiye yükleniyor…' : waiting ? 'POS işlemi kontrol ediliyor…' : 'Kartını POS cihazına okut.';
-  const detail = done ? (isDesignPreview() ? 'Yüklemen ve bonusun hesabına eklendi.' : p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : review ? 'Bu işlem için kasaya başvur. Tekrar ödeme yapmana gerek yok.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
+  const detail = done ? (isDesignPreview() ? 'Yüklemen ve bonusun hesabına eklendi.' : p.simulation || !physical ? 'Yüklemen ve bonusun deneme hesabına eklendi.' : 'Yüklemen ve bonusun PanCafe hesabına eklendi.') : failed ? 'Bu işlem için bakiye eklenmedi.' : review ? 'Alınan ödemenin bakiyeye aktarımını tekrar deneyebilirsin.' : transferring ? 'Ödeme alındı. Bakiyen doğrulandığında burada görünecek.' : waiting ? 'Tutar POS ekranında görünmüyorsa yetkiliye başvur.' : 'POS cihazındaki yönlendirmeleri takip et.<br>Ödeme sonucu burada görünecek.';
   return `<div class="payment-page">${!state.processing && !done && (!physical || failed) ? button(icon('back') + ' Tutara geri dön', 'payment-back', 'quiet') : ''}<div class="payment-steps"><span class="finished">1 <b>Tutar seçimi</b></span><i></i><span class="${done ? 'finished' : 'current'}">2 <b>POS ile ödeme</b></span><i></i><span class="${done ? 'finished' : ''}">3 <b>Bakiye onayı</b></span></div><section class="panel payment-panel"><div class="payment-illustration ${done ? 'success' : failed ? 'failure' : ''}">${icon(done ? 'check' : failed ? 'close' : 'topup')}</div><span class="eyebrow">${done ? 'İŞLEM TAMAMLANDI' : failed ? 'ÖDEME ONAYLANMADI' : 'POS İLE ÖDEME'}</span><h1>${title}</h1><p>${detail}</p><div class="payment-value">${cash(p.amount)}</div><div class="payment-receipt"><span>Yükleme <b>${cash(p.amount)}</b></span><span>Bonus <b class="positive">+${cash(p.bonus)}</b></span>${done ? '<span>Yeni bakiye <b>' + cash(p.balanceAfter) + '</b></span>' : ''}</div>
-  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + button('Durumu kontrol et', 'pos-status', 'secondary', state.processing) + cancel + (isDesignPreview() && p.status === 'pending' ? button('Ödemeyi onayla', 'approve', 'primary', state.processing) + button('Ödemeyi reddet', 'decline', 'secondary', state.processing) : '') + '</div>' : `<div class="pos-demo">${isDesignPreview() ? '' : '<span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span>'}<div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
+  ${done ? '<div class="completion-choice"><h2>Başka bir işlem yapmak ister misin?</h2><div class="completion-actions">' + button('Başka bir işlem yap ' + icon('arrow'), 'another-transaction', 'secondary', state.processing) + button('İşlemleri bitir ' + icon('check'), 'finish-session', 'primary') + '</div></div>' : failed ? button('Yeni işlem başlat', 'payment-back', 'primary') : physical ? '<div class="completion-actions">' + (review ? button(state.processing ? 'Aktarım deneniyor…' : 'Tekrar dene', 'pos-retry', 'primary', state.processing) : button('Durumu kontrol et', 'pos-status', 'secondary', state.processing)) + cancel + (isDesignPreview() && p.status === 'pending' ? button('Ödemeyi onayla', 'approve', 'primary', state.processing) + button('Ödemeyi reddet', 'decline', 'secondary', state.processing) : '') + '</div>' : `<div class="pos-demo">${isDesignPreview() ? '' : '<span>DENEME POS KONTROLLERİ · GERÇEK TAHSİLAT YOK</span>'}<div>${button(icon('check') + ' Ödemeyi onayla', 'approve', 'primary', state.processing)}${button('Ödemeyi reddet', 'decline', 'secondary', state.processing)}</div></div>`}
   <div class="receipt-id">İşlem no: ${e(p.id)}</div></section></div>`;
 }
 function campaigns() {
@@ -259,7 +311,7 @@ function renderModal() {
   scheduleCampaignRotation();
   const host = $('#modal-root');
   clearTimeout(loginFormTimer);
-  root.inert = state.modal === 'password-login';
+  root.inert = ['password-login', 'floor-map', 'ticket-scan'].includes(state.modal);
   if (!state.modal) { host.innerHTML = ''; return; }
   let content;
   if (state.modal === 'password-login') {
@@ -285,15 +337,76 @@ function renderModal() {
   else if (state.modal === 'admin') content = `<span class="eyebrow">YETKİLİ ERİŞİMİ</span><h2>Kiosku kapat</h2><p>Yetkili PIN kodunu gir.${state.info?.mode === 'demo' && !isDesignPreview() ? ' Deneme PIN: 2026.' : ''}</p><input class="pin-input" type="password" value="${e(state.pin)}" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="Yetkili PIN kodu"><div class="keypad admin-keypad">${['1','2','3','4','5','6','7','8','9','clear','0','back'].map(k => button(k === 'clear' ? 'Sil' : k === 'back' ? '⌫' : k, 'pin:' + k, 'key')).join('')}</div>${button('Uygulamayı kapat', 'admin-exit', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   else if (state.modal === 'computer-start' && selectedComputer) {
     content = `<div class="modal-symbol">${icon('monitor')}</div><h2>${e(selectedComputer.name)} açılsın mı?</h2><p>Oturum ${e(state.data.member.username)} üyeliğinle başlayacak. PanCafe’deki üye tarifesi ve varsa açılış ücreti uygulanır.</p>${button('Oturumu başlat', 'computer-confirm', 'primary wide')}${button('Vazgeç', 'close-modal', 'secondary wide')}`;
+  } else if (state.modal === 'computer-progress' && computerStart) {
+    content = `<div class="modal-symbol">${icon('monitor')}</div><h2 id="computer-progress-title">${computerProgressTitle(computerStart)}</h2>
+      <p role="status">${e(computerStart.name)} · PanCafe bağlantısı kontrol ediliyor.</p>
+      ${button('Oturumu bitir', 'computer-finish', 'secondary wide', !computerStart.accepted)}
+      ${button('İşleme devam et', 'computer-continue', 'primary wide')}`;
+  } else if (state.modal === 'floor-map') {
+    content = `<div class="floor-map-heading"><h2 id="floor-map-title">Salon haritası</h2>
+      <div class="map-legend"><span><i class="pc-free"></i>Kullanılabilir</span><span><i class="pc-busy"></i>Dolu veya ayrılmış</span><span><i></i>Kullanılamıyor</span></div>
+      ${button('Kapat', 'close-modal', 'secondary')}</div>
+      <p id="floor-map-status" role="status">Bilgisayar durumu alınıyor…</p>
+      <div id="floor-map-content">${floorMapGallery([])}</div>`;
+  } else if (state.modal === 'ticket-scan') {
+    content = `<div class="ticket-scan-heading"><h2 id="ticket-scan-title">Biletler</h2>${button('Kapat', 'close-modal', 'secondary')}</div>
+      <div class="ticket-scan-card">
+        <div class="ticket-scan-symbol">${icon('barcode')}</div>
+        <h3>Biletini okut</h3>
+        <p>Biletin üzerindeki barkodu ekranın altındaki okuyucuya göster.</p>
+        <form id="ticket-scan-form" autocomplete="off">
+          <label for="ticket-barcode">Barkod</label>
+          <input id="ticket-barcode" type="password" inputmode="none" maxlength="256" autocomplete="off" aria-describedby="ticket-scan-status">
+        </form>
+        <p class="ticket-scan-status" id="ticket-scan-status" role="status">Barkod bekleniyor…</p>
+      </div>`;
   } else {
     const p = state.data?.promotions.find(p => p.id === state.modal);
     if (!p) { state.modal = null; host.innerHTML = ''; return; }
     content = `<span class="eyebrow">KAMPANYA DETAYI</span><h2>${e(p.title)}</h2><p>${e(p.description)}</p><div class="campaign-terms"><strong>Kampanya koşulları</strong><p>${e(p.terms)}</p><p>Minimum yükleme: <strong>${cash(p.minimumAmount)}</strong><br>Bonus: <strong>%${e(p.bonusPercent)}</strong><br>En fazla bonus: <strong>${cash(p.maxBonus)}</strong></p><span>${date(p.startsAt)} – ${date(p.endsAt)}</span></div>${button('Bakiye yükle ' + icon('arrow'), 'modal-topup', 'primary wide')}${button('Geri dön', 'close-modal', 'quiet wide')}`;
   }
   const label = state.modal === 'password-login' ? 'aria-labelledby="password-login-title"'
+    : state.modal === 'computer-progress' ? 'aria-labelledby="computer-progress-title"'
+    : state.modal === 'floor-map' ? 'aria-labelledby="floor-map-title"'
+    : state.modal === 'ticket-scan' ? 'aria-labelledby="ticket-scan-title"'
     : state.modal === 'admin' ? 'aria-label="Yetkili erişimi"' : 'aria-label="Bilgilendirme"';
-  host.innerHTML = `<div class="modal-backdrop"><section class="modal${state.modal === 'password-login' ? ' password-modal' : ''}" role="dialog" aria-modal="true" ${label}>${content}</section></div>`;
-  host.querySelector('input, button')?.focus();
+  const modalStyles = new Map([['password-login', 'password-modal'], ['floor-map', 'floor-map-modal'], ['ticket-scan', 'ticket-scan-modal']]);
+  host.innerHTML = `<div class="modal-backdrop"><section class="modal ${modalStyles.get(state.modal) ?? ''}" role="dialog" aria-modal="true" ${label}>${content}</section></div>`;
+  (host.querySelector('#ticket-barcode') ?? host.querySelector('input, button'))?.focus();
+}
+async function completeTicketScan(input) {
+  if (input.disabled) return;
+  const barcode = input.value.trim();
+  input.value = '';
+  input.focus();
+  if (!barcode) return;
+  const status = $('#ticket-scan-status');
+  if (!state.data) return;
+  if (!/^[0-9]{10}$/.test(barcode)) {
+    status.textContent = 'Bilet barkodu 10 rakam olmalı. Tekrar okut.';
+    return;
+  }
+  const closeButton = $('.ticket-scan-heading button');
+  input.disabled = true;
+  closeButton.disabled = true;
+  status.textContent = 'Bilet PanCafe’de kontrol ediliyor…';
+  try {
+    const result = await call('redeemTicket', { barcode });
+    if (!input.isConnected) return;
+    if (result.status === 'ok') {
+      status.dataset.scanned = 'true';
+      status.textContent = `${cash(result.amount)} bakiyene eklendi.`;
+      await refreshLiveAccount();
+    } else {
+      status.textContent = result.message || 'Bilet işlemi henüz doğrulanamadı. Aynı bileti tekrar okut.';
+    }
+  } catch (error) {
+    if (input.isConnected) status.textContent = error.message;
+  } finally {
+    input.disabled = false;
+    closeButton.disabled = false;
+    if (input.isConnected) input.focus();
+  }
 }
 async function scan(uid) {
   if (state.data || state.loading || state.modal) return;
@@ -396,7 +509,7 @@ async function refreshLiveAccount() {
     state.walletStale = false;
     if ((memberChanged || promotionsChanged || posChanged) && !state.modal && !state.processing && !state.payment) render();
     if (promotionsChanged && state.page === 'topup' && !state.payment) void updateQuote();
-    if (promotionsChanged && state.modal && !['idle', 'logout', 'admin', 'password-login'].includes(state.modal)) { render(); renderModal(); }
+    if (promotionsChanged && state.modal && !['idle', 'logout', 'admin', 'password-login', 'computer-progress', 'ticket-scan'].includes(state.modal)) { render(); renderModal(); }
     if (state.page === 'home' && (balanceChanged || state.recentState === 'error')) void loadRecent();
   } catch {
     if (epoch === state.epoch) state.walletStale = true;
@@ -482,6 +595,21 @@ async function refreshSCoin() {
 }
 async function action(value) {
   const [name, arg] = value.split(':');
+  if (name === 'open-ticket-scan') {
+    if (!state.data || state.info.mode !== 'connected' || state.processing || state.modal) return;
+    cardBuffer = '';
+    state.modal = 'ticket-scan';
+    renderModal();
+    return;
+  }
+  if (name === 'open-floor-map') {
+    if (state.data || state.loading || state.modal || state.info?.mode !== 'connected') return;
+    cardBuffer = '';
+    state.modal = 'floor-map';
+    renderModal();
+    void refreshFloorAvailability();
+    return;
+  }
   if (name === 'open-password-login') {
     if (state.data || state.loading || state.info?.mode !== 'connected') return;
     cardBuffer = '';
@@ -491,6 +619,14 @@ async function action(value) {
     return;
   }
   if (name === 'demo1' || name === 'demo2') return scan(name === 'demo1' ? 'DEMO0001' : 'DEMO0002');
+  if (name === 'computer-continue') {
+    if (state.modal === 'computer-progress') { state.modal = null; renderModal(); }
+    return;
+  }
+  if (name === 'computer-finish') {
+    if (state.modal !== 'computer-progress' || !computerStart?.accepted) return;
+    return action('finish-session');
+  }
   if (name === 'finish-session' || name === 'confirm-logout' || (name === 'logout' && state.payment?.status === 'completed')) {
     reset();
     await call('logout');
@@ -521,11 +657,16 @@ async function action(value) {
   }
   if (name === 'close-modal') {
     const wasLogin = state.modal === 'password-login';
+    const wasFloorMap = state.modal === 'floor-map';
+    const wasTicketScan = state.modal === 'ticket-scan';
     if (wasLogin && state.loading) return;
+    if (wasTicketScan && $('#ticket-barcode')?.disabled) return;
     state.modal = null;
     state.pin = '';
     renderModal();
     if (wasLogin) $('[data-action="open-password-login"]')?.focus();
+    if (wasFloorMap) $('[data-action="open-floor-map"]')?.focus();
+    if (wasTicketScan) $('[data-action="open-ticket-scan"]')?.focus();
     return;
   }
   if (name === 'computer-zone') { if (computerStart) return; computerZone = arg; selectedComputer = undefined; computerNotice = ''; render(); return; }
@@ -551,6 +692,22 @@ async function action(value) {
     return updateQuote();
   }
   if (name === 'pos-status') return checkPosStatus(true);
+  if (name === 'pos-retry') {
+    const current = state.payment;
+    if (state.processing || current?.status !== 'transferring' || !current.transferNeedsReview) return;
+    const epoch = state.epoch;
+    state.processing = true; render();
+    try {
+      const payment = await call('retry-payment', { id: current.id });
+      if (epoch !== state.epoch) return;
+      state.payment = payment;
+      if (payment.transferNeedsReview) toast('Aktarım henüz tamamlanmadı. Tekrar deneyebilir veya kasadan kontrol ettirebilirsin.');
+      if (payment.status === 'completed' || payment.status === 'failed') await refresh();
+    } finally {
+      if (epoch === state.epoch) { state.processing = false; render(); }
+    }
+    return;
+  }
   if (name === 'pos-cancel') {
     const current = state.payment;
     if (state.processing || current?.status !== 'pending' || !current.awaitingTerminal) return;
@@ -599,6 +756,7 @@ async function action(value) {
 }
 document.addEventListener('click', event => {
   const target = event.target.closest('button, .iso-station[data-action], .iso-number[data-action]');
+  if (state.modal === 'ticket-scan' && !target) $('#ticket-barcode')?.focus();
   if (!target || target.disabled) return;
   if (target.matches('[data-login-key], [data-login-action]')) { typeLoginKey(target); return; }
   const epoch = state.epoch;
@@ -620,8 +778,22 @@ document.addEventListener('focusin', event => {
 document.addEventListener('pointerdown', event => {
   if (event.target.closest('.login-keyboard button')) event.preventDefault();
 });
-document.addEventListener('input', event => { if (event.target.matches('.pin-input')) state.pin = event.target.value; });
+document.addEventListener('input', event => {
+  if (event.target.matches('.pin-input')) state.pin = event.target.value;
+  if (event.target.id === 'ticket-barcode') {
+    const status = $('#ticket-scan-status');
+    if (status.dataset.scanned) {
+      delete status.dataset.scanned;
+      status.textContent = 'Barkod bekleniyor…';
+    }
+  }
+});
 document.addEventListener('submit', event => {
+  if (event.target.id === 'ticket-scan-form') {
+    event.preventDefault();
+    void completeTicketScan($('#ticket-barcode'));
+    return;
+  }
   if (event.target.id !== 'password-login-form') return;
   event.preventDefault();
   void submitPasswordLogin(event.target);
@@ -634,14 +806,29 @@ for (const event of ['pointerdown', 'keydown', 'wheel']) document.addEventListen
 let cardBuffer = '', lastKey = 0;
 document.addEventListener('keydown', event => {
   if (state.modal) {
-    if (event.key === 'Escape' && state.modal === 'password-login') void action('close-modal');
+    if (event.key === 'Escape' && ['password-login', 'floor-map', 'ticket-scan'].includes(state.modal)) void action('close-modal');
     if (event.key === 'Tab') {
+      if (!event.shiftKey && event.target.id === 'ticket-barcode' && event.target.value.trim()) {
+        event.preventDefault();
+        void completeTicketScan(event.target);
+        return;
+      }
       const focusable = [...$('#modal-root').querySelectorAll('button:not(:disabled), input:not(:disabled)')];
       const first = focusable[0], last = focusable.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
     return;
+  }
+  if (!event.repeat && !event.ctrlKey && !event.altKey && !event.metaKey && ['Enter', ' '].includes(event.key)) {
+    const station = event.target.closest('.iso-station[data-action]');
+    if (station) {
+      event.preventDefault();
+      const selector = '.iso-station[data-action="' + CSS.escape(station.dataset.action) + '"]';
+      station.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      root.querySelector(selector)?.focus({ preventScroll: true });
+      return;
+    }
   }
   if (state.data || event.ctrlKey || event.altKey || event.metaKey) return;
   const now = performance.now();
@@ -738,18 +925,26 @@ let computerZone;
 let computerNotice = '';
 let computerStart;
 let startingComputer = false;
+const computerProgressTitle = request => request.waking ? 'Bilgisayarınız açılıyor' : 'Üye oturumunuz başlatılıyor';
 async function startSelectedComputer() {
   if (startingComputer || !state.data || (!selectedComputer && !computerStart)) return;
+  const balance = state.data.wallet?.balance;
+  if (!computerStart && !state.walletStale && Number.isSafeInteger(balance) && balance < 1000) {
+    showInsufficientBalance();
+    return;
+  }
   const epoch = state.epoch;
-  computerStart ??= { terminalId: selectedComputer.id, operationId: crypto.randomUUID(), waking: selectedComputer.canWake };
+  computerStart ??= { terminalId: selectedComputer.id, name: selectedComputer.name, operationId: crypto.randomUUID(), waking: selectedComputer.canWake };
   const request = computerStart;
-  state.modal = null; renderModal(); startingComputer = true; render();
+  startingComputer = true;
+  state.modal = 'computer-progress'; render(); renderModal();
   try {
     while (epoch === state.epoch && computerStart === request) {
       const result = await call('startComputer', { terminalId: request.terminalId, operationId: request.operationId });
       if (epoch !== state.epoch) return;
       if (!['waking', 'pending'].includes(result.status)) {
-        toast(result.message);
+        if (result.status === 'insufficient_balance') showInsufficientBalance();
+        else toast(result.message);
         computerStart = undefined; selectedComputer = undefined;
         computersError = result.status === 'started' ? '' : result.message;
         await refreshLiveAccount(); await loadComputers();
@@ -757,6 +952,11 @@ async function startSelectedComputer() {
       }
       if (result.status === 'waking') request.waking = true;
       else if (result.message) request.waking = false;
+      request.accepted ||= result.status === 'waking' || Boolean(result.message);
+      if (state.modal === 'computer-progress') {
+        $('#computer-progress-title').textContent = computerProgressTitle(request);
+        $('[data-action="computer-finish"]').disabled = !request.accepted;
+      }
       render();
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
@@ -765,7 +965,13 @@ async function startSelectedComputer() {
       computerStart = undefined; selectedComputer = undefined;
       computersError = error.message;
     }
-  } finally { if (epoch === state.epoch) { startingComputer = false; render(); } }
+  } finally {
+    if (epoch === state.epoch) {
+      startingComputer = false;
+      if (state.modal === 'computer-progress') { state.modal = null; renderModal(); }
+      render();
+    }
+  }
 }
 async function loadComputers() {
   if (loadingComputers || !state.data) return;
@@ -784,25 +990,33 @@ async function loadComputers() {
   } catch (error) { if (epoch === state.epoch) computersError = error.message; }
   finally { loadingComputers = false; if (epoch === state.epoch && state.page === 'computers') render(); }
 }
-function computerStatusText(pc) { return pc.canWake ? 'Kapalı, açılabilir' : pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'; }
-function computerStatusClass(pc) { return pc.available ? 'pc-free' : pc.status === 'occupied' ? 'pc-busy' : 'pc-off'; }
+function computerStatusText(pc) { return pc.status === 'reserved' ? 'Oturum hazırlanıyor' : pc.canWake ? 'Kapalı, açılabilir' : pc.available ? 'Boş' : pc.status === 'occupied' ? 'Dolu' : 'Kullanıma hazır değil'; }
+function computerStatusClass(pc) { return pc.available ? 'pc-free' : ['occupied', 'reserved'].includes(pc.status) ? 'pc-busy' : 'pc-off'; }
 const zoneNames = { beginner: 'Beginner', player: 'Player', gamer: 'Gamer', master: 'Master 1', master2: 'Master 2' };
 const computerPageAd = {
   title: 'Yeni nesil oyun deneyimi',
   subtitle: 'S TECH E-SPOR’da',
   image: 'assets/computers-banner.png',
 };
+function computerAdCarousel() {
+  const knk = `<div class="zone-banner zone-banner-knk"><span>Powered by</span><img src="assets/knk-studios.png" alt="KNK Studios"></div>`;
+  const stech = `<div class="zone-banner zone-banner-stech"><img src="${e(computerPageAd.image)}" alt="">
+    <div class="zone-ad-copy"><strong>${e(computerPageAd.title)}</strong><span>${e(computerPageAd.subtitle)}</span></div></div>`;
+  // The matching KNK slides at both ends make the reset invisible.
+  const elapsed = (performance.now() - (zoneAdStartedAt ?? performance.now())) % 4000;
+  return `<section class="zone-ad" aria-label="Powered by KNK Studios · S TECH E-SPOR"><div class="zone-ad-track" aria-hidden="true" style="--banner-delay:${-elapsed}ms">${knk}${stech}${knk}</div></section>`;
+}
 function computerZonePicker(groups, alerts) {
   const cards = groups.map(({ zone, computers, total, available }) => {
-    const occupied = computers.filter(pc => pc.status === 'occupied').length;
+    const occupied = computers.filter(pc => ['occupied', 'reserved'].includes(pc.status)).length;
     const occupiedPercent = total ? (occupied / total) * 100 : 0;
     const availablePercent = total ? (available / total) * 100 : 0;
     return `<button class="zone-choice" data-action="computer-zone:${zone.id}" ${!computerData || computerStart ? 'disabled' : ''}>
       <span class="zone-choice-icon">${icon('monitor')}</span>
       <span class="zone-choice-info">
         <strong class="zone-choice-name">${zoneNames[zone.id] || e(zone.name)}</strong>
-        <span class="zone-choice-count">${computerData ? `<b>${occupied}</b> / ${total} dolu` : 'Doluluk alınıyor'}</span>
-        <span class="zone-choice-meter" aria-hidden="true"><i style="width:${occupiedPercent}%"></i><i style="width:${availablePercent}%"></i></span>
+        <span class="zone-choice-count">${computerData ? `<b>${available}/${total}</b> kullanılabilir` : 'Bilgisayar durumu alınıyor'}</span>
+        <span class="zone-choice-meter" aria-hidden="true"><i class="zone-meter-free" style="width:${availablePercent}%"></i><i class="zone-meter-busy" style="width:${occupiedPercent}%"></i></span>
       </span>
       <span class="zone-choice-next" aria-hidden="true"></span>
     </button>`;
@@ -812,10 +1026,7 @@ function computerZonePicker(groups, alerts) {
     <div class="zone-picker-heading"><h1 id="zone-picker-title">Masanı seç</h1><p>Oyun alanını seç, deneyimine başla.</p></div>
     ${alerts}
     <div class="zone-choice-list">${cards}</div>
-    <section class="zone-ad" aria-label="S TECH duyurusu">
-      <img src="${e(computerPageAd.image)}" alt="">
-      <div class="zone-ad-copy"><strong>${e(computerPageAd.title)}</strong><span>${e(computerPageAd.subtitle)}</span></div>
-    </section>
+    ${computerAdCarousel()}
   </section>`;
 }
 function computersPage() {

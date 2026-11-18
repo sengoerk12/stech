@@ -11,10 +11,11 @@ using System.Web.Script.Serialization;
 
 public static partial class PanCafeNativeSessions {
     public static List<Dictionary<string,string>> Credit(string database, string client, string folder,
-        int memberId, string username, long amount, long bonus, string operationId) {
+        int memberId, string username, long amount, long bonus, string operationId, bool retryUnconfirmed = false) {
         Guid operation = PanCafeBalanceWriter.Validate(memberId, username, amount, bonus, operationId);
         string id = operation.ToString();
         string marker = "STechPOS-" + operation.ToString("N");
+        long total = amount + bonus;
         using (var mutex = new Mutex(false, "Local\\STech-PanCafe-NativeSessions")) {
             bool acquired;
             try { acquired = mutex.WaitOne(0); }
@@ -25,10 +26,15 @@ public static partial class PanCafeNativeSessions {
                 var receipt = ReadCompletedCredit(database, client, arguments);
                 if (receipt.Count == 1) return receipt;
                 var pending = PanCafeReadOnly.Query(database, client,
-                    "SELECT MEMBERID,USERNAME,AMOUNT,BONUS FROM STECH_LIVE_CREDIT_INTENTS WHERE OPID='" + id + "'");
+                    "SELECT MEMBERID,USERNAME,AMOUNT,BONUS,CREDIT_TOTAL FROM STECH_LIVE_CREDIT_INTENTS WHERE OPID='" + id + "'");
                 if (pending.Count != 0) {
                     AssertCreditIdentity(pending[0], arguments);
-                    return ConfirmLiveCredit(database, client, arguments, marker, amount, bonus);
+                    bool legacy = pending[0]["CREDIT_TOTAL"] == null;
+                    if (!legacy && pending[0]["CREDIT_TOTAL"] != Invariant(total))
+                        throw new InvalidOperationException("Credit total conflict");
+                    var previous = ConfirmLiveCredit(database, client, arguments, marker, amount, total, legacy);
+                    if (previous[0]["RESULT_CODE"] == "ok" || !retryUnconfirmed ||
+                        !CanRetryUnconfirmedCredit(database, client, id, marker)) return previous;
                 }
 
                 var member = PanCafeReadOnly.Query(database, client,
@@ -36,14 +42,16 @@ public static partial class PanCafeNativeSessions {
                 if (member.Count != 1) throw new InvalidOperationException("Credit member mismatch");
                 NativeUi ui = null;
                 try {
+                    if (!PanCafeBalanceWriter.AutoMemberBonusDisabled(database, client))
+                        throw new InvalidOperationException("PanCafe otomatik üye bonusu kapatılmalı.");
                     ui = new NativeUi(database);
-                    ui.PrepareCredit(username, marker, amount, bonus);
+                    ui.PrepareCredit(username, marker, total, pending.Count != 0);
                 } catch (Exception error) {
                     File.WriteAllText(Path.Combine(folder, "credit-readiness-error.json"),
                         new JavaScriptSerializer().Serialize(new { operationId=id, message=error.Message,
                             navigation=ui == null ? null : ui.CreditNavigation,
                             screenLabels=ui == null ? null : ui.CreditScreenLabels,
-                            visibleWindows=ui == null ? null : ui.CreditWindowTypes(),
+                            visibleWindows=ui == null ? null : ui.VisibleWindowTypes(),
                             controlTypes=ui == null ? null : ui.CreditControlTypes(), at=DateTime.UtcNow.ToString("o") }));
                     if (ui != null) ui.CloseLiveCredit();
                     return Result("credit_ui_review", error is InvalidOperationException ? error.Message : "PanCafe yükleme ekranı hazır değil.");
@@ -51,19 +59,44 @@ public static partial class PanCafeNativeSessions {
 
                 bool submitted = false;
                 try {
-                    // Record the exact payment before sending the only native confirmation.
-                    // A lost response is reconciled against PanCafe's own history.
-                    PanCafeReadOnly.Write(database, client,
-                        "INSERT INTO STECH_LIVE_CREDIT_INTENTS(OPID,MEMBERID,USERNAME,AMOUNT,BONUS) VALUES(?,?,?,?,?)", arguments);
+                    if (!PanCafeBalanceWriter.AutoMemberBonusDisabled(database, client))
+                        return Result("credit_ui_review", "PanCafe otomatik üye bonusu kapatılmalı.");
+                    if (pending.Count != 0) {
+                        // The cashier could have completed the previous attempt while the new dialog was opening.
+                        if (!CanRetryUnconfirmedCredit(database, client, id, marker))
+                            return ConfirmLiveCredit(database, client, arguments, marker, amount, total, pending[0]["CREDIT_TOTAL"] == null);
+                        PanCafeReadOnly.Write(database, client,
+                            "UPDATE STECH_LIVE_CREDIT_INTENTS SET CREDIT_TOTAL=?,CREATED_AT=CURRENT_TIMESTAMP WHERE OPID=?",
+                            new[] { Invariant(total), id });
+                    } else {
+                        PanCafeReadOnly.Write(database, client,
+                            "INSERT INTO STECH_LIVE_CREDIT_INTENTS(OPID,MEMBERID,USERNAME,AMOUNT,BONUS,CREDIT_TOTAL) VALUES(?,?,?,?,?,?)",
+                            new[] { id, Invariant(memberId), username, Invariant(amount), Invariant(bonus), Invariant(total) });
+                    }
+                    ui.VerifyLiveCredit(username, marker, total);
                     submitted = true;
                     ui.SubmitLiveCredit();
-                    return ConfirmLiveCredit(database, client, arguments, marker, amount, bonus);
+                    return ConfirmLiveCredit(database, client, arguments, marker, amount, total, false);
                 } finally { if (!submitted) ui.CloseLiveCredit(); }
             } finally { mutex.ReleaseMutex(); }
         }
     }
 
     static string Invariant(long value) { return value.ToString(CultureInfo.InvariantCulture); }
+
+    internal static bool CanRetryUnconfirmedCredit(string database, string client, string id, string marker) {
+        // PanCafe records its own balance credits in MEMBERSHISTORY. Allow an operator-initiated
+        // retry only after the confirmation has settled and no matching or unlabelled credit is present.
+        var rows = PanCafeReadOnly.Query(database, client,
+            "SELECT FIRST 1 I.OPID FROM STECH_LIVE_CREDIT_INTENTS I WHERE I.OPID='" + id + "'" +
+            " AND I.CREATED_AT<=DATEADD(-15 SECOND TO CURRENT_TIMESTAMP)" +
+            " AND NOT EXISTS (SELECT 1 FROM MEMBERSHISTORY H WHERE H.NOTE CONTAINING '" + marker + "'" +
+            " OR (H.MEMBERS_USERNAME=I.USERNAME AND (H.MIKTAR>0 OR H.NOTE CONTAINING 'para yüklendi')" +
+            " AND (CAST(H.TARIH AS DATE)>CAST(DATEADD(-5 SECOND TO I.CREATED_AT) AS DATE)" +
+            " OR (CAST(H.TARIH AS DATE)=CAST(DATEADD(-5 SECOND TO I.CREATED_AT) AS DATE)" +
+            " AND COALESCE(H.SAAT,CAST('23:59:59' AS TIME))>=CAST(DATEADD(-5 SECOND TO I.CREATED_AT) AS TIME)))))");
+        return rows.Count == 1;
+    }
 
     static void AssertCreditIdentity(Dictionary<string,string> prior, string[] arguments) {
         if (prior["MEMBERID"] != arguments[1] || prior["USERNAME"] != arguments[2] ||
@@ -83,7 +116,7 @@ public static partial class PanCafeNativeSessions {
     }
 
     static List<Dictionary<string,string>> ConfirmLiveCredit(string database, string client, string[] arguments,
-        string marker, long amount, long bonus) {
+        string marker, long amount, long total, bool legacy) {
         string id = arguments[0];
         var rows = PanCafeReadOnly.Query(database, client,
             "SELECT FIRST 2 CAST(H.MIKTAR AS DECIMAL(18,2)) AS AMOUNT_TL,CAST(H.KALAN AS DECIMAL(18,2)) AS BALANCE_TL" +
@@ -91,7 +124,7 @@ public static partial class PanCafeNativeSessions {
             " AND M.USERNAME='" + arguments[2] + "' AND H.TARIH>=M.RECDATE AND H.NOTE CONTAINING '" + marker + "'");
         long recorded;
         if (rows.Count != 1 || !TryKurus(rows[0]["AMOUNT_TL"], out recorded) ||
-            (recorded != amount && recorded != amount + bonus))
+            (recorded != total && (!legacy || recorded != amount)))
             return Result("credit_review", "PanCafe yükleme kaydı doğrulanıyor.");
         var row = rows[0];
         PanCafeReadOnly.Write(database, client,
@@ -107,7 +140,7 @@ public static partial class PanCafeNativeSessions {
         if (value == null) return false;
         // The current PanCafe version shows Turkish decimals. Its database returns a dot.
         string normalized = value.Trim().Replace("₺", "").Trim();
-        if (Regex.IsMatch(normalized, @"\A[0-9]{1,3}(\.[0-9]{3})+,[0-9]{1,2}\z"))
+        if (Regex.IsMatch(normalized, @"\A[0-9]{1,3}(\.[0-9]{3})+(,[0-9]{1,2})?\z"))
             normalized = normalized.Replace(".", "");
         if (!Regex.IsMatch(normalized, @"\A[0-9]+([,.][0-9]{1,2})?\z")) return false;
         decimal parsed;
@@ -124,7 +157,7 @@ public static partial class PanCafeNativeSessions {
         bool closeCreditDialog;
         bool creditForeground;
 
-        public void PrepareCredit(string username, string marker, long amount, long bonus) {
+        public void PrepareCredit(string username, string marker, long amount, bool reusePrevious) {
             var opened = FindNativeCreditWindow(username);
             if (!opened) {
                 CheckIdle();
@@ -175,8 +208,10 @@ public static partial class PanCafeNativeSessions {
             if (opened && !closeCreditDialog) {
                 long initialAmount;
                 string initial = Text(creditAmount);
-                if (!String.IsNullOrWhiteSpace(Text(creditNote)) ||
-                    (!String.IsNullOrWhiteSpace(initial) && (!TryKurus(initial, out initialAmount) || initialAmount != 0)))
+                string note = Text(creditNote);
+                bool sameAttempt = reusePrevious && note == marker && TryKurus(initial, out initialAmount) && initialAmount == amount;
+                if (!sameAttempt && (!String.IsNullOrWhiteSpace(note) ||
+                    (!String.IsNullOrWhiteSpace(initial) && (!TryKurus(initial, out initialAmount) || initialAmount != 0))))
                     throw new InvalidOperationException("PanCafe’de kasiyerin açık bakiye işlemi var.");
                 closeCreditDialog = true;
             }
@@ -203,10 +238,10 @@ public static partial class PanCafeNativeSessions {
                 int top = box.Top + box.Height * 3 / 4;
                 creditConfirmLabel = FindScreenText(Rectangle.FromLTRB(box.Left, top, box.Right, box.Bottom), "Tamam");
             }
-            VerifyLiveCredit(username, marker, amount, bonus);
+            VerifyLiveCredit(username, marker, amount);
         }
 
-        public void VerifyLiveCredit(string username, string marker, long amount, long bonus) {
+        public void VerifyLiveCredit(string username, string marker, long amount) {
             long visibleAmount;
             if (!CreditDialogIsCurrent() || !IsCreditDialog(creditDialog, username))
                 throw new InvalidOperationException("PanCafe yükleme penceresindeki üye değişti.");
@@ -221,31 +256,6 @@ public static partial class PanCafeNativeSessions {
             if (!(creditAdd != IntPtr.Zero && IsChecked(creditAdd)) &&
                 !ReadCreditChoice(CreditChoices(creditDialog, creditPayment), creditAdd, creditSubtract))
                 throw new InvalidOperationException("PanCafe Ekle seçimi doğrulanamadı.");
-            var input = BoundsOf(creditAmount);
-            var bonuses = new HashSet<long>();
-            foreach (var control in Children(creditDialog)) {
-                var position = BoundsOf(control);
-                if (position.Left <= input.Right || Math.Abs(position.Top - input.Top) > input.Bottom - input.Top)
-                    continue;
-                var value = Caption(control);
-                if (value.StartsWith("Bonus", StringComparison.OrdinalIgnoreCase))
-                    value = value.Substring(5).TrimStart(' ', ':');
-                if (!value.Contains("₺") && !Regex.IsMatch(value, @"\A[0-9]+[,.][0-9]{2}\z")) continue;
-                long parsed;
-                if (TryKurus(value, out parsed)) bonuses.Add(parsed);
-            }
-            if (bonuses.Count == 0) {
-                var box = BoundsOf(creditDialog);
-                int line = input.Bottom - input.Top;
-                var area = Rectangle.FromLTRB(input.Right, input.Top - line / 2,
-                    Math.Min(box.Right, input.Right + line * 9), input.Bottom + line / 2);
-                using (var preview = CaptureCreditRegion(area)) {
-                    long parsed;
-                    if (TryReadBonusPreview(preview, out parsed)) bonuses.Add(parsed);
-                }
-            }
-            if (bonuses.Count != 1 || !bonuses.Contains(bonus))
-                throw new InvalidOperationException("PanCafe önizlemesindeki bonus kiosk bonusuyla doğrulanamadı.");
         }
 
         public void SubmitLiveCredit() {
@@ -352,7 +362,7 @@ public static partial class PanCafeNativeSessions {
             var windows = Windows("TSrvMemberKrediYukleFrm", processId, true);
             return windows.Count == 1 && windows[0] == creditDialog;
         }
-        public string[] CreditWindowTypes() {
+        public string[] VisibleWindowTypes() {
             var types = new HashSet<string>();
             foreach (var window in Windows(null, processId, true)) {
                 if (window != main) types.Add(Class(window));
@@ -413,14 +423,6 @@ public static partial class PanCafeNativeSessions {
             if (SendText(control, 12, IntPtr.Zero, new StringBuilder(value), 2, 2000, out ignored) == IntPtr.Zero)
                 throw new InvalidOperationException("PanCafe yükleme alanına metin yazılamadı.");
         }
-    }
-
-    static bool TryReadBonusPreview(Bitmap preview, out long amount) {
-        var words = PanCafeScreenText.ReadGreenText(preview);
-        var value = String.Concat(words.ConvertAll(word => word.Text));
-        var match = Regex.Match(value, @"\A[\p{L}\p{Sc}]{0,2}([0-9oO]+[,.][0-9oO]{2})\z");
-        amount = 0;
-        return match.Success && TryKurus(match.Groups[1].Value.Replace('o', '0').Replace('O', '0'), out amount);
     }
 
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out Rect value);

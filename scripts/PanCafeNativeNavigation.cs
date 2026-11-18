@@ -296,6 +296,13 @@ public static partial class PanCafeNativeSessions {
         }
 
         bool ClickMemberToolbar() {
+            return ClickMainToolbar((header, dpi) => {
+                var label = PanCafeScreenText.FindMemberToolbarLabel(header, dpi);
+                return label.IsEmpty ? PanCafeScreenText.FindMemberToolbarIcon(header, dpi) : label;
+            }, 2);
+        }
+
+        bool ClickMainToolbar(Func<Bitmap,double,Rectangle> findControl, int slot) {
             Activate(main);
             var origin = new Point();
             if (!ClientToScreen(main, ref origin)) return false;
@@ -308,14 +315,13 @@ public static partial class PanCafeNativeSessions {
             using (var header = new Bitmap(area.Width, area.Height)) {
                 using (var graphics = Graphics.FromImage(header))
                     graphics.CopyFromScreen(area.Location, System.Drawing.Point.Empty, area.Size);
-                var label = PanCafeScreenText.FindMemberToolbarLabel(header, dpi);
-                if (label.IsEmpty) label = PanCafeScreenText.FindMemberToolbarIcon(header, dpi);
+                var label = findControl(header, dpi);
                 if (!label.IsEmpty) {
                     label.Offset(area.Location);
                     return ClickScreenText(main, main, label);
                 }
             }
-            return ClickNavigationIcon(2);
+            return ClickNavigationIcon(slot);
         }
 
         bool ClickNavigationIcon(int slot) {

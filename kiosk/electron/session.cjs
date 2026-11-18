@@ -82,6 +82,7 @@ class KioskSession {
       if (this.mode !== 'connected') return null;
       return this.gateway.pcAvailability();
     }
+    if (action === 'floorAvailability' && this.mode === 'connected') return this.gateway.floorAvailability();
     if (action === 'logout') { this.lock(); return { ok: true }; }
     const session = this.session, epoch = this.generation;
     if (!session) throw new Error('Devam etmek için tekrar giriş yap.');
@@ -104,6 +105,11 @@ class KioskSession {
       throw new Error('Devam etmek için “Başka bir işlem yap” seçeneğine dokun.');
     let result;
     if (action === 'dashboard') result = this.publicDashboard(this.mode === 'demo' ? await this.demo.dashboard(session.card) : await this.gateway.dashboard(session.token));
+    else if (action === 'redeemTicket' && this.mode === 'connected') {
+      if (typeof payload.barcode !== 'string' || !/^[0-9]{10}$/.test(payload.barcode)) throw new Error('Bilet barkodunu kontrol et.');
+      this.markActivity(session, now);
+      result = await this.gateway.redeemTicket(session.token, payload.barcode);
+    }
     else if (action === 'sCoin' && this.mode === 'connected') result = await this.gateway.sCoin(session.token);
     else if (action === 'sCoinPlay' && this.mode === 'connected') result = await this.gateway.sCoinPlay(session.token, payload);
     else if (action === 'computers') {
@@ -141,15 +147,16 @@ class KioskSession {
     else if (action === 'quote') result = this.mode === 'demo'
       ? quote(payload.amount, (await this.demo.dashboard(session.card)).promotions, Date.now(), payload.promotionId)
       : await this.gateway.quote(session.token, payload);
-    else if (['create', 'settle', 'payment', 'cancel-payment'].includes(action)) {
+    else if (['create', 'settle', 'payment', 'cancel-payment', 'retry-payment'].includes(action)) {
       if (this.mode === 'connected') {
         if (!session.odealPos) throw new Error('POS bağlantısı henüz etkin değil. Yükleme için S TECH yetkilisine başvur.');
         if (action === 'settle') throw new Error('Ödeme sonucu POS cihazından alınır.');
         if (action === 'create') result = await this.gateway.createPosPayment(session.token, payload);
+        else if (action === 'retry-payment') result = await this.gateway.retryPosPayment(session.token, payload.id);
         else if (action === 'cancel-payment') result = await this.gateway.cancelPosPayment(session.token, payload.id);
         else result = await this.gateway.posPayment(session.token, payload.id);
       } else {
-        if (action === 'cancel-payment') throw new Error('POS bağlantısı açık değil.');
+        if (action === 'cancel-payment' || action === 'retry-payment') throw new Error('POS bağlantısı açık değil.');
         if (action === 'create') {
           if (typeof payload.key !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(payload.key)) throw new Error('Geçersiz işlem anahtarı.');
           result = await this.demo.create(session.card, payload.amount, payload.key, payload.promotionId);
@@ -161,7 +168,7 @@ class KioskSession {
     this.tick();
     if (epoch !== this.generation) throw new Error('Oturum kapandı. Tekrar giriş yap.');
     if (action === 'dashboard') session.odealPos = result.features?.odealPos === true;
-    if (['settle', 'payment', 'cancel-payment'].includes(action) && result.status === 'completed'
+    if (['settle', 'payment', 'cancel-payment', 'retry-payment'].includes(action) && result.status === 'completed'
         && session.completionPaymentId !== result.id) {
       session.completionPaymentId = result.id;
       session.awaitingCompletionChoice = true;

@@ -76,6 +76,9 @@ class LoginDto {
 class KioskCardDto {
   @IsString() @MinLength(4) @MaxLength(64) cardUid!: string;
 }
+class KioskTicketDto {
+  @IsString() @Matches(/^[0-9]{10}$/) barcode!: string;
+}
 class ComputerStartDto {
   @IsUUID('4') operationId!: string;
 }
@@ -341,14 +344,31 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         throw new BadRequestException("Geçerli işlem anahtarı gerekli.");
       const dto = parse(KioskQuoteDto, body);
       const quote = calculateQuote(dto.amount, await activePromotions(db), Date.now(), dto.promotionId);
+      if (odeal?.mode === "live" && cafe instanceof PanCafeSystemAdapter) await cafe.assertCreditReady();
       await odealProvider.checkConfiguration();
       return posPayments.create(id, dto.amount, "pos_" + key, quote);
+    }
+    @Post("kiosk/tickets/redeem")
+    @Header("Cache-Control", "no-store")
+    async kioskRedeemTicket(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Body() body: unknown) {
+      if (!kioskAuth || !nativeCredit || !(cafe instanceof PanCafeSystemAdapter))
+        throw new ServiceUnavailableException("Bilet yükleme şu anda kapalı.");
+      kioskAuth.verifyDevice(device);
+      const id = await auth.user(token(req), true);
+      const { barcode } = parse(KioskTicketDto, body);
+      return cafe.redeemTicket(id, barcode);
     }
     @Get("kiosk/pos-payments/:id") @Header("Cache-Control", "no-store")
     async kioskPosPayment(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
       if (!kioskAuth || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
       kioskAuth.verifyDevice(device);
       return posPayments.get(await user(req), id);
+    }
+    @Post("kiosk/pos-payments/:id/retry")
+    async retryKioskPosTransfer(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
+      if (!kioskAuth || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
+      kioskAuth.verifyDevice(device);
+      return posPayments.retryTransfer(await user(req), id);
     }
     @Post("kiosk/pos-payments/:id/cancel")
     async kioskPosCancel(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
@@ -408,6 +428,14 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         throw new ServiceUnavailableException("Bilgisayar listesi için PanCafe bağlantısı gerekli.");
       return cafe.getComputers(id);
     }
+    @Get("kiosk/floor-availability")
+    @Header("Cache-Control", "no-store")
+    floorAvailability(@Headers("x-kiosk-key") key: string | undefined) {
+      if (!kioskAuth || !(cafe instanceof PanCafeSystemAdapter))
+        throw new ServiceUnavailableException("Salon haritası alınamıyor.");
+      kioskAuth.verifyDevice(key);
+      return cafe.getFloorAvailability();
+    }
     @Post('kiosk/computers/:id/start') async startComputer(@Req() req: Request,
       @Headers('x-kiosk-key') key: string | undefined, @Param('id') terminalId: string, @Body() body: unknown) {
       if (!kioskAuth || !(cafe instanceof PanCafeSystemAdapter))
@@ -433,6 +461,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         payments: panCafe && !simulation ? "disabled" : "simulation",
         cafe: panCafe ? "pancafe" : "mock",
         balanceCredit: nativeCredit,
+        kioskTicketRedeem: true,
         ...(walletMemberSync ? { walletSync: walletMemberSync.status, walletBalanceWrite } : {}),
         campaignSync: promotionSync?.status ?? "disabled",
         kioskLastSeenAt,

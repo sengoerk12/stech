@@ -112,9 +112,9 @@
 
   function station(zone, spot, pc, selectedId, selectable) {
     const rect = place(spot), a = spot.at;
-    const state = !pc ? 'missing' : pc.available ? 'free' : pc.status === 'occupied' ? 'busy' : 'off';
+    const state = !pc ? 'missing' : pc.available ? 'free' : ['occupied', 'reserved'].includes(pc.status) ? 'busy' : 'off';
     const selected = pc && pc.id === selectedId;
-    const label = !pc ? 'sistemde tanımlı değil' : pc.canWake ? 'kapalı, açılabilir' : state === 'free' ? 'boş' : state === 'busy' ? 'dolu' : 'kullanıma hazır değil';
+    const label = !pc ? 'sistemde tanımlı değil' : pc.status === 'reserved' ? 'oturum hazırlanıyor' : pc.canWake ? 'kapalı, açılabilir' : state === 'free' ? 'boş' : state === 'busy' ? 'dolu' : 'kullanıma hazır değil';
     const tile = rect(a + 0.04, 0, a + 0.96, DEPTH), tilePoints = corners(tile);
     const parts = [
       box(...rect(a + 0.08, 0.1, a + 0.92, 0.72), 0, 0.42, 'iso-desk'),
@@ -127,7 +127,7 @@
     const action = pc && state === 'free' && selectable ? `data-action="computer-select:${esc(pc.id)}"` : '';
     const control = action ? `${action} tabindex="0" role="button" aria-pressed="${Boolean(selected)}"` : '';
     const text = `<text class="iso-number" ${action} x="${lx.toFixed(1)}" y="${(ly + 7).toFixed(1)}" text-anchor="middle">${spot.number}</text>`;
-    return { depth: centre(tile), html: `<g class="iso-station iso-${state}${selected ? ' iso-selected' : ''}${action ? ' iso-pickable' : ''}" ${control} aria-label="${esc(zone.name)} ${spot.number}, ${label}">${poly(tilePoints, 'iso-tile')}${parts.join('')}</g>`, text: `<g class="iso-label iso-${state}" aria-hidden="true">${text}</g>` };
+    return { depth: centre(tile), html: `<g class="iso-station iso-${state}${selected ? ' iso-selected' : ''}${action ? ' iso-pickable' : ''}" ${control} aria-label="${esc(zone.name)} ${spot.number}, ${label}">${poly(tilePoints, 'iso-tile')}${parts.join('')}</g>`, text: `<g class="iso-label iso-${state}${selected ? ' iso-selected' : ''}" aria-hidden="true">${text}</g>` };
   }
 
   function wall(w) {
@@ -149,6 +149,66 @@
     return `<svg class="iso-map" viewBox="${minX.toFixed(0)} ${minY.toFixed(0)} ${(maxX - minX).toFixed(0)} ${(maxY - minY).toFixed(0)}" role="group" aria-label="${esc(zone.name)} salon yerleşimi">${poly(layout.floor.map(([x, y]) => point(x, y)), 'iso-floor')}${(layout.blocks || []).map(b => box(b.x0, b.y0, b.x1, b.y1, 0, WALL, 'iso-pillar')).join('')}${layout.walls.map(wall).join('')}${items.map(i => i.html).join('')}${items.map(i => i.text || '').join('')}</svg>`;
   }
 
-  window.ComputerZones = { zones, classify, summarize, isoMap };
+  // The welcome-screen plan uses the entrance at the bottom of the supplied layout.
+  const floorStations = {
+    beginner: [
+      ...row([13, 12, 11, 10], 'left', 0.9), ...row([9, 8, 7], 'left', 6),
+      ...row([6, 5, 4], 'left', 10), ...row([3, 2, 1], 'left', 14),
+      ...row([14, 15, 16, 17], 'back', 2.8),
+    ],
+    player: [
+      ...row([5, 4, 3, 2, 1], 'back', 4.3, { offset: 5, flip: true }),
+      ...row([6, 7, 8, 9, 10], 'left', 5.4, { offset: 4, flip: true }),
+    ],
+    gamer: [
+      ...row([1, 2, 3, 4, 5], 'left', 3.1, { offset: 10 }),
+      ...row([6, 7, 8], 'left', 2.1, { offset: 14, flip: true }),
+      ...row([9, 10], 'left', 6.3, { offset: 14, flip: true }),
+    ],
+    master: [
+      ...row([1, 2], 'left', 17.1, { offset: 6.2 }),
+      ...row([3, 4, 5], 'left', 17.1, { offset: 9.7, flip: true }),
+    ],
+    master2: [
+      ...row([1, 2, 3], 'left', 14, { offset: 14, flip: true }),
+      ...row([4, 5], 'left', 17.6, { offset: 12.8, flip: true }),
+    ],
+  };
+
+  function floorMap(computers) {
+    const rooms = [
+      { name: 'Beginner', floor: [[0,0],[10,0],[10,2.1],[2.3,2.1],[2.3,16.7],[0,16.7]], label: [1.9,11.6] },
+      { name: 'Player', floor: [[2.3,2.1],[10,2.1],[10,5],[4,5],[4,10.5],[2.3,10.5]], label: [6.9,2.9] },
+      { name: 'Gamer', floor: [[10,0],[14,0],[14,9.6],[10,9.6]], label: [12,8.9] },
+      { name: 'Kontrol odası', floor: [[6.2,9.6],[14,9.6],[14,13.8],[6.2,13.8]], label: [10.7,11.7], service: true },
+      { name: 'WC', floor: [[4,10.5],[6.2,10.5],[6.2,13.8],[4,13.8]], label: [5,12], service: true },
+      { name: 'Master 1', floor: [[6.2,16.8],[9.7,16.8],[9.7,20.4],[6.2,20.4]], label: [7.9,16.5] },
+      { name: 'Master 2', floor: [[9.7,13.8],[14,13.8],[14,17.5],[12.8,17.5],[12.8,20.4],[9.7,20.4]], label: [11.5,16.7] },
+      { name: 'Kasa', floor: [[0,16.7],[2.5,16.7],[2.5,20.4],[0,20.4]], label: [1.25,18.45], service: true },
+    ];
+    const outline = [[0,0],[14,0],[14,20.4],[0,20.4]];
+    const desks = summarize(computers).flatMap(({ zone, computers: rows }) => {
+      const byNumber = new Map(rows.map(pc => [pc.number, pc]));
+      return (floorStations[zone.id] ?? []).map(spot => station(zone, spot, byNumber.get(spot.number), null, false));
+    }).sort((a, b) => a.depth - b.depth);
+    const bounds = outline.map(([x,y]) => point(x,y));
+    const left = Math.min(...bounds.map(p=>p[0]))-35, right = Math.max(...bounds.map(p=>p[0]))+35;
+    const top = Math.min(...bounds.map(p=>p[1]))-50, bottom = Math.max(...bounds.map(p=>p[1]))+45;
+    const label = (name, x, y) => {
+      const [sx, sy] = point(x,y);
+      return `<text class="floor-zone-name" x="${sx}" y="${sy}" text-anchor="middle">${esc(name)}</text>`;
+    };
+    return `<svg class="floor-map" viewBox="${left} ${top} ${right-left} ${bottom-top}" role="img" aria-label="Beginner, Player, Gamer, Master 1 ve Master 2 salon yerleşimi">
+      ${poly(bounds,'floor-base')}
+      ${rooms.map(room=>poly(room.floor.map(([x,y])=>point(x,y)),room.service?'floor-service':'floor-zone')).join('')}
+      ${box(4,5,10,9.6,0,.42,'floor-core')}
+      ${desks.map(desk=>desk.html).join('')}
+      ${desks.map(desk=>desk.text).join('')}
+      ${rooms.map(room=>label(room.name,...room.label)).join('')}
+      ${label('Giriş',4.2,20.1)}${label('Vending / self servis',5.15,14.5)}
+    </svg>`;
+  }
+
+  window.ComputerZones = { zones, classify, summarize, isoMap, floorMap };
   if (typeof module !== 'undefined') module.exports = window.ComputerZones;
 })();

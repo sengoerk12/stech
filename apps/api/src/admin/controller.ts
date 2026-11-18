@@ -27,11 +27,11 @@ export function createAdminController(service: AdminService) {
       return service.login(body);
     }
     @Post("auth/logout") async logout(@Req() req: Request) {
-      await service.authorize(req.headers.authorization);
+      await service.authorize(req.headers.authorization, false, false, true);
       return service.logout(req.headers.authorization!);
     }
     @Get("me") me(@Req() req: Request) {
-      return service.authorize(req.headers.authorization);
+      return service.authorize(req.headers.authorization, false, false, true);
     }
     @Post("auth/password") async password(
       @Req() req: Request,
@@ -87,8 +87,8 @@ export function createAdminController(service: AdminService) {
       @Query("status") status?: string,
       @Query("before") before?: string,
     ) {
-      await service.authorize(req.headers.authorization);
-      return service.paymentList(status, before);
+      const actor = await service.authorize(req.headers.authorization, false, false, true);
+      return service.paymentList(status, before, actor.role === "cashier");
     }
     @Post("payments/:id/retry") async retry(
       @Req() req: Request,
@@ -96,6 +96,13 @@ export function createAdminController(service: AdminService) {
     ) {
       const actor = await service.authorize(req.headers.authorization, true);
       return service.retryPayment(actor, id);
+    }
+    @Post("payments/:id/manual-transfer") async manualTransfer(
+      @Req() req: Request,
+      @Param("id") id: string,
+    ) {
+      const actor = await service.authorize(req.headers.authorization, true, false, true);
+      return service.completeManualPayment(actor, id);
     }
     @Get("audit") async audit(
       @Req() req: Request,

@@ -4,6 +4,8 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Globalization;
+using System.Text;
 using System.Threading;
 using Windows.Foundation;
 using Windows.Globalization;
@@ -31,6 +33,11 @@ internal static class PanCafeScreenText {
         using (var png = new MemoryStream())
         using (var stream = new InMemoryRandomAccessStream())
         using (var writer = new DataWriter(stream.GetOutputStreamAt(0))) {
+            using (var graphics = Graphics.FromImage(enlarged)) {
+                graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                graphics.PixelOffsetMode = PixelOffsetMode.Half;
+                graphics.DrawImage(image, new Rectangle(0, 0, enlarged.Width, enlarged.Height));
+            }
             enlarged.Save(png, ImageFormat.Png);
             writer.WriteBytes(png.ToArray());
             Await<uint>(writer.StoreAsync());
@@ -51,14 +58,16 @@ internal static class PanCafeScreenText {
         return matches;
     }
 
-    internal static Rectangle FindUnique(List<Match> words, string label) {
+    internal static Rectangle FindUnique(List<Match> words, string label, bool normalizeLabel = false) {
         string[] target = label.Split(' ');
+        if (normalizeLabel) target = Array.ConvertAll(target, NormalizeLabel);
         var result = Rectangle.Empty;
         for (int i = 0; i <= words.Count - target.Length; i++) {
             var match = Rectangle.Empty;
             int j;
             for (j = 0; j < target.Length; j++) {
-                if (!String.Equals(words[i+j].Text, target[j], StringComparison.OrdinalIgnoreCase)) break;
+                string word = normalizeLabel ? NormalizeLabel(words[i+j].Text) : words[i+j].Text;
+                if (!String.Equals(word, target[j], StringComparison.OrdinalIgnoreCase)) break;
                 match = match.IsEmpty ? words[i+j].Bounds : Rectangle.Union(match, words[i+j].Bounds);
             }
             if (j != target.Length) continue;
@@ -66,6 +75,68 @@ internal static class PanCafeScreenText {
             result = match;
         }
         return result;
+    }
+
+    static string NormalizeLabel(string text) {
+        var result = new StringBuilder(text.Length);
+        foreach (char character in text.Trim().TrimEnd('.', '…', ':').Normalize(NormalizationForm.FormD)) {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+                result.Append(character == 'ı' ? 'i' : Char.ToLowerInvariant(character));
+        }
+        return result.ToString();
+    }
+
+    internal static Rectangle FindTicketSaleLabel(List<Match> words) {
+        var label = FindUnique(words, "Bilet Satışı", true);
+        // The PanCafe skin can make OCR merge the last dotless i into the ellipsis.
+        return label.IsEmpty ? FindUnique(words, "Bilet Satış", true) : label;
+    }
+
+    internal static Rectangle FindTicketSaleButton(Bitmap page, double dpi) {
+        // On PanCafe's ticket page the small orange ticket is immediately left of
+        // the sale label. A close crop keeps other captions from masking that label.
+        var icons = new List<Rectangle>();
+        for (int y = 0; y < page.Height; y += 2) {
+            int start = -1;
+            for (int x = 0; x <= page.Width + 1; x += 2) {
+                if (x < page.Width) {
+                    Color color = page.GetPixel(x, y);
+                    if (color.R >= 145 && color.G >= 80 && color.R > color.G && color.G >= color.B + 29) {
+                        if (start < 0) start = x;
+                        continue;
+                    }
+                }
+                if (start < 0) continue;
+                int runWidth = x - start;
+                if (runWidth >= 8 * dpi && runWidth <= 38 * dpi) {
+                    int index = icons.FindLastIndex(icon => icon.Bottom == y &&
+                        Math.Min(icon.Right, x) - Math.Max(icon.Left, start) >= 4 * dpi);
+                    var run = new Rectangle(start, y, runWidth, 2);
+                    if (index >= 0) icons[index] = Rectangle.Union(icons[index], run);
+                    else icons.Add(run);
+                }
+                start = -1;
+            }
+        }
+        int attempts = 0;
+        foreach (var icon in icons) {
+            if (icon.Height < 6 * dpi || icon.Height > 23 * dpi ||
+                icon.Width < 12 * dpi || icon.Width > 36 * dpi || icon.Width < icon.Height)
+                continue;
+            if (++attempts > 12) break;
+            int left = icon.Right - (int)(3 * dpi);
+            var textArea = Rectangle.Intersect(new Rectangle(0, 0, page.Width, page.Height),
+                new Rectangle(left, icon.Top - (int)(7 * dpi), (int)(126 * dpi), icon.Height + (int)(14 * dpi)));
+            if (textArea.Width < 60 * dpi || textArea.Height < 14 * dpi) continue;
+            using (var crop = page.Clone(textArea, page.PixelFormat)) {
+                var label = FindTicketSaleLabel(Read(crop));
+                if (!label.IsEmpty) {
+                    label.Offset(textArea.Location);
+                    return label;
+                }
+            }
+        }
+        return FindTicketSaleLabel(Read(page));
     }
 
     internal static Rectangle FindMemberToolbarLabel(Bitmap header, double dpi) {
@@ -85,6 +156,14 @@ internal static class PanCafeScreenText {
     }
 
     internal static Rectangle FindMemberToolbarIcon(Bitmap header, double dpi) {
+        return FindAdjacentMemberAndTicketIcons(header, dpi, false);
+    }
+
+    internal static Rectangle FindTicketToolbarIcon(Bitmap header, double dpi) {
+        return FindAdjacentMemberAndTicketIcons(header, dpi, true);
+    }
+
+    static Rectangle FindAdjacentMemberAndTicketIcons(Bitmap header, double dpi, bool findTicket) {
         // PanCafe's dark theme draws the two blue people immediately to the left of the orange ticket.
         var blue = ToolbarColorRuns(header, dpi, c => c.B >= 105 && c.B >= c.R + 45 && c.B >= c.G + 25);
         var orange = ToolbarColorRuns(header, dpi, c => c.R >= 135 && c.R >= c.G + 35 && c.G >= c.B + 27);
@@ -97,7 +176,7 @@ internal static class PanCafeScreenText {
                 int gap = ticket.Left + ticket.Width / 2 - x;
                 if (gap < 45 * dpi || gap > 103 * dpi ||
                     Math.Abs(ticket.Top + ticket.Height / 2 - y) > 12 * dpi) continue;
-                matches.Add(member);
+                matches.Add(findTicket ? ticket : member);
             }
         }
         return matches.Count == 1 ? matches[0] : Rectangle.Empty;
@@ -129,38 +208,6 @@ internal static class PanCafeScreenText {
             }
         }
         return runs;
-    }
-
-    internal static List<Match> ReadGreenText(Bitmap image) {
-        var ink = Rectangle.Empty;
-        using (var contrast = new Bitmap(image.Width, image.Height)) {
-            for (int y = 0; y < image.Height; y++) {
-                for (int x = 0; x < image.Width; x++) {
-                    var pixel = image.GetPixel(x, y);
-                    bool green = pixel.G >= 105 && pixel.G >= pixel.R + 13 && pixel.G >= pixel.B + 13;
-                    contrast.SetPixel(x, y, green ? Color.Black : Color.White);
-                    if (green) {
-                        var dot = new Rectangle(x, y, 1, 1);
-                        ink = ink.IsEmpty ? dot : Rectangle.Union(ink, dot);
-                    }
-                }
-            }
-            if (ink.IsEmpty) return new List<Match>();
-            const int padding = 10;
-            using (var padded = new Bitmap(Math.Max(55, ink.Width + 2 * padding), Math.Max(30, ink.Height + 2 * padding))) {
-                using (var canvas = Graphics.FromImage(padded)) canvas.Clear(Color.White);
-                for (int y = ink.Top; y < ink.Bottom; y++)
-                    for (int x = ink.Left; x < ink.Right; x++)
-                        padded.SetPixel(x - ink.Left + padding, y - ink.Top + padding, contrast.GetPixel(x, y));
-                using (var enlarged = new Bitmap(padded.Width * 2, padded.Height * 2)) {
-                    using (var canvas = Graphics.FromImage(enlarged)) {
-                        canvas.InterpolationMode = InterpolationMode.NearestNeighbor;
-                        canvas.DrawImage(padded, new Rectangle(0, 0, enlarged.Width, enlarged.Height));
-                    }
-                    return Read(enlarged);
-                }
-            }
-        }
     }
 
     internal static bool IsAddSelected(Bitmap picture) {

@@ -48,6 +48,7 @@ export function mapPanCafeHistory(row: PanCafeRow, username: string, installatio
   let kind: TransactionKind = "adjustment";
   let title = "Bakiye düzenlemesi";
   if (row.TERMINALNAME === "S TECH Admin") { title = "Yönetici bakiye düzenlemesi"; }
+  else if (amount > 0 && /^bilet yuklendi\./.test(text)) { kind = "topup"; title = "Bilet yüklemesi"; }
   else if (withdrawal) { signed = -Math.abs(amount); title = "Kasadan bakiye çıkarma"; }
   else if (deposit) { signed = Math.abs(amount); kind = "topup"; title = "Kasadan bakiye yükleme"; }
   else if (bonus) { signed = Math.abs(amount); kind = "bonus"; title = "PanCafe bonusu"; }

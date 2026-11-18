@@ -18,15 +18,18 @@ public static class PanCafeBridge
     static List<Dictionary<string,string>> Computers() {
         var rows = Query("SELECT ID,NAME,ISVIRTUAL,TERMINALSTATUS,NOMEMBERLOGIN,MAC FROM TERMINALS WHERE TERMINALTYPE=0 ORDER BY ID");
         var connected = PanCafeConnectedTerminals.Read(database);
+        var reserved = PanCafeNativeSessions.ReservedTerminals(folder);
         foreach (var row in rows) {
+            bool isReserved = reserved.Contains(Int32.Parse(row["ID"]));
+            row["RESERVED"] = isReserved ? "1" : "0";
             bool physicalOnline = row["ISVIRTUAL"] == "0" && connected.Contains(row["NAME"]);
             row["ONLINE"] = row["ISVIRTUAL"] == "1" || physicalOnline ? "1" : "0";
             bool allowed = Enabled("allowVirtualSessionStart");
-            bool canWake = allowed && row["ISVIRTUAL"] == "0" && !physicalOnline &&
+            bool canWake = !isReserved && allowed && row["ISVIRTUAL"] == "0" && !physicalOnline &&
                 row["NOMEMBERLOGIN"] == "0" && (row["TERMINALSTATUS"] == "0" || row["TERMINALSTATUS"] == "1") &&
                 PanCafeConnectedTerminals.WakePacket(row["MAC"]) != null;
             row["WAKABLE"] = canWake ? "1" : "0";
-            row["STARTSUPPORTED"] = allowed &&
+            row["STARTSUPPORTED"] = !isReserved && allowed &&
                 (row["ISVIRTUAL"] == "1" || ((physicalOnline || canWake) && row["NOMEMBERLOGIN"] == "0")) ? "1" : "0";
             if (row["ONLINE"] == "0" && row["TERMINALSTATUS"] == "1" && !canWake) row["TERMINALSTATUS"] = "0";
             row.Remove("MAC");
@@ -91,7 +94,8 @@ public static class PanCafeBridge
             }
             if(request.HttpMethod=="GET" && route=="/pc-availability") {
                 var computers = Computers();
-                int available = computers.FindAll(row => row["TERMINALSTATUS"] == "1" || row["WAKABLE"] == "1").Count;
+                int available = computers.FindAll(row => row["RESERVED"] != "1" &&
+                    (row["TERMINALSTATUS"] == "1" || row["WAKABLE"] == "1")).Count;
                 Reply(response,200,new [] {new {TOTAL=computers.Count.ToString(),AVAILABLE=available.ToString()}});return;
             }
             if(request.HttpMethod=="GET" && route=="/computers") {
@@ -183,13 +187,31 @@ public static class PanCafeBridge
                 PanCafeMemberWriter.Create(database,clientDirectory,new string[]{username,password,first,last,phone,email});
                 Reply(response,201,MemberByName(username,false));return;
             }
+            if(request.HttpMethod=="GET" && route=="/credit/readiness") {
+                bool ready=Enabled("allowBalanceCredit") && PanCafeBalanceWriter.AutoMemberBonusDisabled(database,clientDirectory);
+                Reply(response,200,new[]{new Dictionary<string,string>{{"READY",ready?"true":"false"}}});return;
+            }
+            if(request.HttpMethod=="POST" && route=="/tickets/redeem") {
+                if(!Enabled("allowBalanceCredit")) {Reply(response,503,new {error="credit_disabled"});return;}
+                var body=ReadBody(request);
+                int memberId;
+                string barcode=Field(body,"barcode"), username=Field(body,"username");
+                if(!Int32.TryParse(Field(body,"memberId"),out memberId)||!AllowedUser(username)||
+                    !Regex.IsMatch(barcode,@"\A[0-9]{10}\z")) {Reply(response,400,new {error="invalid_ticket"});return;}
+                ThreadPool.QueueUserWorkItem(delegate {
+                    try {Reply(response,200,PanCafeNativeSessions.RedeemTicket(database,clientDirectory,memberId,username,barcode,folder));}
+                    catch {try {Reply(response,503,new {error="pancafe_ticket_unavailable"});} catch {}}
+                });
+                return;
+            }
             if(request.HttpMethod=="POST" && route=="/credit") {
                 if(!config.ContainsKey("allowBalanceCredit") || !Convert.ToBoolean(config["allowBalanceCredit"])) {Reply(response,503,new {error="credit_disabled"});return;}
                 var body=ReadBody(request);int memberId;long amount,bonus;
                 if(!Int32.TryParse(Field(body,"memberId"),out memberId)||!Int64.TryParse(Field(body,"amount"),out amount)||!Int64.TryParse(Field(body,"bonus"),out bonus)) {Reply(response,400,new {error="invalid_credit"});return;}
                 string username=Field(body,"username"), operationId=Field(body,"operationId");
+                bool retryUnconfirmed=body.ContainsKey("retryUnconfirmed") && Object.Equals(body["retryUnconfirmed"], true);
                 ThreadPool.QueueUserWorkItem(delegate {
-                    try { Reply(response,200,PanCafeNativeSessions.Credit(database,clientDirectory,folder,memberId,username,amount,bonus,operationId)); }
+                    try { Reply(response,200,PanCafeNativeSessions.Credit(database,clientDirectory,folder,memberId,username,amount,bonus,operationId,retryUnconfirmed)); }
                     catch { try { Reply(response,503,new {error="pancafe_credit_unavailable"}); } catch {} }
                 });
                 return;
@@ -217,7 +239,10 @@ public static class PanCafeBridge
             }
             int port=config.ContainsKey("port")?Convert.ToInt32(config["port"]):3002;
             if(port!=3002 && port!=3003 && port!=3004) throw new InvalidOperationException("Invalid loopback port");
-            if(config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"])) PanCafeBalanceWriter.Initialize(database,clientDirectory);
+            if(Enabled("allowBalanceCredit")) {
+                PanCafeBalanceWriter.Initialize(database,clientDirectory);
+                PanCafeNativeSessions.InitializeTickets(database,clientDirectory);
+            }
             if(Enabled("allowAdminAdjustments") || FirebaseBalanceWriteEnabled()) PanCafeAdminWriter.Initialize(database,clientDirectory);
             PanCafeProfileWriter.Initialize(database,clientDirectory);
             listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:"+port+"/");listener.Start();Status(true);

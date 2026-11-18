@@ -12,7 +12,7 @@ class ApiGateway {
       response = await fetch(this.config.apiBaseUrl.replace(/\/$/, '') + endpoint, {
         method: body ? 'POST' : 'GET',
         headers: { 'Content-Type': 'application/json', 'X-Kiosk-Key': this.config.deviceKey, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
-        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 110000 : endpoint === '/kiosk/pos-payments' ? 25000 : 12000), redirect: 'error',
+        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(endpoint.endsWith('/start') ? 110000 : endpoint.endsWith('/retry') || endpoint === '/kiosk/tickets/redeem' ? 35000 : endpoint === '/kiosk/pos-payments' ? 25000 : 12000), redirect: 'error',
       });
     } catch { throw new Error('Sunucuya ulaşılamıyor. Lütfen yetkiliden yardım iste.'); }
     if (response.status === 304) return null;
@@ -31,11 +31,22 @@ class ApiGateway {
     }
   }
   quote(token, payload) { return this.request('/kiosk/quote', token, { amount: payload.amount, promotionId: payload.promotionId }); }
+  async redeemTicket(token, barcode) {
+    try {
+      return await this.request('/kiosk/tickets/redeem', token, { barcode });
+    } catch (error) {
+      if (error.status === 404) throw new Error('Bilet yükleme için S TECH sunucusunun güncellenmesi gerekiyor.');
+      throw error;
+    }
+  }
   createPosPayment(token, { amount, promotionId, key }) {
     return this.request('/kiosk/pos-payments', token, { amount, promotionId }, { 'Idempotency-Key': key });
   }
   posPayment(token, id) {
     return this.read('/kiosk/pos-payments/' + encodeURIComponent(id), token);
+  }
+  retryPosPayment(token, id) {
+    return this.request('/kiosk/pos-payments/' + encodeURIComponent(id) + '/retry', token, {});
   }
   cancelPosPayment(token, id) {
     return this.request('/kiosk/pos-payments/' + encodeURIComponent(id) + '/cancel', token, {});
@@ -46,6 +57,7 @@ class ApiGateway {
   heartbeat() { return this.request('/kiosk/heartbeat', null, {}); }
   async design() { const result=await this.request('/kiosk/design',null,undefined,this.designVersion?{'If-None-Match':'"'+this.designVersion+'"'}:{});if(result?.id)this.designVersion=result.id;return result; }
   pcAvailability() { return this.read('/kiosk/pc-availability', null); }
+  floorAvailability() { return this.read('/kiosk/floor-availability', null); }
   computers(token) { return this.read('/kiosk/computers', token); }
   sCoin(token) { return this.read('/kiosk/s-coin', token); }
   sCoinPlay(token, { operationId, game }) { return this.request('/kiosk/s-coin/play', token, { operationId, game }); }

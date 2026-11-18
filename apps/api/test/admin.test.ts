@@ -63,6 +63,19 @@ test("Admin HTTP: one-time setup, isolated sessions, role enforcement, dynamic q
     );
     const owner = await (await call("admin/auth/login", input)).json();
     token = owner.token;
+    const cashierInput = { username: "cashier-test", password: "Cashier-password123!", role: "cashier" };
+    assert.equal((await call("admin/accounts", cashierInput)).status, 201);
+    const cashier = await (await call("admin/auth/login", cashierInput)).json();
+    assert.equal(cashier.admin.role, "cashier");
+    const cashierHeaders = { Authorization: "Bearer " + cashier.token };
+    const id = randomUUID();
+    for (const route of ["overview", "members", "promotions", "adjustments", "audit", "accounts", "content/settings", "kiosk-design"]) {
+      assert.equal((await call("admin/" + route, undefined, "GET", cashierHeaders)).status, 403, route);
+    }
+    assert.equal((await call("admin/payments?status=completed", undefined, "GET", cashierHeaders)).status, 200);
+    assert.equal((await call("admin/payments/" + id + "/retry", {}, "POST", cashierHeaders)).status, 403);
+    assert.equal((await call("admin/payments/" + id + "/manual-transfer", {}, "POST", cashierHeaders)).status, 409);
+    assert.equal((await call("admin/auth/logout", {}, "POST", cashierHeaders)).status, 201);
     const promo = (await (await call("admin/promotions")).json())[0];
     assert.equal(
       (await call("admin/promotions", { ...promo, bonusPercent: 20 }, "PUT"))

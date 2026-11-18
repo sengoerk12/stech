@@ -54,6 +54,11 @@ export const schema = [
   `ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS pos_cancelled_at timestamptz`,
   `INSERT INTO schema_migrations(version) VALUES(5) ON CONFLICT DO NOTHING`,
   `CREATE TABLE IF NOT EXISTS admin_accounts (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, salt text NOT NULL, role text NOT NULL CHECK(role IN ('owner','operator','viewer')), active boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now())`,
+  `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=11) THEN
+    ALTER TABLE admin_accounts DROP CONSTRAINT admin_accounts_role_check;
+    ALTER TABLE admin_accounts ADD CONSTRAINT admin_accounts_role_check CHECK(role IN ('owner','operator','viewer','cashier'));
+    INSERT INTO schema_migrations(version) VALUES(11);
+  END IF; END $$`,
   `CREATE TABLE IF NOT EXISTS admin_sessions (token_hash text PRIMARY KEY, admin_id uuid NOT NULL REFERENCES admin_accounts(id), expires_at timestamptz NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS admin_adjustments (id uuid PRIMARY KEY, admin_id uuid NOT NULL REFERENCES admin_accounts(id), member_id integer NOT NULL, username text NOT NULL, delta bigint NOT NULL, bonus_delta bigint NOT NULL, expected_balance bigint NOT NULL, expected_bonus bigint NOT NULL, reason text NOT NULL, status text NOT NULL CHECK(status IN ('pending','completed','rejected')), balance_after bigint, created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS admin_content (kind text NOT NULL, id uuid NOT NULL, definition jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(kind,id))`,
