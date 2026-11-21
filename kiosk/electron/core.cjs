@@ -62,24 +62,6 @@ class DemoStore {
     const all = this.state.transactions[card];
     return { items: all.slice(offset, offset + 20), nextCursor: offset + 20 < all.length ? String(offset + 20) : undefined };
   }
-  async history(card) {
-    this.assert(card);
-    const rows = this.state.transactions[card];
-    const coins = Object.values(this.state.payments)
-      .filter(payment => payment.card === card && payment.status === 'completed' && payment.sCoinEarned > 0)
-      .map(payment => ({
-        id: payment.id + ':s-coin', kind: 's_coin', amount: payment.sCoinEarned,
-        title: 'Yüklemeden kazanılan S Coin',
-        createdAt: rows.find(row => row.id === payment.id + '-topup')?.createdAt ?? payment.createdAt,
-      }));
-    const recent = items => items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
-    return {
-      items: [
-        ...['topup', 'bonus', 'game_reward'].flatMap(kind => recent(rows.filter(row => row.kind === kind && row.amount > 0))),
-        ...recent(coins),
-      ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    };
-  }
   serial(fn) { const next = this.chain.then(fn); this.chain = next.catch(() => {}); return next; }
   async create(card, amount, key, promotionId) {
     return this.serial(async () => {

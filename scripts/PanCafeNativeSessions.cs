@@ -254,7 +254,10 @@ public static partial class PanCafeNativeSessions {
     static Dictionary<string,string> FindTerminal(string db, string client, int id) {
         var rows = PanCafeReadOnly.Query(db, client,
             "SELECT ID,NAME,TERMINALTYPE,ISVIRTUAL,TERMINALSTATUS,NOMEMBERLOGIN,MAC,MEMBERID,CAST(STARTDATE AS VARCHAR(30)) AS STARTDATE,CAST(STARTTIME AS VARCHAR(30)) AS STARTTIME FROM TERMINALS WHERE ID=" + id);
-        return rows.Count == 1 ? rows[0] : null;
+        if (rows.Count != 1) return null;
+        var row = rows[0];
+        if (row["ISVIRTUAL"] == "0") row["MAC"] = PanCafeConnectedTerminals.WakeAddress(db, row["NAME"], row["MAC"]);
+        return row;
     }
     static bool IsOnline(string database, Dictionary<string,string> terminal) {
         return terminal["ISVIRTUAL"] == "1" || PanCafeConnectedTerminals.Read(database).Contains(terminal["NAME"]);

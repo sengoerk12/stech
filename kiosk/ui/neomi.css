@@ -1,0 +1,1049 @@
+/* Shared NEOMI assets. Apply this first stage to the computers page only. */
+@font-face {
+  font-family: Barlow;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('assets/neomi/Barlow-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: italic;
+  font-weight: 800;
+  font-display: swap;
+  src: url('assets/neomi/BarlowCondensed-ExtraBoldItalic.ttf') format('truetype');
+}
+
+.neomi-theme {
+  --neomi-cyan: #00d7ff;
+  --neomi-orange: #ff9d00;
+  --neomi-cut: polygon(14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px), 0 14px);
+  --pc-free: #6bed69;
+  --pc-busy: #ff4b50;
+  --pc-off: #667582;
+  color: #f6f9fa;
+  font-family: Barlow, "Segoe UI", sans-serif;
+  background: url('assets/neomi/circuits.svg') center / 100% 100%,
+    radial-gradient(ellipse at 75% 25%, #28363b66, transparent 65%), #171d20;
+}
+
+.neomi-theme .workspace,
+.neomi-theme .content {
+  background: transparent;
+}
+
+.neomi-theme aside {
+  background: #12181bde;
+  border-color: #00d7ff30;
+}
+
+.neomi-theme .brand img.brand-wordmark {
+  width: 194px;
+  height: auto;
+  aspect-ratio: 7161 / 2124;
+  filter: drop-shadow(0 0 10px #ff9d0020);
+}
+
+.neomi-theme .workspace > header {
+  border-color: #00d7ff26;
+}
+
+.neomi-theme .workspace > footer {
+  border-color: #00d7ff26;
+  color: #aab6ba;
+}
+
+.neomi-theme .breadcrumb,
+.neomi-theme .clock {
+  color: #c6d0d5;
+}
+
+.neomi-theme .station-label {
+  color: #a6b3b8;
+}
+
+.neomi-theme .nav-item {
+  border-radius: 0;
+  color: #a8b6be;
+}
+
+.neomi-theme .nav-item.active {
+  background: linear-gradient(120deg, #80431288, #ff9d0010);
+  color: #ffc334;
+  box-shadow: inset 0 0 0 1px #ffa60080;
+  clip-path: var(--neomi-cut);
+}
+
+.neomi-theme .nav-item.active .icon {
+  color: #ffb000;
+  filter: drop-shadow(0 0 6px #ff9d0060);
+}
+
+.neomi-theme .page-heading h1,
+.neomi-theme .neomi-zone-title h2,
+.neomi-theme .neomi-section-bar h2 {
+  font-family: "Barlow Condensed", Barlow, "Arial Narrow", sans-serif;
+  font-weight: 800;
+  font-style: italic;
+  text-transform: uppercase;
+}
+
+.neomi-theme .neomi-heading {
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.neomi-theme .neomi-heading .eyebrow {
+  color: #c6d2d9;
+  font-size: 12px;
+  letter-spacing: 3px;
+}
+
+.neomi-theme .neomi-heading h1 {
+  font-size: 60px;
+  line-height: 1;
+  letter-spacing: -.7px;
+  margin: 12px 0;
+}
+
+.neomi-theme .neomi-heading h1 span {
+  color: #ffb000;
+  text-shadow: 0 0 24px #ff9d0033;
+}
+
+.neomi-theme .neomi-heading p {
+  color: #aab8c0;
+  font-size: 16px;
+}
+
+.neomi-availability {
+  position: relative;
+  padding-left: 24px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.neomi-availability > i {
+  display: inline-block;
+  margin-right: 10px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--pc-free);
+  box-shadow: 0 0 14px #6bed6977;
+}
+
+.neomi-availability > strong {
+  font-size: 36px;
+  color: var(--pc-free);
+  font-variant-numeric: tabular-nums;
+}
+
+.neomi-availability strong span {
+  color: #8b9da7;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.neomi-availability > span {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: #b2c0c7;
+}
+
+.neomi-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-block: 1px solid #a7dce324;
+  padding: 17px 0;
+  margin-bottom: 30px;
+  font-size: 14px;
+}
+
+.neomi-account > span {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.neomi-account .icon {
+  color: var(--neomi-cyan);
+}
+
+.neomi-account span span {
+  color: #92a5b0;
+}
+
+.neomi-account [data-wallet-balance] {
+  color: #ffc12b;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.neomi-section-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.neomi-theme .neomi-section-bar h2 {
+  font-size: 26px;
+  letter-spacing: .8px;
+}
+
+.neomi-section-bar h2::before {
+  content: '';
+  display: inline-block;
+  vertical-align: middle;
+  width: 7px;
+  height: 23px;
+  background: var(--neomi-orange);
+  transform: skewX(-22deg);
+  margin-right: 14px;
+  box-shadow: 0 0 13px #ff9d0033;
+}
+
+.neomi-theme .map-legend {
+  margin: 0;
+  font-size: 14px;
+  color: #c5d0d6;
+}
+
+.neomi-theme .map-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--pc-free) 30%, transparent);
+}
+
+.neomi-theme .zone-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  margin-bottom: 26px;
+}
+
+.neomi-theme .zone-card {
+  isolation: isolate;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 36px;
+  grid-template-rows: auto 5px;
+  align-items: center;
+  min-height: 134px;
+  padding: 23px 24px 20px;
+  gap: 18px 24px;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(145deg, #39dfff, #007ba2 48%, #4ddfff);
+  clip-path: var(--neomi-cut);
+  transition: filter .2s;
+}
+
+.neomi-theme .zone-card::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 2px;
+  clip-path: var(--neomi-cut);
+  background: linear-gradient(145deg, #28363d, #1a2329 54%, #141c21);
+}
+
+.neomi-theme .zone-card::after {
+  content: '';
+  position: absolute;
+  width: 54px;
+  height: 3px;
+  bottom: 1px;
+  right: 34px;
+  background: #72edff;
+  box-shadow: 0 0 15px #00d7ff;
+}
+
+.neomi-theme .zone-card:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+
+.neomi-theme .zone-card:focus-visible {
+  background: #fff5bf;
+  outline: none;
+}
+
+.neomi-theme .zone-card:focus-visible::before {
+  inset: 4px;
+}
+
+.neomi-zone-title {
+  align-self: center;
+}
+
+.neomi-theme .neomi-zone-title h2 {
+  font-size: 31px;
+  line-height: 1.1;
+  letter-spacing: .5px;
+}
+
+.neomi-theme .neomi-zone-title p {
+  font-size: 13px;
+  margin-top: 5px;
+  color: #a8bbc7;
+}
+
+.neomi-theme .zone-count {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 0;
+}
+
+.neomi-theme .zone-count strong {
+  font-family: "Barlow Condensed", Barlow, sans-serif;
+  font-size: 37px;
+  font-weight: 700;
+  font-style: italic;
+  color: var(--pc-free);
+}
+
+.neomi-theme .zone-count span {
+  font-size: 13px;
+  color: #cad4d9;
+}
+
+.neomi-zone-arrow {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  color: #fff1cc;
+  border: 1px solid #db9200;
+  background: linear-gradient(135deg, #e77b0029, #b4700010);
+  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+}
+
+.neomi-zone-arrow .icon {
+  width: 21px;
+  height: 21px;
+}
+
+.neomi-theme .zone-meter {
+  grid-column: 1 / -1;
+  height: 5px;
+  border-radius: 0;
+  background: var(--pc-busy);
+}
+
+.neomi-theme .zone-meter i {
+  border-radius: 0;
+  box-shadow: 0 0 9px #6bed6955;
+}
+
+.neomi-theme .zone-full .zone-count strong {
+  color: var(--pc-busy);
+}
+
+.neomi-brand-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 32px;
+  padding: 24px 32px;
+  min-height: 110px;
+  border: 0;
+  clip-path: var(--neomi-cut);
+  background: linear-gradient(110deg, #ffb900, #ff8600 18%, #0c89a2 60%, #00dcff);
+  isolation: isolate;
+}
+
+.neomi-brand-banner::before {
+  content: '';
+  z-index: -1;
+  position: absolute;
+  inset: 2px;
+  clip-path: var(--neomi-cut);
+  background: url('assets/neomi/circuits.svg') center / cover, linear-gradient(110deg, #30251d, #17212a 68%);
+}
+
+.neomi-brand-banner img {
+  width: 220px;
+  max-width: 35%;
+  height: auto;
+}
+
+.neomi-brand-banner > div {
+  display: grid;
+  gap: 4px;
+  padding-left: 25px;
+  border-left: 1px solid #edab28;
+  font-style: italic;
+}
+
+.neomi-brand-banner strong {
+  font-size: 22px;
+  letter-spacing: 1.5px;
+}
+
+.neomi-brand-banner > div span {
+  font-size: 16px;
+  color: #adc0ce;
+}
+
+.neomi-banner-mark {
+  margin-left: auto;
+  transform: skewY(-8deg);
+  color: var(--neomi-cyan);
+  filter: drop-shadow(0 0 16px #00d7ff60);
+}
+
+.neomi-banner-mark .icon {
+  width: 47px;
+  height: 47px;
+}
+
+/* The same frames and desk palette continue into the selected room. */
+.neomi-theme .map-panel,
+.neomi-theme .pick-bar {
+  border-radius: 0;
+  border: 1px solid #00d7ff88;
+  background: linear-gradient(145deg, #27343cdd, #131b23ee);
+}
+
+.neomi-theme .map-panel {
+  padding: 28px;
+  box-shadow: inset 0 0 40px #00caff06;
+}
+
+.neomi-theme .pick-bar.pick-ready {
+  border-color: #ffb000;
+  box-shadow: inset 3px 0 #ffb000, 0 0 20px #ff9d0010;
+}
+
+.neomi-theme .pick-bar h2 {
+  color: #ffc12b;
+}
+
+.neomi-theme .iso-floor {
+  fill: #131d25;
+  stroke: #374f5c;
+}
+
+.neomi-theme .iso-wall {
+  fill: #21343f;
+  stroke: #456071;
+}
+
+.neomi-theme .iso-wall-back {
+  fill: #2a3e49;
+}
+
+.neomi-theme .iso-desk.face-top {
+  fill: #506879;
+}
+
+.neomi-theme .iso-desk.face-left {
+  fill: #243743;
+}
+
+.neomi-theme .iso-desk.face-right {
+  fill: #354e5e;
+}
+
+.neomi-theme .iso-screen {
+  filter: drop-shadow(0 0 3px #6bed6933);
+}
+
+.neomi-theme .iso-chair.face-top {
+  fill: #52616e;
+}
+
+.neomi-theme .button {
+  border-radius: 0;
+  clip-path: var(--neomi-cut);
+}
+
+.neomi-theme .button.primary {
+  background: linear-gradient(175deg, #ffc21b, #ff8a00 55%, #bb4800);
+  color: #fff;
+  border: 2px solid #ffd22d;
+  text-shadow: 0 1px 2px #6a2a00;
+  box-shadow: inset 0 0 14px #ffc30099;
+}
+
+.neomi-theme .button.secondary {
+  background: linear-gradient(150deg, #2a3d47, #18242b);
+  border: 2px solid #00c9f0;
+}
+
+.neomi-theme .pc-chip {
+  border-radius: 0;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+
+.neomi-theme .notice {
+  border-radius: 0;
+  border-color: #d99731;
+  background: #3d2b19;
+  color: #ffe0a0;
+}
+
+@media (max-aspect-ratio: 4/5) {
+  .neomi-theme aside {
+    min-height: 114px;
+    padding: 24px 40px;
+    background: #10171ce6;
+    border-bottom: 1px solid #00c8ff70;
+  }
+
+  .neomi-theme .brand img.brand-wordmark {
+    width: 290px;
+  }
+
+  .neomi-theme .avatar {
+    background: linear-gradient(145deg, #00c8ff30, #29363e);
+    color: #90eaff;
+    border-radius: 0;
+    border: 1px solid #00c8ff66;
+  }
+
+  .neomi-theme .member-mini {
+    display: none;
+  }
+
+  .neomi-theme .logout-button {
+    min-height: 54px;
+    padding: 12px 20px;
+    border: 1px solid #8b6e3c;
+    background: #2a241c;
+  }
+
+  .neomi-theme .workspace > header {
+    height: 66px;
+    padding-inline: 44px;
+  }
+
+  .neomi-theme .content {
+    padding: 34px 44px 32px;
+  }
+
+  .neomi-theme .neomi-heading {
+    margin-bottom: 27px;
+    flex-wrap: nowrap;
+  }
+
+  .neomi-theme .neomi-heading h1 {
+    font-size: 76px;
+  }
+
+  .neomi-theme .neomi-heading p {
+    font-size: 19px;
+  }
+
+  .neomi-availability > strong {
+    font-size: 44px;
+  }
+
+  .neomi-availability > span {
+    font-size: 16px;
+  }
+
+  .neomi-account {
+    padding: 21px 0;
+    font-size: 17px;
+    margin-bottom: 31px;
+  }
+
+  .neomi-account [data-wallet-balance] {
+    font-size: 27px;
+  }
+
+  .neomi-theme .neomi-section-bar {
+    margin-bottom: 22px;
+  }
+
+  .neomi-theme .neomi-section-bar h2 {
+    font-size: 29px;
+  }
+
+  .neomi-theme .map-legend {
+    font-size: 17px;
+  }
+
+  .neomi-theme .zone-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 23px;
+    margin-bottom: 28px;
+  }
+
+  .neomi-theme .zone-card {
+    min-height: 166px;
+    padding: 28px 32px;
+  }
+
+  .neomi-theme .neomi-zone-title h2 {
+    font-size: 37px;
+  }
+
+  .neomi-theme .neomi-zone-title p {
+    font-size: 16px;
+  }
+
+  .neomi-theme .zone-count strong {
+    font-size: 44px;
+  }
+
+  .neomi-theme .zone-count span {
+    font-size: 16px;
+  }
+
+  .neomi-brand-banner {
+    min-height: 134px;
+    padding: 28px 32px;
+  }
+
+  .neomi-theme .workspace > footer {
+    height: 62px;
+    font-size: 13px;
+  }
+
+  .neomi-theme nav {
+    background: linear-gradient(180deg, #18252d, #10181e);
+    border-top: 1px solid #00c8ff66;
+    box-shadow: 0 -8px 30px #00141e50;
+  }
+
+  .neomi-theme .nav-item {
+    font-size: 14px;
+  }
+
+  .neomi-theme .map-panel .iso-map {
+    min-height: 400px;
+    max-height: 43vh;
+  }
+
+  .neomi-theme .pick-bar {
+    padding: 26px;
+  }
+}
+
+@media (max-aspect-ratio: 4/5) and (max-width: 800px) {
+  .neomi-theme aside {
+    min-height: 90px;
+    padding: 18px 24px;
+  }
+
+  .neomi-theme .brand img.brand-wordmark {
+    width: 210px;
+  }
+
+  .neomi-theme .content {
+    padding: 26px 24px;
+  }
+
+  .neomi-theme .workspace > header {
+    padding-inline: 24px;
+  }
+
+  .neomi-theme .neomi-heading h1 {
+    font-size: 54px;
+  }
+
+  .neomi-theme .neomi-heading p {
+    font-size: 15px;
+  }
+
+  .neomi-theme .zone-grid {
+    gap: 16px;
+  }
+
+  .neomi-theme .zone-card {
+    min-height: 146px;
+    padding: 22px 24px;
+  }
+
+  .neomi-theme .neomi-zone-title h2 {
+    font-size: 29px;
+  }
+
+  .neomi-theme .neomi-zone-title p {
+    font-size: 13px;
+  }
+
+  .neomi-theme .zone-count span {
+    font-size: 13px;
+  }
+
+  .neomi-account {
+    font-size: 14px;
+  }
+
+  .neomi-account > span {
+    gap: 8px;
+  }
+
+  .neomi-account > span:first-child > span,
+  .neomi-banner-mark {
+    display: none;
+  }
+
+  .neomi-brand-banner {
+    gap: 20px;
+  }
+
+  .neomi-brand-banner strong {
+    font-size: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neomi-theme .zone-card {
+    transition: none;
+  }
+}
+
+/* The icon cell is an 88px square on the supplied 1536px design sheet. */
+.neomi-theme .nav-item,
+.neomi-theme .logout-button {
+  background: linear-gradient(160deg, #37444c, #171d21 66%);
+  box-shadow: inset 0 0 0 1px #507784;
+  clip-path: var(--neomi-cut);
+}
+.neomi-theme .nav-item.active,
+.neomi-theme .logout-button {
+  box-shadow: inset 0 0 0 2px #ffae18;
+  color: #fff1c8;
+}
+.neomi-theme .nav-item[data-page="computers"],
+.neomi-theme .neomi-zone-title,
+.neomi-theme .neomi-banner-mark { --sprite-x:1317; --sprite-y:261; }
+.neomi-theme [data-page="campaigns"] { --sprite-x:1083; --sprite-y:348; }
+.neomi-theme [data-page="topup"],
+.neomi-account > span:last-child { --sprite-x:1200; --sprite-y:260; }
+.neomi-theme [data-page="profile"],
+.neomi-account > span:first-child { --sprite-x:1083; --sprite-y:261; }
+.neomi-theme [data-page="games"] { --sprite-x:1436; --sprite-y:260; }
+.neomi-theme [data-action="logout"] { --sprite-x:1440; --sprite-y:348; }
+.neomi-theme :is(.nav-item[data-page="computers"],[data-page="games"],[data-page="campaigns"],[data-page="topup"],[data-page="profile"],[data-action="logout"],.neomi-account > span,.neomi-banner-mark) > .icon { display:none; }
+.neomi-theme :is(.nav-item[data-page="computers"],[data-page="games"],[data-page="campaigns"],[data-page="topup"],[data-page="profile"],[data-action="logout"],.neomi-account > span,.neomi-banner-mark,.neomi-zone-title)::before {
+  content:'';
+  --cell: 34px;
+  display:inline-block;
+  flex:0 0 auto;
+  width:var(--cell);
+  height:var(--cell);
+  background-image:url('assets/neomi/interface-sheet.png');
+  background-size:calc(1536 / 88 * var(--cell)) calc(1024 / 88 * var(--cell));
+  background-position:calc((44 - var(--sprite-x)) / 88 * var(--cell)) calc((44 - var(--sprite-y)) / 88 * var(--cell));
+  mask-image:radial-gradient(ellipse, black 60%, transparent 76%);
+}
+.neomi-theme .neomi-zone-title { position:relative; padding-left:clamp(44px,6vw,80px); }
+.neomi-theme .neomi-zone-title::before {
+  --cell:clamp(38px,5vw,64px);
+  position:absolute; left:0; top:50%; transform:translateY(-50%);
+}
+.neomi-theme .neomi-account, .neomi-theme .pick-bar,
+.neomi-theme .map-panel {
+  background:linear-gradient(125deg,#2e3c43,#172025 65%,#232e34);
+  border:1px solid #4598ac;
+  border-radius:0;
+}
+.neomi-theme .zone-card::before {
+  background:linear-gradient(115deg,transparent 60%,#00baff09 60.2%,transparent 61%),
+    linear-gradient(155deg,#384850,#202a30 46%,#151b20);
+}
+body:has(.neomi-theme) .modal {
+  background:linear-gradient(145deg,#34434a,#151c20 70%);
+  border:2px solid #00d7ff; border-radius:0;
+  box-shadow:0 0 26px #00caff32;
+}
+body:has(.neomi-theme) .modal h2 {font:italic 800 2rem "Barlow Condensed",sans-serif;}
+body:has(.neomi-theme) .modal .button {border-radius:0; border:1px solid #4bdcff;}
+body:has(.neomi-theme) .modal .button.primary {background:linear-gradient(#ffb019,#ac4903);border-color:#ffd66e;color:#171b1d;}
+
+.neomi-theme .breadcrumb { display:none; }
+.neomi-theme .header-right { margin-left:auto; }
+.neomi-theme .brand { justify-content:center; }
+.neomi-theme .nav-item[data-page="computers"]::before {
+  position:static; inset:auto; transform:none; margin:0; border:0;
+  background-color:transparent; box-shadow:none;
+}
+.zone-heading-actions { display:flex; align-items:center; gap:10px; }
+.neomi-theme .zone-open {
+  font:inherit; color:inherit; text-transform:inherit; letter-spacing:inherit;
+  padding:0; background:none; border:0;
+}
+.neomi-theme .neomi-zone-title { position:static; }
+.neomi-theme .neomi-zone-title::before { left:clamp(15px,3vw,32px); top:44%; }
+.zone-open::after { content:''; position:absolute; inset:0; }
+.zone-info { position:relative; z-index:1; display:grid; place-items:center;
+  width:44px; height:44px; background:transparent; color:#65deff; border:0; }
+.zone-info .icon { width:25px; height:25px; }
+@media (max-aspect-ratio:4/5) {
+  .neomi-theme aside { position:relative; justify-content:flex-end; }
+  .neomi-theme aside .brand { position:absolute; left:50%; transform:translateX(-50%); }
+}
+
+:is(.neomi-home,.neomi-campaigns) .campaign-ticket,
+.neomi-campaigns .campaign-grid .empty {
+  --coupon-edge:#ffb52a;
+  border:2px solid var(--coupon-edge);
+  border-radius:0;
+  clip-path:var(--neomi-cut);
+  background:linear-gradient(130deg,#314047,#1c252a 55%,#12191e);
+  color:#f5f8fa;
+}
+:is(.neomi-home,.neomi-campaigns) .campaign-blue { --coupon-edge:#2ad9ff; }
+:is(.neomi-home,.neomi-campaigns) .coupon-body { background:transparent; }
+:is(.neomi-home,.neomi-campaigns) .coupon-body h3,
+:is(.neomi-home,.neomi-campaigns) .coupon-value strong { font-family:"Barlow Condensed",sans-serif; font-style:italic; }
+:is(.neomi-home,.neomi-campaigns) .coupon-value {
+  color:var(--coupon-edge); background:linear-gradient(145deg,#35434b,#161c20);
+  border-color:var(--coupon-edge);
+}
+:is(.neomi-home,.neomi-campaigns) .coupon-apply {
+  color:#171b1d; border:1px solid #ffd47a; border-radius:0;
+  background:linear-gradient(#ffbc42,#f29412); clip-path:var(--neomi-cut);
+}
+.neomi-campaigns .nav-item.active::before {
+  position:static; inset:auto; transform:none; margin:0; border:0; background-color:transparent; box-shadow:none;
+}
+body:has(.neomi-campaigns) .campaign-terms {
+  border:1px solid #4099ad; background:#182329; border-radius:0;
+}
+
+.neomi-welcome {
+  background: url('assets/neomi/circuits.svg') center / 100% 100%,
+    radial-gradient(ellipse at 65% 40%, #27373e, #141b20 72%);
+}
+.neomi-welcome > header {
+  display:grid; grid-template-columns:1fr auto 1fr;
+  border-bottom:1px solid #27788c; padding-bottom:14px;
+}
+.neomi-welcome > header .brand {grid-column:2;}
+.neomi-welcome > header .header-right {grid-column:3; justify-self:end;}
+.neomi-welcome .brand img.brand-wordmark {width:clamp(148px,24vw,300px);}
+.neomi-welcome .welcome-copy h1, .neomi-welcome .tap-panel h2 {
+  font-family:"Barlow Condensed",sans-serif; font-style:italic; font-weight:800;
+  text-transform:uppercase;
+}
+.neomi-welcome .welcome-copy h1 span {color:#ffb01a;}
+.neomi-welcome .tap-panel {
+  position:relative; isolation:isolate; border:0; border-radius:0; clip-path:var(--neomi-cut);
+  background:linear-gradient(125deg,#ffac19,#ffad25 8%,#38dbff 50%,#0195bd);
+}
+.neomi-welcome .tap-panel::before {
+  content:''; position:absolute; z-index:-1; inset:2px; clip-path:var(--neomi-cut);
+  background:linear-gradient(145deg,#2d3a42,#182025 65%,#202e35);
+}
+.neomi-welcome .member-card {background:linear-gradient(135deg,#334550,#192a32 62%,#70420e);border-color:#49c9e2;}
+.neomi-welcome .tap-ring {border-color:#2c798d;}
+.neomi-welcome .tap-symbol {color:#ffb22a;}
+.neomi-welcome .pc-availability {border-radius:0;border:1px solid #347e91;background:#19292f;}
+.neomi-welcome .password-entry .button {border:2px solid #31d4fa;background:linear-gradient(155deg,#35444b,#172128);}
+body:has(.neomi-welcome) .password-modal input {border:1px solid #34cfea;border-radius:0;background:#172128;}
+@media(max-width:650px) {
+  .neomi-welcome > header {row-gap:6px;}
+  .neomi-welcome > header .header-right {grid-column:1/-1;justify-self:center;margin:0;}
+}
+
+.neomi-topup :is(.amount-panel,.summary,.payment-panel,.pending-banner) {
+  background:linear-gradient(145deg,#2c3b42,#1a2329 65%,#172129);
+  border:1px solid #38788b;
+  border-radius:0;
+}
+.neomi-topup .section-heading h2,
+.neomi-topup .summary h2,
+.neomi-topup .amount-display strong,
+.neomi-topup .summary-total strong {
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:800;
+  font-style:italic;
+}
+.neomi-topup .amount-display {
+  border:1px solid #36cce9;
+  background:linear-gradient(120deg,#162329,#10191d);
+  border-radius:0;
+}
+.neomi-topup .amount-display strong,.neomi-topup .summary-total strong { color:#ffc248; }
+.neomi-topup :is(.button.key,.button.preset,.coupon-auto) {
+  color:#eff8fa;
+  background:linear-gradient(#33434b,#202b32);
+  border:1px solid #507480;
+  border-radius:0;
+}
+.neomi-topup .button.preset.selected,.neomi-topup .coupon-auto.is-selected {
+  border-color:#ffb029; background:linear-gradient(115deg,#51361b,#262e32); color:#ffd279;
+}
+.neomi-topup .button:focus-visible { outline-offset:-5px; }
+.neomi-topup .nav-item.active::before {
+  position:static; inset:auto; transform:none; margin:0; border:0; background-color:transparent; box-shadow:none;
+}
+
+.neomi-home .balance-card {
+  color:#f6fafb;
+  background:linear-gradient(118deg,#344954,#1b2b32 65%,#19232a);
+  border:2px solid #31ceed;
+  border-radius:0;
+  clip-path:var(--neomi-cut);
+}
+.neomi-home .balance-value {
+  color:#ffc144; font-family:"Barlow Condensed",sans-serif;
+  font-weight:800; font-style:italic;
+}
+.neomi-home .balance-mark {color:#50dfff;}
+.neomi-home .balance-top,.neomi-home .balance-caption,
+.neomi-home .balance-bottom > span {color:#c9dde2;}
+.neomi-home :is(.recent,.no-campaign,.quick-strip,.pending-banner) {
+  border:1px solid #407986; background:linear-gradient(125deg,#293941,#182126);
+  border-radius:0;
+}
+.neomi-home .quick-strip {padding-inline:clamp(14px,2vw,30px); margin-top:24px;}
+.neomi-home .section-heading h2,.neomi-home .no-campaign h2 {
+  font-family:"Barlow Condensed",sans-serif; font-weight:800; font-style:italic;
+}
+.neomi-home .transaction-icon {border-radius:0;clip-path:var(--neomi-cut);}
+.neomi-home .button.quiet {color:#70def3;}
+.neomi-home .nav-item[data-page="home"]::before {content:none;}
+
+.neomi-theme .nav-item[data-page]::before,
+.neomi-theme .button.logout-button[data-action]::before { content:none; }
+.neomi-theme .nav-item[data-page] > svg.icon,
+.neomi-theme .button.logout-button[data-action] > svg.icon { display:inline-block; }
+.neomi-menu-icon { display:block; flex:none; object-fit:contain; }
+
+:is(.neomi-history,.neomi-profile) :is(.panel,.privacy-strip),
+.neomi-games :is(.arcade-banner,.arcade-game-heading,.arcade-card,.arcade-wallet) {
+  background:linear-gradient(125deg,#30424b,#202c32 55%,#151e23);
+  border:1px solid #378ba2;
+  border-radius:0;
+}
+:is(.neomi-history,.neomi-profile) .panel h2,
+.neomi-games :is(.arcade-heading h1,.arcade-card-text strong),
+.neomi-profile .profile-balance strong {
+  font-family:"Barlow Condensed",sans-serif;
+  font-style:italic;
+  font-weight:800;
+}
+.neomi-profile .profile-balance strong,.neomi-games .arcade-wallet strong {color:#ffc245;}
+.neomi-profile .avatar.large {background:linear-gradient(135deg,#394f58,#16232b);color:#5bdfff;border:1px solid #42cfe7;clip-path:var(--neomi-cut);border-radius:0;}
+.neomi-history .filter {border:1px solid #477989;background:#202d34;color:#def2f6;}
+.neomi-history .filter.selected {border-color:#ffb329;background:#47341c;color:#ffcf6b;}
+.neomi-games .arcade-card,.neomi-games .arcade-button {clip-path:var(--neomi-cut);}
+.neomi-games .arcade-card:not(:disabled) {border-color:#ffa51f;}
+.neomi-games .arcade-primary {background:linear-gradient(#ffbd43,#f39715);color:#181d20;}
+.neomi-games .arcade-button:focus-visible,.neomi-history .filter:focus-visible {outline-offset:-5px;}
+
+/* S TECH wheel cabinet. Sector angles follow the ten positions used by the spin animation. */
+.neomi-games .arcade-game.arcade-wheel .arcade-stage {
+  background:url('assets/neomi/circuits.svg') center / cover,
+    radial-gradient(ellipse,#304852,#151f25 70%);
+  border:1px solid #38879c; border-radius:0;
+}
+.neomi-games .arcade-stage .arcade-wheel-machine {width:min(100cqw,calc(100cqh - 16px));}
+.neomi-games .arcade-wheel-rim {
+  background:repeating-conic-gradient(from -1deg,#81e9ff 0 2deg,#24414e 2deg 10deg);
+  border:3px solid #558191;
+  box-shadow:0 0 0 3px #101a20,0 0 28px #28c9ef44,0 12px 18px #0008;
+}
+.neomi-games .arcade-wheel-disc {
+  border-color:#9ed9e5;
+  background:repeating-conic-gradient(#285365 0 36deg,#20333d 36deg 72deg);
+  box-shadow:inset 0 0 22px #09121799,0 0 0 3px #18282f;
+}
+.neomi-games .arcade-balance-wheel .arcade-wheel-disc {
+  background:repeating-conic-gradient(#b5f3ff70 0 .4deg,transparent .4deg 36deg),
+    conic-gradient(#25313a 0 10%,#24586b 10% 30%,#156e83 30% 40%,#24586b 40% 50%,#25313a 50% 60%,#156e83 60% 70%,#24586b 70% 80%,#25313a 80% 90%,#a9580c 90%);
+}
+.neomi-games .arcade-wheel-disc b {
+  font:italic 800 clamp(16px,3vw,29px) "Barlow Condensed",sans-serif;
+  color:#fff; text-shadow:0 2px 3px #06151f;
+}
+.neomi-games .arcade-wheel-arrow {
+  width:7%; height:9%; background:linear-gradient(90deg,#ffcb59,#ff9819 65%,#d07208);
+}
+.neomi-games .arcade-stage .arcade-wheel > :is(i,.wheel-hub) {
+  position:absolute; border-radius:50%; z-index:1;
+  inset:39%; border:2px solid #ffba44;
+  background:url('assets/neomi/stech-espor.png') center / 82% auto no-repeat,
+    radial-gradient(circle at 35% 25%,#45565e,#182128 70%);
+}
+.neomi-games .arcade-wheel-base {background:linear-gradient(#496572,#152029 60%,#388ba0);border-color:#547e8c;}
+.neomi-games .arcade-game.arcade-wheel .arcade-controls {
+  background:linear-gradient(135deg,#2e3d44,#172127);border:1px solid #397d90;border-radius:0;
+}
+.neomi-games .arcade-wheel .arcade-controls .arcade-primary {
+  min-height:56px;background:linear-gradient(#ffc248,#f28a12);color:#201808;
+  border:2px solid #ffcb60; font-weight:800;
+}
+
+/* Keep circuit artwork out of the reading area of shared kiosk controls. */
+.neomi-theme .header-right {
+  gap:clamp(10px,1.4vw,20px); padding:7px 12px;
+  background:#172229; border:1px solid #3d5762; border-radius:8px;
+}
+.neomi-theme .header-right .status {
+  padding:3px 0; border:0; color:#8ce8bb; font-size:clamp(12px,1.25vw,16px);
+  letter-spacing:.05em; white-space:nowrap;
+}
+.neomi-theme .header-right .clock {
+  padding-left:12px; border-left:1px solid #526973;
+  color:#f4f7f8; font:600 clamp(15px,1.6vw,21px)/1.3 Barlow,sans-serif;
+  font-variant-numeric:tabular-nums;
+}
+.neomi-welcome > footer,.neomi-theme .workspace > footer {
+  background:#162127; color:#cfdbdf; border-block-start:1px solid #3b515b;
+  padding-block:12px; gap:12px; font-size:clamp(13px,1.3vw,17px);
+}
+.neomi-welcome > footer {padding-inline:clamp(14px,2vw,28px);}
+.neomi-theme .session-time,.neomi-theme .secure-note,.neomi-theme .coupon-hint,
+.neomi-theme .panel-top,.neomi-theme .welcome-benefits span {
+  color:#c6d5dc; font-size:clamp(13px,1.25vw,16px);
+}
+.neomi-theme .welcome-benefits {gap:clamp(14px,2vw,26px);}
+.neomi-theme .tap-symbol {color:#1a242b;}
+.neomi-theme .nav-item:not(.active) {color:#d1dee4;}
+.neomi-theme .summary-row > span,.neomi-theme .transaction-description > span,
+.neomi-theme .arcade-card-text > span {color:#c2d0d7;}
+
+.neomi-theme .zone-meter {display:flex; width:100%; overflow:hidden; background:var(--pc-off);}
+.neomi-theme .zone-meter > i {display:block;height:100%;background:var(--pc-free);}
+.neomi-theme .zone-meter > .zone-occupied {background:var(--pc-busy);box-shadow:none;}
+.neomi-games .wheel-hub:disabled {opacity:1;}
+.neomi-games .wheel-hub:focus-visible {outline:3px solid white;}
+.neomi-games .arcade-wheel .arcade-controls .arcade-primary {
+  color:#151b20; font:700 clamp(18px,2vw,26px)/1.25 Barlow,sans-serif;
+  padding:14px 22px; text-shadow:none;
+}
+.neomi-games .arcade-wheel .arcade-controls .arcade-primary:disabled {
+  opacity:1; background:#34424a; color:#f2f7fa; border-color:#63808d;
+}
+.friend-panel {padding:24px;}
+.friend-panel input {min-height:48px;padding:8px;color:white;background:#182229;border:1px solid #45adc4;}
+.friend-panel .summary-row {gap:12px;flex-wrap:wrap;}
+.friend-nick {fill:white;stroke:#15232c;stroke-width:3px;paint-order:stroke;font:700 13px Barlow,sans-serif;pointer-events:none;}
+@media(max-aspect-ratio:4/5){.shell nav:has([data-page="friends"]){grid-template-columns:repeat(8,minmax(0,1fr));}}
+
+/* Fixed-size corner slices keep the diagonal edges continuous at any width. */
+.neomi-theme {
+  --frame-cyan: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' width='40' height='40'%3E%3Cpath d='M15 1H25L39 15V25L25 39H15L1 25V15Z' fill='none' stroke='%2300c9f0' stroke-width='2'/%3E%3C/svg%3E");
+  --frame-gold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' width='40' height='40'%3E%3Cpath d='M15 1H25L39 15V25L25 39H15L1 25V15Z' fill='none' stroke='%23ffbb32' stroke-width='2'/%3E%3C/svg%3E");
+  --frame-muted: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' width='40' height='40'%3E%3Cpath d='M15 1H25L39 15V25L25 39H15L1 25V15Z' fill='none' stroke='%2361808c' stroke-width='2'/%3E%3C/svg%3E");
+}
+.neomi-theme :is(.button,.nav-item,.logout-button,.balance-card,.coupon-apply,.campaign-ticket,.arcade-card,.arcade-button,.avatar.large), .neomi-campaigns .campaign-grid .empty { border-image: var(--frame-color,var(--frame-cyan)) 16 / 16px / 0 stretch !important; }
+.neomi-theme :is(.nav-item,.button.quiet,.button:disabled) { --frame-color:var(--frame-muted); }
+.neomi-theme :is(.nav-item.active,.button.primary,.logout-button,.coupon-apply,.campaign-ticket), .neomi-campaigns .campaign-grid .empty { --frame-color:var(--frame-gold); }
+
+.neomi-games .arcade-wheel-machine .arcade-wheel-disc { background:var(--wheel-segments); pointer-events:none; }
+.arcade-stage button.arcade-wheel-hub { position:absolute; inset:40.5%; z-index:3; padding:0; min-width:0; min-height:0; width:auto; height:auto; pointer-events:auto; cursor:pointer; touch-action:manipulation; }
+.arcade-wheel-hub img {pointer-events:none;}
+.wheel-hub-label {position:absolute; bottom:2%; font:bold clamp(10px,1.5cqw,18px) sans-serif; color:white; background:#112331; border-radius:6px; padding:0 4px;}
+
+.login-keyboard .login-key-row {display:flex;gap:clamp(2px,.45vw,6px)}
+.login-keyboard .touch-key,#social .login-keyboard .touch-key {flex:1 1 0;min-width:0;padding:2px;font-size:clamp(10px,1.65vw,18px)}
+.login-keyboard .touch-key[data-login-action],#social .login-keyboard .touch-key[data-login-action] {flex-grow:1.55}
+.login-keyboard .touch-key[data-login-key=" "],#social .login-keyboard .touch-key[data-login-key=" "] {flex-grow:8}

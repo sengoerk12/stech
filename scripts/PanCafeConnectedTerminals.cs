@@ -22,6 +22,49 @@ public static class PanCafeConnectedTerminals {
         return packet;
     }
 
+    static readonly object historyLock = new object();
+    static Dictionary<string,string> historicalMacs = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+    static string cachedDatabase;
+    static DateTime historyExpires;
+
+    // Only recover an invalid MAC from recent, unambiguous named PanCafe connections.
+    public static string WakeAddress(string database, string name, string current) {
+        if (WakePacket(current) != null || String.IsNullOrEmpty(name)) return current;
+        lock (historyLock) {
+            if (cachedDatabase != database || DateTime.UtcNow >= historyExpires) {
+                var names = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+                var owners = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+                var directory = Path.Combine(Directory.GetParent(Path.GetDirectoryName(database)).FullName, "iplogs");
+                try {
+                    for (int age = 0; age < 7; age++) {
+                        string file = Path.Combine(directory, "Log_" + DateTime.Today.AddDays(-age).ToString("ddMMyyyy", CultureInfo.InvariantCulture) + ".csv");
+                        if (!File.Exists(file)) continue;
+                        using (var stream = File.Open(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                        using (var reader = new StreamReader(stream, Encoding.GetEncoding(1254))) {
+                            string line;
+                            while ((line = reader.ReadLine()) != null) {
+                                var fields = line.Split(';');
+                                if (fields.Length < 6 || fields[0] != "Açıldı" || WakePacket(fields[2]) == null) continue;
+                                string terminal = fields[1].Trim(), mac = PhysicalAddress.Parse(fields[2].Replace(":", "-").ToUpperInvariant()).ToString();
+                                string old;
+                                names[terminal] = names.TryGetValue(terminal, out old) && old != mac ? "" : mac;
+                                owners[mac] = owners.TryGetValue(mac, out old) && !String.Equals(old, terminal, StringComparison.OrdinalIgnoreCase) ? "" : terminal;
+                            }
+                        }
+                    }
+                    historicalMacs.Clear();
+                    foreach (var pair in names)
+                        if (pair.Value.Length > 0 && String.Equals(owners[pair.Value], pair.Key, StringComparison.OrdinalIgnoreCase))
+                            historicalMacs[pair.Key] = pair.Value;
+                } catch (IOException) { historicalMacs.Clear(); }
+                  catch (UnauthorizedAccessException) { historicalMacs.Clear(); }
+                cachedDatabase = database;
+                historyExpires = DateTime.UtcNow.AddMinutes(1);
+            }
+            string saved;
+            return historicalMacs.TryGetValue(name, out saved) ? saved : current;
+        }
+    }
     public static bool Wake(string mac) {
         byte[] packet = WakePacket(mac);
         if (packet == null) return false;

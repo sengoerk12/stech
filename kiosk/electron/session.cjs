@@ -112,6 +112,7 @@ class KioskSession {
     }
     else if (action === 'sCoin' && this.mode === 'connected') result = await this.gateway.sCoin(session.token);
     else if (action === 'sCoinPlay' && this.mode === 'connected') result = await this.gateway.sCoinPlay(session.token, payload);
+    else if ((action === 'friends' || action === 'searchFriends' || action === 'changeFriend') && this.mode === 'connected') result = await this.gateway[action](session.token,payload);
     else if (action === 'computers') {
       if (this.mode !== 'connected') throw new Error('Bilgisayar listesi için PanCafe bağlantısı gerekli.');
       result = await this.gateway.computers(session.token);
@@ -141,7 +142,6 @@ class KioskSession {
         if (this.session === session) this.markActivity(session, Date.now());
       }
     }
-    else if (action === 'history') result = this.mode === 'demo' ? await this.demo.history(session.card) : await this.gateway.history(session.token);
     else if (action === 'transactions') result = this.mode === 'demo' ? await this.demo.transactions(session.card, payload.cursor) : await this.gateway.transactions(session.token, payload.cursor);
     else if (action === 'sessions') result = this.mode === 'demo' ? { items: [] } : await this.gateway.sessions(session.token, payload.cursor);
     else if (action === 'quote') result = this.mode === 'demo'

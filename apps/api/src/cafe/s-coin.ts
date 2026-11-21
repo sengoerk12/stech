@@ -1,3 +1,4 @@
+import { drawSlots } from "./slots";
 import type { Database, SqlExecutor } from "../database/database";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { randomInt, randomUUID } from "node:crypto";
@@ -73,6 +74,28 @@ export class SCoinService {
     return { units, unitsPerCoin: S_COIN_UNITS, playableCoins: Math.floor(units / S_COIN_UNITS), testOnly: this.testOnly };
   }
 
+  async grant(memberId: string, username: string, amount: number, operationId: string, cashier: string) {
+    const wallet = this.wallets.doc(memberId);
+    const receipt = wallet.collection("cashierGrants").doc(operationId);
+    const legacy = this.legacyWallets?.doc(memberId);
+    return this.wallets.firestore.runTransaction(async tx => {
+      const saved = await tx.get(receipt);
+      if (saved.exists) {
+        if (saved.get("amount") !== amount || saved.get("username") !== username || saved.get("cashier") !== cashier)
+          throw new ConflictException("İşlem bilgileri değişti.");
+        return { added: amount };
+      }
+      const account = await tx.get(wallet);
+      if (!account.exists || account.get("username") !== username)
+        throw new ConflictException("Üye cüzdanı henüz eşitlenmedi.");
+      let units = account.get(this.unitsField);
+      if (units === undefined && legacy) units = (await tx.get(legacy)).get("units");
+      const total = this.validateUnits(this.validateUnits(units ?? 0) + amount * S_COIN_UNITS);
+      tx.set(wallet, { [this.unitsField]: total }, { merge: true });
+      tx.create(receipt, { username, memberId, cashier, amount, balanceUnits: total, createdAt: new Date().toISOString() });
+      return { added: amount };
+    });
+  }
   async topupHistory(userId: string) {
     const { rows } = await this.db.query<{ payment_id: string; units: string; created_at: Date | string }>(
       `SELECT a.payment_id,a.units,a.created_at FROM s_coin_awards a
@@ -88,16 +111,17 @@ export class SCoinService {
   }
 
   async playGame(userId: string, operationId: string, game = "wheel") {
-    if (game !== "wheel") throw new ConflictException("Bu oyun hazırlık aşamasında.");
+    if (game !== "wheel" && game !== "slots") throw new ConflictException("Bu oyun hazırlık aşamasında.");
     if (!this.testOnly && !this.credits)
       throw new ServiceUnavailableException("Çark ödülü aktarımı hazır değil.");
     const wallet = await this.wallet(userId);
     const play = wallet.collection(this.testOnly ? "wheelPlays" : "sCoinPlays").doc(operationId);
     const legacy = this.legacyWallets?.doc(wallet.id);
-    const sector = randomInt(wheelAmounts.length);
-    const amount = wheelAmounts[sector];
+    const slots = game === "slots" ? drawSlots() : undefined;
+    const sector = slots ? undefined : randomInt(wheelAmounts.length);
+    const amount = slots?.amount ?? wheelAmounts[sector!];
     const prize = amount ? { kind: "balance", title: `${amount / 100} TL oyun bakiyesi`, amountKurus: amount } : null;
-    const result = { game, sector, prize, testOnly: this.testOnly };
+    const result = { game, ...(slots ? { reels: slots.reels } : { sector: sector! }), prize, testOnly: this.testOnly };
     const credit = !this.testOnly && amount ? this.credits?.queue.doc(randomUUID()) : undefined;
     const outcome = await this.wallets.firestore.runTransaction(async tx => {
       const previous = await tx.get(play);
@@ -137,7 +161,7 @@ export class SCoinService {
     for (const job of pending.docs) {
       try {
         const { userId, amount } = job.data() ?? {};
-        if (typeof userId !== "string" || !userId || ![500, 1000, 2500].includes(amount))
+        if (typeof userId !== "string" || !userId || ![500, 800, 1000, 1200, 2500].includes(amount))
           throw new Error("Invalid wheel balance award");
         // PanCafe uses the job ID as its receipt ID, including after a lost response.
         await cafe.addBalance(userId, amount, 0, job.id);

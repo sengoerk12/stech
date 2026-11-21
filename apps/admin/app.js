@@ -11,6 +11,7 @@ let token = "",
 const titles = {
   overview: "Genel bakış",
   payments: "Ödemeler",
+  coins: "S Coin ver",
   members: "Üyeler ve bakiye",
   adjustments: "Bakiye kayıtları",
   "payment-report": "Gün sonu raporu",
@@ -64,6 +65,7 @@ const statusLabel = {
 const badge = (s) =>
   `<span class="badge ${s === "completed" ? "ok" : "warn"}">${esc(statusLabel[s] ?? s)}</span>`;
 const cashier = () => admin?.role === "cashier";
+const coinCashier = () => !hostedAdmin && cashier() && admin.username === "stechkasa";
 const canWrite = () => admin && !cashier() && admin.role !== "viewer";
 async function api(path, body, method = body ? "POST" : "GET", extra = {}) {
   let url = "/api/v1/admin/" + path;
@@ -177,13 +179,13 @@ async function loginScreen() {
 }
 async function render() {
   if (!admin) return loginScreen();
-  if (cashier()) page = "payments";
+  if (cashier() && !(page === "coins" && coinCashier())) page = "payments";
   root.innerHTML = `<div class="shell"><aside><div class="brand">S TECH<small>YÖNETİM MERKEZİ</small></div><nav>${Object.entries(
     titles,
   )
     .filter(
       ([k]) => cloudAdmin ? ["overview", "payments", "payment-report"].includes(k) :
-        cashier() ? k === "payments" : !["accounts", "settings"].includes(k) || admin.role === "owner",
+        k === "coins" ? coinCashier() : cashier() ? k === "payments" : !["accounts", "settings"].includes(k) || admin.role === "owner",
     )
     .map(
       ([k, v]) =>
@@ -220,8 +222,51 @@ function exportReport(report) {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+function renderCoinGrant(c) {
+  c.innerHTML = '<section class="card"><form class="toolbar"><label>Kullanıcı adı<input name="search" maxlength="32" required></label><button class="primary">Üye ara</button></form><div class="coin-result" aria-live="polite"></div></section>';
+  const search = c.querySelector("form");
+  const result = c.querySelector(".coin-result");
+  let revision = 0;
+  search.onsubmit = async event => {
+    event.preventDefault();
+    const current = ++revision;
+    result.textContent = "Üyeler aranıyor…";
+    try {
+      const members = await api("s-coin/members?search=" + encodeURIComponent(search.elements.search.value.trim()));
+      if (current !== revision) return;
+      if (!members.length) { result.textContent = "Eşleşen aktif üye bulunamadı."; return; }
+      result.innerHTML = '<form class="toolbar"><label>Üye<select name="member">' +
+        members.map((m,i) => '<option value="'+i+'">'+esc(m.username)+' (#'+esc(m.id)+')</option>').join("") +
+        '</select></label><label>S Coin miktarı<input name="amount" type="number" min="1" step="1" required></label><button class="primary">Devam et</button></form>';
+      const form = result.querySelector("form");
+      form.onsubmit = event => {
+        event.preventDefault();
+        const m = members[Number(form.elements.member.value)];
+        const amount = Number(form.elements.amount.value);
+        if (!m || !Number.isSafeInteger(amount) || amount < 1) return;
+        const body = { memberId:String(m.id), username:m.username, amount, operationId:crypto.randomUUID() };
+        result.innerHTML = '<p><strong>'+esc(m.username)+'</strong> (#'+esc(m.id)+') hesabına <strong>'+amount+' S Coin</strong> eklensin mi?</p><button class="primary">Onayla</button> <button>Vazgeç</button><p role="status"></p>';
+        const [confirm,cancel] = result.querySelectorAll("button");
+        cancel.onclick = () => search.requestSubmit();
+        confirm.onclick = async () => {
+          confirm.disabled = cancel.disabled = true;
+          search.querySelector("button").disabled = true;
+          try {
+            await api("s-coin/grant",body);
+            result.textContent = m.username+" hesabına "+amount+" S Coin eklendi.";
+          } catch (error) {
+            result.querySelector('[role="status"]').textContent = error.message;
+            confirm.textContent = "Aynı işlemi tekrar dene";
+            confirm.disabled = cancel.disabled = false;
+          } finally { search.querySelector("button").disabled = false; }
+        };
+      };
+    } catch (error) { if (current === revision) result.textContent = error.message; }
+  };
+}
 async function renderPage() {
   const c = document.querySelector("#content");
+  if (page === "coins" && coinCashier()) return renderCoinGrant(c);
   if (page === "kiosk-design") return kioskEditor.open(c);
   if (page === "overview") {
     const d = await api("overview"),

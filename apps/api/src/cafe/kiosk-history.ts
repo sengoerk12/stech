@@ -20,7 +20,7 @@ export async function kioskHistory(
     do {
       const page = await readPage(cursor);
       const rows = page.items as CreditRow[];
-      const candidateIds = rows.filter(row => row.creditId && row.kind === "topup" && [500, 1000, 2500].includes(row.amount))
+      const candidateIds = rows.filter(row => row.creditId && row.kind === "topup" && [500, 800, 1000, 1200, 2500].includes(row.amount))
         .map(row => row.creditId!);
       const payments = candidateIds.length ? await db.query<{ id: string }>(
         "SELECT id::text FROM payment_orders WHERE id = ANY($1::uuid[])", [candidateIds],
@@ -36,7 +36,7 @@ export async function kioskHistory(
         const kind = gameReward ? "game_reward" : row.kind;
         if (groups[kind].length >= limit) continue;
         const { id, amount, balanceAfter, createdAt } = row;
-        groups[kind].push({ id, kind, amount, balanceAfter, createdAt, title: gameReward ? "Şans çarkı ödülü" : row.title });
+        groups[kind].push({ id, kind, amount, balanceAfter, createdAt, title: gameReward ? "Oyun ödülü" : row.title });
       }
       cursor = page.nextCursor;
     } while (cursor && Object.values(groups).some(items => items.length < limit));

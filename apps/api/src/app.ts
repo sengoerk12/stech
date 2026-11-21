@@ -238,7 +238,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   }));
   const hostedAdmin = hostedUrl ? new HostedAdminSync(hostedUrl, hostedKey, db, () => admin.overview(),
     hostedRelay && odeal && posPayments && odealProvider ? { payments: posPayments, provider: odealProvider, device: odeal.deviceCode } : undefined) : null;
-  const AdminController = createAdminController(admin);
+  const AdminController = createAdminController(admin, liveSCoin);
  const kioskManagement = new KioskManagement(db); await kioskManagement.init();
  const KioskManagementController = createKioskManagementController(kioskManagement, admin);
   const auth = new PersistentAuthService(db, cafe);
@@ -440,6 +440,26 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       kioskAuth.verifyDevice(key);
       return cafe.getPcAvailability();
     }
+    @Get("kiosk/friends") async friends(@Req() req: Request) {
+      const id = await user(req);
+      if (!(cafe instanceof PanCafeSystemAdapter)) throw new ServiceUnavailableException();
+      const list = await cafe.friendList(id);
+      const computers = list.some(f => f.status === "accepted") ? (await cafe.getComputers(id)).computers : [];
+      const seats = new Map(computers.filter(pc => pc.friendName).map(pc => [pc.friendName, pc.name]));
+      return list.map(f => ({...f, online: seats.has(f.username), computerName: seats.get(f.username)}));
+    }
+    @Get("kiosk/friends/search") async searchFriends(@Req() req: Request, @Query("q") query?: string) {
+      const id = await user(req);
+      if (!(cafe instanceof PanCafeSystemAdapter)) throw new ServiceUnavailableException();
+      if (typeof query !== "string" || !query.trim() || query.length > 32) throw new BadRequestException();
+      return cafe.searchFriends(id, query.trim());
+    }
+    @Post("kiosk/friends") async changeFriend(@Req() req: Request,@Body() body: {username?:string; action?:string}) {
+      const id = await user(req);
+      if (!(cafe instanceof PanCafeSystemAdapter)) throw new ServiceUnavailableException();
+      if (typeof body?.username !== "string" || typeof body.action !== "string") throw new BadRequestException();
+      return cafe.changeFriend(id,body.username,body.action);
+    }
     @Get("kiosk/computers") async computers(@Req() req: Request) {
       const id = await user(req);
       if (!(cafe instanceof PanCafeSystemAdapter))
@@ -480,6 +500,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         cafe: panCafe ? "pancafe" : "mock",
         balanceCredit: nativeCredit,
         kioskTicketRedeem: true,
+        kioskFriends: true,
+        kioskSlots: true,
         ...(walletMemberSync ? { walletSync: walletMemberSync.status, walletBalanceWrite } : {}),
         campaignSync: promotionSync?.status ?? "disabled",
         kioskLastSeenAt,

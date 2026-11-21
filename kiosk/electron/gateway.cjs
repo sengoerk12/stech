@@ -58,6 +58,9 @@ class ApiGateway {
   async design() { const result=await this.request('/kiosk/design',null,undefined,this.designVersion?{'If-None-Match':'"'+this.designVersion+'"'}:{});if(result?.id)this.designVersion=result.id;return result; }
   pcAvailability() { return this.read('/kiosk/pc-availability', null); }
   floorAvailability() { return this.read('/kiosk/floor-availability', null); }
+  searchFriends(token,{query}) { return this.read('/kiosk/friends/search?q='+encodeURIComponent(query),token); }
+  friends(token) { return this.read('/kiosk/friends',token); }
+  changeFriend(token,payload) { return this.request('/kiosk/friends',token,payload); }
   computers(token) { return this.read('/kiosk/computers', token); }
   sCoin(token) { return this.read('/kiosk/s-coin', token); }
   sCoinPlay(token, { operationId, game }) { return this.request('/kiosk/s-coin/play', token, { operationId, game }); }
@@ -75,7 +78,6 @@ class ApiGateway {
     }
   }
   transactions(token, cursor) { return this.read('/me/transactions' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
-  history(token) { return this.read('/kiosk/history', token); }
   sessions(token, cursor) { return this.read('/me/session-history' + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''), token); }
   logout(token) { return this.request('/auth/logout', token, {}); }
 }

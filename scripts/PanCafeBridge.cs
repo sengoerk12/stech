@@ -16,7 +16,7 @@ public static class PanCafeBridge
     static HttpListener listener;
     const string projection="ID,USERNAME,NAME,LASTNAME,GSM,PHONE,EMAIL,CAST(RECDATE AS VARCHAR(30)) AS JOINED_AT,CAST(BAKIYE AS DECIMAL(18,2)) AS BALANCE_TL,CAST(AVAILBONUS AS DECIMAL(18,2)) AS BONUS_TL,ACCTYPE,ACCSTATUS";
     static List<Dictionary<string,string>> Computers() {
-        var rows = Query("SELECT ID,NAME,ISVIRTUAL,TERMINALSTATUS,NOMEMBERLOGIN,MAC FROM TERMINALS WHERE TERMINALTYPE=0 ORDER BY ID");
+        var rows = Query("SELECT T.ID,T.NAME,T.ISVIRTUAL,T.TERMINALSTATUS,T.NOMEMBERLOGIN,T.MAC,(SELECT CASE WHEN COUNT(*)=1 THEN MAX(M.USERNAME) ELSE NULL END FROM MEMBERS M WHERE M.ID=T.MEMBERID AND T.TERMINALSTATUS=5) AS SESSION_USERNAME FROM TERMINALS T WHERE T.TERMINALTYPE=0 ORDER BY T.ID");
         var connected = PanCafeConnectedTerminals.Read(database);
         var reserved = PanCafeNativeSessions.ReservedTerminals(folder);
         foreach (var row in rows) {
@@ -27,7 +27,7 @@ public static class PanCafeBridge
             bool allowed = Enabled("allowVirtualSessionStart");
             bool canWake = !isReserved && allowed && row["ISVIRTUAL"] == "0" && !physicalOnline &&
                 row["NOMEMBERLOGIN"] == "0" && (row["TERMINALSTATUS"] == "0" || row["TERMINALSTATUS"] == "1") &&
-                PanCafeConnectedTerminals.WakePacket(row["MAC"]) != null;
+                PanCafeConnectedTerminals.WakePacket(PanCafeConnectedTerminals.WakeAddress(database, row["NAME"], row["MAC"])) != null;
             row["WAKABLE"] = canWake ? "1" : "0";
             row["STARTSUPPORTED"] = !isReserved && allowed &&
                 (row["ISVIRTUAL"] == "1" || ((physicalOnline || canWake) && row["NOMEMBERLOGIN"] == "0")) ? "1" : "0";

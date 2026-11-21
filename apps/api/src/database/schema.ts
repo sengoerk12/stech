@@ -48,6 +48,7 @@ export const schema = [
       INSERT INTO schema_migrations(version) VALUES(3);
     END IF;
   END $$`,
+  `CREATE TABLE IF NOT EXISTS kiosk_friendships (a text NOT NULL REFERENCES app_users(id), b text NOT NULL REFERENCES app_users(id), sender text NOT NULL, accepted boolean NOT NULL DEFAULT false, PRIMARY KEY(a,b), CHECK(a<b), CHECK(sender=a OR sender=b))`,
   `CREATE TABLE IF NOT EXISTS cafe_member_links (user_id text PRIMARY KEY REFERENCES app_users(id), installation_id text NOT NULL, member_id bigint NOT NULL, member_username text NOT NULL, UNIQUE(installation_id,member_username))`,
   `INSERT INTO schema_migrations(version) VALUES(4) ON CONFLICT DO NOTHING`,
   `ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS transfer_target text NOT NULL DEFAULT 'mock' CHECK(transfer_target IN ('mock','pancafe'))`,

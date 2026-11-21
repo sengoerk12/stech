@@ -63,7 +63,7 @@
   })();
 
   const zones = [
-    { id: 'beginner', name: 'Beginner', description: 'Günlük oyun ve internet', match: /beginner|begginer|^b[\s\-_]*\d+$/, layout: beginnerLayout },
+    { id: 'beginner', name: 'BEGINNER', description: 'Günlük oyun ve internet', match: /beginner|begginer|^b[\s\-_]*\d+$/, layout: beginnerLayout },
     { id: 'player', name: 'Player Zone', description: 'Rekabetçi oyunlar için', match: /player/, layout: playerLayout },
     { id: 'gamer', name: 'Gamer Zone', description: 'Yüksek performans', match: /gamer/, layout: gamerLayout },
     { id: 'master2', name: 'Master 2 Zone', description: 'Özel oda', match: /master[\s\-_]*2[\s\-_]*(zone)?[\s\-_]+\d+$|master2/, layout: master2Layout },
@@ -127,7 +127,7 @@
     const action = pc && state === 'free' && selectable ? `data-action="computer-select:${esc(pc.id)}"` : '';
     const control = action ? `${action} tabindex="0" role="button" aria-pressed="${Boolean(selected)}"` : '';
     const text = `<text class="iso-number" ${action} x="${lx.toFixed(1)}" y="${(ly + 7).toFixed(1)}" text-anchor="middle">${spot.number}</text>`;
-    return { depth: centre(tile), html: `<g class="iso-station iso-${state}${selected ? ' iso-selected' : ''}${action ? ' iso-pickable' : ''}" ${control} aria-label="${esc(zone.name)} ${spot.number}, ${label}">${poly(tilePoints, 'iso-tile')}${parts.join('')}</g>`, text: `<g class="iso-label iso-${state}${selected ? ' iso-selected' : ''}" aria-hidden="true">${text}</g>` };
+    return { depth: centre(tile), html: `<g class="iso-station iso-${state}${selected ? ' iso-selected' : ''}${action ? ' iso-pickable' : ''}" ${control} aria-label="${esc(zone.name)} ${spot.number}, ${label}">${poly(tilePoints, 'iso-tile')}${parts.join('')}</g>`, text: `<g class="iso-label iso-${state}" aria-hidden="true">${text}${pc?.friendName ? `<text class="friend-nick" x="${lx.toFixed(1)}" y="${(ly-18).toFixed(1)}" text-anchor="middle">${esc(pc.friendName)}</text>` : ''}</g>` };
   }
 
   function wall(w) {

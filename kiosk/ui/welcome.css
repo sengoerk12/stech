@@ -1,0 +1,29 @@
+.lobby-screen{height:100dvh;width:100%;display:grid;place-items:center;overflow:hidden;background:#030c16}
+.lobby-art{container-type:inline-size;position:relative;width:min(100%,61vh);height:100%;margin:0;padding:0;background:#051120 url("assets/welcome-art.jpg") center/100% 100% no-repeat;color:#fff;font-family:Barlow,"Segoe UI",sans-serif}
+.lobby-art .lobby-status{position:absolute;inset:0 0 auto;height:2.65%;display:flex;align-items:center;justify-content:center;gap:3cqw;background:linear-gradient(#101c27,#0c141d);border-bottom:1px solid #274354;font:700 3.25cqw/1 "Segoe UI",sans-serif;font-variant-numeric:tabular-nums}
+.lobby-status .clock{font:inherit;color:inherit}
+.lobby-weather{position:absolute;right:2.8%;font-size:2.95cqw}.lobby-weather b{color:#ffbb25}
+.lobby-art button.lobby-login,.lobby-art button.lobby-pcs,.lobby-demo{position:absolute;left:10.45%;width:79.1%;margin:0;padding:0;border:0;border-radius:2cqw;background:transparent;box-shadow:none;cursor:pointer}
+.lobby-login,.lobby-demo{top:56.45%;height:8.9%}.lobby-pcs{top:67.65%;height:7.4%}
+.lobby-art button:focus-visible{outline:3px solid white;outline-offset:3px}
+.lobby-art button:active{box-shadow:inset 0 0 4cqw #ffffff3b}
+.lobby-pcs span{position:absolute;left:21.4%;right:1.8%;top:15%;bottom:13%;display:grid;align-content:center;padding-inline:1%;color:white;background:linear-gradient(105deg,#0d293e,#092339 63%,#082136);font:italic 700 3.65cqw/1.1 "Segoe UI",sans-serif}
+.lobby-loading{position:absolute;top:43%;height:9%;left:19%;right:19%;background:#071929;color:white;display:grid;place-items:center;font:bold italic 4.2cqw/1.1 sans-serif;margin:0;text-align:center}
+.lobby-demo{display:flex;background:#101d29;align-items:stretch}.lobby-demo button{flex:1}
+.lobby-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.lobby-art:has(>h1:only-child){background:#071929;display:grid;place-items:center}
+
+.lobby-banner {position:absolute;left:5.25%;right:5.25%;top:82.36%;bottom:4.4%;overflow:hidden;border-radius:4cqw;background:#091c2f}
+.lobby-banner .zone-ad {height:100%;width:100%;clip-path:none;margin:0}
+/* Shared touch keyboard and member sign-in, matched to the lobby artwork. */
+.modal.password-modal {background:radial-gradient(ellipse at 50% 0,#133d59,#081c30 50%,#050f1d);border:1px solid #7ddfff;border-radius:20px;box-shadow:0 0 0 3px #071525,0 0 28px #00a9ff45;color:#edf9ff}
+.password-modal .modal-symbol{color:#51ddff;background:#09283e;border:1px solid #2884a1}
+.password-modal #password-login-title{color:#fff;font:italic 800 clamp(26px,4vw,48px)/1.1 Barlow,"Segoe UI",sans-serif}
+.password-modal .login-fields input{background:#061526;color:white;border:1px solid #407797;border-radius:9px}
+.password-modal .login-fields input:focus{outline:2px solid #53dfff;outline-offset:1px}
+.password-modal .login-form-actions .primary{background:linear-gradient(#ffa825,#dc6604);color:#fff;border:1px solid #ffce74}
+:is(.password-modal,#social) .login-keyboard{background:linear-gradient(155deg,#14364c,#081827 55%,#10283c);border:1px solid #3385a8;box-shadow:inset 0 1px #a8efff40,0 3px 12px #03101c80;border-radius:12px;padding:clamp(5px,1vw,12px);gap:clamp(3px,.55vw,7px)}
+:is(.password-modal,#social) .login-keyboard .touch-key{background:linear-gradient(#18405a,#102b40);border:1px solid #467893;border-bottom:2px solid #30536b;border-radius:7px;box-shadow:inset 0 1px #b1eeff20;color:#f4fbff;font-family:Barlow,"Segoe UI",sans-serif;font-weight:600}
+:is(.password-modal,#social) .login-keyboard [data-login-action]{color:#8ae7ff;background:linear-gradient(#113047,#091f32)}
+:is(.password-modal,#social) .login-keyboard [data-login-action=next]{background:linear-gradient(#ffac31,#de6809);color:#201204;border-color:#ffc576}
+:is(.password-modal,#social) .login-keyboard .touch-key:is(:active,[aria-pressed=true]){color:#ffcf7b;border-color:#ffad37;background:#403021}

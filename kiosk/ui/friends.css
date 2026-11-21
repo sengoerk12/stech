@@ -1,0 +1,54 @@
+#social {max-width:1100px;margin:auto;color:#f1f5f7}
+#social h1,#social h2,#social p {margin:0 0 .55em}
+#social p,#social small,#social label {color:#becdd4}
+.social-heading,.social-row,.social-actions,#social-search,#social-tabs {display:flex;align-items:center;gap:12px}
+.social-heading {justify-content:space-between;flex-wrap:wrap}
+#social button,#social input {font:inherit;color:inherit;border:1px solid #43606d;border-radius:9px;background:#17252d;min-height:46px;padding:8px 16px}
+#social button {cursor:pointer}
+#social button:is(:hover,:focus-visible),#social button[aria-pressed=true] {border-color:#4ad5ee;background:#203941}
+#social .social-heading>button[data-social=add],#social-search button {background:#ffb635;color:#182028;border-color:#ffb635;font-weight:700}
+#social .social-toolbar,.social-sheet {margin:20px 0;padding:20px;background:#1d2b32;border-radius:14px}
+#social input {width:100%;box-sizing:border-box;display:block;margin-top:6px}
+#social-tabs,.social-actions {flex-wrap:wrap}
+#social-tabs {margin-top:14px}
+#social-tabs b {font-variant-numeric:tabular-nums;color:#a6d9dd}
+.social-row {padding:15px 4px;border-bottom:1px solid #35454d;flex-wrap:wrap}
+.social-id {flex:1;min-width:120px;overflow-wrap:anywhere}
+.social-id strong,.social-id small {display:block}
+.social-id small {margin-top:4px}
+.social-avatar {width:46px;height:46px;display:grid;place-items:center;border-radius:14px;background:linear-gradient(140deg,#32566a,#223541);color:#b5eeff;font-weight:750}
+.social-dot {display:inline-block;background:#939fa5;border-radius:50%;width:9px;height:9px;margin-right:7px}
+.social-dot.on {background:#72eb87}
+.social-empty {text-align:center;padding:32px 18px}
+.social-empty svg {width:34px;height:34px;color:#78d8e6}
+#social-search {align-items:end} #social-search label {flex:1}
+#social-results {max-height:35vh;overflow:auto}
+#social button:disabled {opacity:.6}
+@media(max-width:600px){.social-actions {width:100%} #social button {padding:7px 10px}}
+.social-keys {margin-top:8px}
+.social-keys summary {cursor:pointer;color:#9bd6e0;min-height:44px;align-content:center}
+#social .social-keys .touch-key {padding:3px;min-width:0;flex:1}
+.social-keys .login-key-row {display:flex;gap:3px}
+#social > .social-heading {padding:18px 0 22px;gap:20px}
+#social h1,#social h2 {font:italic 800 clamp(32px,6vw,68px)/1 "Barlow Condensed",sans-serif}
+#social h1 span {color:#ffaf16}
+#social h2 {font-size:30px}
+#social .social-toolbar,#social .social-sheet,#social .social-row {
+  border-radius:0;clip-path:var(--neomi-cut);border:2px solid #477886;
+  border-image:var(--frame-muted) 16 / 16px stretch;
+  background:linear-gradient(120deg,#2e424d,#1b292f 65%,#162027);
+  padding:clamp(15px,2.8vw,30px)
+}
+#social .social-toolbar {border-image-source:var(--frame-cyan);background:linear-gradient(115deg,#283d47,#152129)}
+#social .social-row {margin-bottom:12px}
+#social .social-avatar {background:#17262f url('assets/neomi/profile.png') center / 72% no-repeat;color:transparent;border:1px solid #3d697b;width:52px;height:52px}
+#social .social-heading>button[data-social=add],#social-search button,#social [data-social=add] {
+  clip-path:var(--neomi-cut);border-radius:0;border-image:var(--frame-gold) 16 / 16px stretch;
+  background:linear-gradient(#ffc64b,#ff9d0a 55%,#dc7612);color:#22190f;min-height:54px;padding-inline:22px
+}
+#social input {background:#111e24;border-color:#517787}
+#social input:focus {outline:2px solid #53d9ef;outline-offset:1px}
+#social-tabs button[aria-pressed=true] {color:#ffc14b;border-color:#e2a342;background:#332c20}
+#social .social-keys[hidden] {display:none}
+#social .social-keys {background:#121e24;padding:10px;border:1px solid #365761}
+#social .social-keys .login-key-row {margin:4px 0}

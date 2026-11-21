@@ -252,15 +252,41 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   }
   async getComputers(userId: string) {
     await this.row(userId);
-    return this.readComputers();
+    return this.readComputers(userId);
+  }
+  async friendList(userId: string) {
+    return (await this.db.query<{username:string;status:string}>(`SELECT m.member_username AS username, CASE WHEN f.accepted THEN 'accepted' WHEN f.sender=$1 THEN 'sent' ELSE 'received' END AS status
+      FROM kiosk_friendships f JOIN cafe_member_links m ON m.user_id=CASE WHEN f.a=$1 THEN f.b ELSE f.a END
+      WHERE (f.a=$1 OR f.b=$1) AND m.installation_id=$2 ORDER BY m.member_username`, [userId,this.config.installationId])).rows;
+  }
+  async searchFriends(userId: string, query: string) {
+    return (await this.db.query<{username:string; status:string}>(`SELECT m.member_username AS username,
+      CASE WHEN f.accepted THEN 'accepted' WHEN f.sender=$1 THEN 'sent' WHEN f.sender IS NOT NULL THEN 'received' ELSE 'none' END AS status
+      FROM cafe_member_links m LEFT JOIN kiosk_friendships f
+        ON f.a=least($1::text,m.user_id) AND f.b=greatest($1::text,m.user_id)
+      WHERE m.installation_id=$2 AND m.user_id<>$1 AND left(lower(m.member_username),length($3::text))=lower($3)
+      ORDER BY lower(m.member_username),m.member_username LIMIT 20`, [userId,this.config.installationId,query])).rows;
+  }
+  async changeFriend(userId: string, username: string, action: string) {
+    if (!username.trim() || username.length > 64) throw new BadRequestException("Kullanıcı adını kontrol et.");
+    const target = (await this.db.query<{user_id:string}>("SELECT user_id FROM cafe_member_links WHERE installation_id=$1 AND member_username=$2", [this.config.installationId,username])).rows[0];
+    if (!target || target.user_id === userId) throw new BadRequestException("Arkadaş olarak eklenebilecek kiosk üyesi bulunamadı.");
+    const args = [userId,target.user_id];
+    const pair = "a=least($1::text,$2::text) AND b=greatest($1::text,$2::text)";
+    if (action === "request") await this.db.query("INSERT INTO kiosk_friendships(a,b,sender) VALUES(least($1::text,$2::text),greatest($1::text,$2::text),$1) ON CONFLICT DO NOTHING",args);
+    else if (action === "accept") await this.db.query("UPDATE kiosk_friendships SET accepted=true WHERE "+pair+" AND sender=$2",args);
+    else if (action === "remove") await this.db.query("DELETE FROM kiosk_friendships WHERE "+pair,args);
+    else throw new BadRequestException("Geçersiz arkadaşlık işlemi.");
+    return {ok:true};
   }
   async getFloorAvailability() {
     const { computers } = await this.readComputers();
     return computers.map(({ name, available, status }) => ({ name, available, status }));
   }
-  private async readComputers() {
+  private async readComputers(userId?: string) {
     const rows = await this.client.request("/computers");
     if (!rows) throw new ServiceUnavailableException("Bilgisayar listesi alınamıyor.");
+    const friends = new Set(userId ? (await this.friendList(userId)).filter(f => f.status === "accepted").map(f => f.username) : []);
     return { startSupported: this.config.allowVirtualSessionStart === true, computers: rows.map(row => {
       if (!/^[1-9]\d*$/.test(row.ID ?? '') || !row.NAME || !/^\d+$/.test(row.TERMINALSTATUS ?? ''))
         throw new ServiceUnavailableException("Bilgisayar bilgileri doğrulanamadı.");
@@ -270,6 +296,7 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
       return {
         id: row.ID!,
         name: row.NAME!,
+        ...(row.ONLINE === "1" && row.TERMINALSTATUS === "5" && friends.has(row.SESSION_USERNAME ?? "") ? {friendName: row.SESSION_USERNAME} : {}),
         virtual: row.ISVIRTUAL === '1',
         canStart: !reserved && this.config.allowVirtualSessionStart === true &&
           (row.STARTSUPPORTED === '1' || (row.STARTSUPPORTED == null && row.ISVIRTUAL === '1')),

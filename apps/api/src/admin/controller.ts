@@ -1,4 +1,5 @@
 import {
+  BadRequestException, ForbiddenException, ServiceUnavailableException,
   Body,
   Controller,
   Get,
@@ -10,7 +11,8 @@ import {
 } from "@nestjs/common";
 import type { Request } from "express";
 import type { AdminService } from "./service";
-export function createAdminController(service: AdminService) {
+import type { SCoinService } from "../cafe/s-coin";
+export function createAdminController(service: AdminService, coins?: SCoinService) {
   @Controller("admin")
   class AdminController {
     @Get("auth/status") status() {
@@ -39,6 +41,32 @@ export function createAdminController(service: AdminService) {
     ) {
       const actor = await service.authorize(req.headers.authorization);
       return service.changePassword(actor, body);
+    }
+    private async coinCashier(req: Request) {
+      const actor = await service.authorize(req.headers.authorization, true, false, true);
+      if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress || "") ||
+          actor.role !== "cashier" || actor.username !== "stechkasa")
+        throw new ForbiddenException("Bu işlem yerel kasa hesabına özeldir.");
+      return actor;
+    }
+    @Get("s-coin/members") async coinMembers(@Req() req: Request, @Query("search") search: string) {
+      await this.coinCashier(req);
+      if (!search?.trim()) throw new BadRequestException("Kullanıcı adı gir.");
+      const { items } = await service.members(search);
+      return items.filter(m => m.active).map(({id,username}) => ({id,username}));
+    }
+    @Post("s-coin/grant") async grantCoins(@Req() req: Request, @Body() input: Record<string,unknown>) {
+      const actor = await this.coinCashier(req);
+      if (!coins) throw new ServiceUnavailableException("Canlı S Coin cüzdanı hazır değil.");
+      if (!input || typeof input.username !== "string" || typeof input.memberId !== "string" ||
+          !/^[1-9]\d{0,9}$/.test(input.memberId) || typeof input.amount !== "number" ||
+          !Number.isSafeInteger(input.amount) || input.amount < 1 || typeof input.operationId !== "string" ||
+          !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(input.operationId))
+        throw new BadRequestException("Üye ve tam sayı S Coin miktarı gerekli.");
+      const { items } = await service.members(input.memberId, "0", "number");
+      if (items.length !== 1 || !items[0].active || items[0].username !== input.username || String(items[0].id) !== input.memberId)
+        throw new BadRequestException("Üye doğrulanamadı.");
+      return coins.grant(input.memberId, input.username, input.amount, input.operationId, actor.username);
     }
     @Get("overview") async overview(@Req() req: Request) {
       await service.authorize(req.headers.authorization);

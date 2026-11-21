@@ -204,7 +204,7 @@ $adminSetupSetting
 function Start-Api($Config, $Pairing) {
     $existing = Get-Health $healthUrl
     if ($existing -and $existing.cafe -ne 'pancafe') { throw "Port $port uzerindeki API PanCafe modunda degil." }
-    if (!$existing -or $existing.kioskTicketRedeem -ne $true) {
+    if (!$existing -or $existing.kioskTicketRedeem -ne $true -or !$existing.kioskFriends -or !$existing.kioskSlots) {
         if (!$existing -and (Test-Listener $port)) { throw "Port $port baska bir uygulama tarafindan kullaniliyor." }
         $walletDependency = Join-Path $project 'node_modules\mysql2'
         $needsWalletDependency = (Test-Path -LiteralPath $walletEnv -PathType Leaf) -and !(Test-Path -LiteralPath $walletDependency)
@@ -218,7 +218,7 @@ function Start-Api($Config, $Pairing) {
             if ($LASTEXITCODE) { throw 'API derlenemedi.' }
         } finally { Pop-Location }
         if ($existing) {
-            Write-Host 'Bilet islemini destekleyen API surumu baslatiliyor.'
+            Write-Host 'Arkadaslar, slot ve bilet islemlerini destekleyen API surumu baslatiliyor.'
             Stop-Api
             [void](Wait-Ready { !(Get-Health $healthUrl) } "Eski API kapatilamadi. Port: $port")
         }
@@ -240,7 +240,7 @@ function Start-Api($Config, $Pairing) {
             }
             $arguments += ('"' + $entry + '"')
             $started = Start-Background $node $arguments $cwd (Join-Path $serverHome 'launcher-api') { Get-Health $healthUrl }
-            if ($started.kioskTicketRedeem -ne $true) { throw 'Baslatilan API bilet islemini desteklemiyor.' }
+            if (!$started.kioskTicketRedeem -or !$started.kioskFriends -or !$started.kioskSlots) { throw 'Baslatilan API gerekli kiosk ozelliklerini desteklemiyor.' }
         } finally {
             $env:ADMIN_WEB_DIR = $oldAdminDir
             $env:KIOSK_UI_DIR = $oldKioskDir
