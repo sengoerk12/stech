@@ -99,6 +99,22 @@ function reset() {
   void refreshPcAvailability();
 }
 const lobbyBannerStart = performance.now();
+let lobbyWeather;
+function weatherIcon(symbol) {
+  if (/snow|sleet/.test(symbol)) return '❄';
+  if (/rain|thunder/.test(symbol)) return '☂';
+  if (/cloud|fog/.test(symbol)) return '☁';
+  return symbol.endsWith('_night') || (!symbol && (new Date().getHours() < 7 || new Date().getHours() >= 19)) ? '☾' : '☀';
+}
+async function refreshLobbyWeather() {
+  if (!state.info || state.data || !window.stech) return;
+  try { lobbyWeather = await call('lobbyWeather'); } catch { return; }
+  const temperature = $('#lobby-temperature');
+  if (temperature) {
+    temperature.textContent = (lobbyWeather?.celsius ?? '—') + '°C';
+    $('#lobby-weather-icon').textContent = weatherIcon(lobbyWeather?.symbol ?? '');
+  }
+}
 function welcomeDate() {
   return new Intl.DateTimeFormat('tr-TR', {weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date());
 }
@@ -106,11 +122,15 @@ function welcome() {
   const demo = state.info?.mode === 'demo';
   return `<div class="lobby-screen"><main class="lobby-art" aria-label="S TECH üye girişi">
     <div class="lobby-status"><time class="lobby-date">${welcomeDate()}</time><span aria-hidden="true">|</span><time class="clock">${e(state.clock)}</time>
-      <span class="lobby-weather" aria-label="Sıcaklık bilgisi yok"><b aria-hidden="true">${new Date().getHours() < 7 || new Date().getHours() >= 19 ? '☾' : '☀'}</b> —°C</span></div>
-    <h1 class="lobby-sr">S TECH E-SPOR</h1><p class="${state.loading?'lobby-loading':'lobby-sr'}" role="status">${state.loading?'Hesabın açılıyor…':'Lütfen üye kartınızı okutunuz.'}</p>
-    ${demo ? `<div class="lobby-demo">${button('Kaan olarak dene','demo1','primary',state.loading)}${button('Deniz olarak dene','demo2','secondary',state.loading)}</div>`
-    : `<button class="lobby-login" data-action="open-password-login" aria-label="Üye girişi" ${state.loading?'disabled':''}><span class="lobby-sr">Üye girişi</span></button>`}
-    <button class="lobby-pcs" data-action="open-floor-map" aria-haspopup="dialog" ${state.info?.mode==='connected'?'':'disabled'}><span id="pc-availability" role="status">${e(pcAvailability)}</span></button>
+      <span class="lobby-weather" title="Bursa / Nilüfer · MET Norway sıcaklık tahmini · Tam dereceye yuvarlandı · https://creativecommons.org/licenses/by/4.0/"><b id="lobby-weather-icon" aria-hidden="true">${weatherIcon(lobbyWeather?.symbol ?? '')}</b> <span id="lobby-temperature">${lobbyWeather?.celsius ?? '—'}°C</span><small>MET Norway · CC BY 4.0</small></span></div>
+    <h1 class="lobby-brand"><img src="assets/neomi/stech-espor.png" alt="S TECH E-SPOR"></h1>
+    <section class="lobby-panel"><img class="lobby-card" src="assets/lobby-card.svg" alt="">
+      <h2 role="status">${state.loading?'Hesabın açılıyor…':'Lütfen Üye Kartınızı<br>Okutunuz.'}</h2>
+      <div class="lobby-divider" aria-hidden="true">● ● ●</div>
+      ${demo ? `<div class="lobby-demo">${button('Kaan olarak dene','demo1','primary',state.loading)}${button('Deniz olarak dene','demo2','secondary',state.loading)}</div>`
+      : `<button class="lobby-control lobby-login" data-action="open-password-login" ${state.loading?'disabled':''}>${icon('profile')} ÜYE GİRİŞİ</button>`}
+      <button class="lobby-control lobby-pcs" data-action="open-floor-map" aria-haspopup="dialog" ${state.info?.mode==='connected'?'':'disabled'}>${icon('monitor')}<span id="pc-availability" role="status">${e(pcAvailability)}</span></button>
+    </section>
     <div class="lobby-banner">${computerAdCarousel(lobbyBannerStart)}</div>
   </main></div>`;
 }
@@ -899,7 +919,8 @@ clockTick(); setInterval(clockTick, 10000);
 setInterval(() => { if (state.info?.mode === 'connected' && state.data && !state.processing) void refreshLiveAccount(); }, 5000);
 setInterval(() => { if (state.info?.mode === 'demo' && state.data && state.page === 'home' && !state.processing && !state.modal) void refresh().catch(() => {}); }, 15000);
 setInterval(refreshPcAvailability, 5000);
-call('info').then(info => { state.info = info; render(); void refreshPcAvailability(); }).catch(error => { root.innerHTML = '<div class="boot-error"><h1>S TECH</h1><p>' + e(error.message) + '</p></div>'; });
+setInterval(refreshLobbyWeather, 60000);
+call('info').then(info => { state.info = info; render(); void refreshPcAvailability(); void refreshLobbyWeather(); }).catch(error => { root.innerHTML = '<div class="boot-error"><h1>S TECH</h1><p>' + e(error.message) + '</p></div>'; });
 // Native touch scrolling and mouse dragging share the same coupon strip.
 let couponDrag;
 document.addEventListener('pointerdown', event => {

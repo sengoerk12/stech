@@ -6,6 +6,7 @@ const { scryptSync, timingSafeEqual } = require('node:crypto');
 const { DemoStore } = require('./core.cjs');
 const { ApiGateway } = require('./gateway.cjs');
 const { KioskSession } = require('./session.cjs');
+const { createLobbyWeather } = require('./lobby-weather.cjs');
 
 let window, kiosk, config, exitAllowed = false, adminAttempts = [];
 // Varsayılan: monitöre sığacak şekilde ölçeklenen 1080×1920 pencere. Tam ekran kilitli kiosk için
@@ -65,12 +66,14 @@ async function boot() {
     if (!windowed && (input.control || input.meta) && ['r', 'l', 'n', 'w', '+', '-', '0'].includes(input.key.toLowerCase())) event.preventDefault();
   });
   const expectedUrl = pathToFileURL(uiFile).href;
+  const lobbyWeather = createLobbyWeather(path.join(app.getPath('userData'), 'nilufer-weather.json'), app.getVersion());
   ipcMain.handle('kiosk:call', async (event, action, payload) => {
     if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== expectedUrl)
       return { ok: false, error: 'İzin verilmeyen istek.' };
     try {
       if (typeof action !== 'string' || JSON.stringify(payload ?? {}).length > 2048) throw new Error('Geçersiz istek.');
       if (action === 'info') return { ok: true, data: { mode: config.mode, station: config.station || 'S TECH · Merkez', reader: 'USB / klavye modu', pos: config.mode === 'demo' ? 'simulation' : 'unavailable' } };
+      if (action === 'lobbyWeather') return { ok: true, data: await lobbyWeather() };
       if (action === 'adminExit') {
         const now = Date.now(); adminAttempts = adminAttempts.filter(t => now - t < 60000);
         if (adminAttempts.length >= 5) throw new Error('Bir dakika sonra tekrar dene.');

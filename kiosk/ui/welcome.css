@@ -1,20 +1,27 @@
-.lobby-screen{height:100dvh;width:100%;display:grid;place-items:center;overflow:hidden;background:#030c16}
-.lobby-art{container-type:inline-size;position:relative;width:min(100%,61vh);height:100%;margin:0;padding:0;background:#051120 url("assets/welcome-art.jpg") center/100% 100% no-repeat;color:#fff;font-family:Barlow,"Segoe UI",sans-serif}
-.lobby-art .lobby-status{position:absolute;inset:0 0 auto;height:2.65%;display:flex;align-items:center;justify-content:center;gap:3cqw;background:linear-gradient(#101c27,#0c141d);border-bottom:1px solid #274354;font:700 3.25cqw/1 "Segoe UI",sans-serif;font-variant-numeric:tabular-nums}
-.lobby-status .clock{font:inherit;color:inherit}
-.lobby-weather{position:absolute;right:2.8%;font-size:2.95cqw}.lobby-weather b{color:#ffbb25}
-.lobby-art button.lobby-login,.lobby-art button.lobby-pcs,.lobby-demo{position:absolute;left:10.45%;width:79.1%;margin:0;padding:0;border:0;border-radius:2cqw;background:transparent;box-shadow:none;cursor:pointer}
-.lobby-login,.lobby-demo{top:56.45%;height:8.9%}.lobby-pcs{top:67.65%;height:7.4%}
-.lobby-art button:focus-visible{outline:3px solid white;outline-offset:3px}
-.lobby-art button:active{box-shadow:inset 0 0 4cqw #ffffff3b}
-.lobby-pcs span{position:absolute;left:21.4%;right:1.8%;top:15%;bottom:13%;display:grid;align-content:center;padding-inline:1%;color:white;background:linear-gradient(105deg,#0d293e,#092339 63%,#082136);font:italic 700 3.65cqw/1.1 "Segoe UI",sans-serif}
-.lobby-loading{position:absolute;top:43%;height:9%;left:19%;right:19%;background:#071929;color:white;display:grid;place-items:center;font:bold italic 4.2cqw/1.1 sans-serif;margin:0;text-align:center}
-.lobby-demo{display:flex;background:#101d29;align-items:stretch}.lobby-demo button{flex:1}
-.lobby-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.lobby-art:has(>h1:only-child){background:#071929;display:grid;place-items:center}
+.lobby-screen{height:100dvh;overflow:auto;background:radial-gradient(ellipse at 50% 10%,#10364e,transparent 54%),#030d19;color:white;font-family:Barlow,"Segoe UI",sans-serif}
+.lobby-art{width:100%;height:100%;min-height:540px;box-sizing:border-box;margin:0;padding:0 0 2vh;display:grid;grid-template-rows:auto minmax(0,.9fr) minmax(0,4fr) minmax(0,.9fr);gap:1.8vh;container-type:inline-size}
+.lobby-status{display:flex;align-items:center;justify-content:center;gap:2vw;position:relative;padding:.6vh 12%;border-bottom:1px solid #244253;background:#0c1925;font:600 clamp(13px,min(3vw,2.2vh),40px)/1.25 "Segoe UI",sans-serif;font-variant-numeric:tabular-nums}
+.lobby-status .clock{color:inherit;font:inherit}.lobby-weather{position:absolute;right:2%}.lobby-weather b{color:#ffb632}
+.lobby-weather{text-align:right;line-height:1}.lobby-weather small{display:block;margin-top:2px;font-size:clamp(6px,.85vw,12px);font-weight:400;color:#b3cbd9}
+@media(max-width:460px){.lobby-status{justify-content:flex-start;gap:.6em;padding-inline:3%}.lobby-weather{font-size:.84em}}
+.lobby-brand{display:grid;place-items:center;min-height:0;margin:0;background:radial-gradient(ellipse at 50% 45%,#133349,#081522 64%,#050f19)}
+.lobby-brand img{width:min(60%,720px);height:82%;object-fit:contain;min-height:0;filter:drop-shadow(0 3px 6px #020b11)}
+.lobby-panel,.lobby-banner{margin-inline:max(4.5%,calc((100% - 1460px)/2));border:clamp(2px,.24vw,4px) solid #e6f6ff;border-radius:clamp(18px,4vw,54px);box-shadow:0 0 12px #36adff35;overflow:hidden}
+.lobby-panel{display:grid;grid-template-rows:minmax(0,1fr) auto auto auto auto;align-items:center;justify-items:center;gap:1.6vh;padding:2vh 5% 3vh;background:radial-gradient(ellipse at 50% 25%,#10324c,#081c2f 55%,#051221)}
+.lobby-card{width:100%;height:100%;min-height:0}
+.managed-no-motion .lobby-card{content:url('assets/lobby-card.svg#still')}
+@media (prefers-reduced-motion:reduce){.lobby-card{content:url('assets/lobby-card.svg#still')}}
+.lobby-panel h2{margin:0;color:#f6fbff;font:italic 750 clamp(23px,min(5.2vw,3.6vh),70px)/1.12 "Segoe UI",sans-serif;text-align:center;text-shadow:0 0 16px #35b7ff55}
+.lobby-divider{display:flex;gap:.6em;align-items:center;color:#ffae27;font-size:clamp(9px,1vw,18px)}.lobby-divider:before,.lobby-divider:after{content:"";height:1px;width:11vw;background:linear-gradient(90deg,transparent,#42e3ff)}.lobby-divider:after{transform:rotate(180deg)}
+.lobby-art .lobby-control{--edge:#32dbff;--surface:linear-gradient(#174361,#071d33);position:relative;isolation:isolate;display:flex;align-items:center;justify-content:center;gap:3%;width:100%;min-height:48px;padding:1.65vh 3%;background:var(--edge);clip-path:polygon(2% 0,98% 0,100% 15%,100% 85%,98% 100%,2% 100%,0 85%,0 15%);border:0;color:white;cursor:pointer;font:italic 700 clamp(17px,min(3.6vw,2.9vh),50px)/1.15 "Segoe UI",sans-serif}
+.lobby-control:before{content:"";position:absolute;z-index:-1;inset:3px;clip-path:inherit;background:var(--surface);box-shadow:inset 0 0 18px #36cbff55}
+.lobby-control .icon{width:1.45em;height:1.45em;flex:none;padding-right:.45em;box-sizing:content-box;border-right:2px solid currentColor}
+.lobby-art .lobby-login{--edge:#ffd878;--surface:linear-gradient(#ffa21b,#e06705 55%,#a64602);font-style:normal;font-size:clamp(22px,min(5vw,4vh),64px)}
+.lobby-control:focus-visible:before{outline:3px solid white;outline-offset:-7px}.lobby-control:active{filter:brightness(1.18)}
+.lobby-banner{min-height:0;background:#0a1b29}.lobby-banner .zone-ad{height:100%;width:100%;clip-path:none;margin:0}.lobby-demo{display:flex;gap:12px}
+@media(min-aspect-ratio:6/5){.lobby-art{grid-template-rows:auto minmax(0,1fr) minmax(0,3.6fr) minmax(0,.95fr)}.lobby-panel{grid-template-columns:1fr 1fr;grid-template-rows:1fr auto auto auto 1fr;column-gap:4%}.lobby-card{grid-column:1;grid-row:1/-1}.lobby-panel h2{grid-column:2;align-self:end}.lobby-divider,.lobby-panel .lobby-control,.lobby-demo{grid-column:2}.lobby-art .lobby-pcs{align-self:start}.lobby-brand img{width:min(40%,650px)}}
 
-.lobby-banner {position:absolute;left:5.25%;right:5.25%;top:82.36%;bottom:4.4%;overflow:hidden;border-radius:4cqw;background:#091c2f}
-.lobby-banner .zone-ad {height:100%;width:100%;clip-path:none;margin:0}
+
 /* Shared touch keyboard and member sign-in, matched to the lobby artwork. */
 .modal.password-modal {background:radial-gradient(ellipse at 50% 0,#133d59,#081c30 50%,#050f1d);border:1px solid #7ddfff;border-radius:20px;box-shadow:0 0 0 3px #071525,0 0 28px #00a9ff45;color:#edf9ff}
 .password-modal .modal-symbol{color:#51ddff;background:#09283e;border:1px solid #2884a1}
