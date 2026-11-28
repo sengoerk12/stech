@@ -19,15 +19,17 @@ public static class PanCafeBridge
         var rows = Query("SELECT T.ID,T.NAME,T.ISVIRTUAL,T.TERMINALSTATUS,T.NOMEMBERLOGIN,T.MAC,(SELECT CASE WHEN COUNT(*)=1 THEN MAX(M.USERNAME) ELSE NULL END FROM MEMBERS M WHERE M.ID=T.MEMBERID AND T.TERMINALSTATUS=5) AS SESSION_USERNAME FROM TERMINALS T WHERE T.TERMINALTYPE=0 ORDER BY T.ID");
         var connected = PanCafeConnectedTerminals.Read(database);
         var reserved = PanCafeNativeSessions.ReservedTerminals(folder);
+        var wakeSetting = Query("SELECT VVALUE FROM VARIABLES WHERE VNAME='cli_use_wakeuponlan'");
+        bool wakeEnabled = wakeSetting.Count == 0 || wakeSetting[0]["VVALUE"] != "0";
         foreach (var row in rows) {
             bool isReserved = reserved.Contains(Int32.Parse(row["ID"]));
             row["RESERVED"] = isReserved ? "1" : "0";
             bool physicalOnline = row["ISVIRTUAL"] == "0" && connected.Contains(row["NAME"]);
             row["ONLINE"] = row["ISVIRTUAL"] == "1" || physicalOnline ? "1" : "0";
             bool allowed = Enabled("allowVirtualSessionStart");
-            bool canWake = !isReserved && allowed && row["ISVIRTUAL"] == "0" && !physicalOnline &&
+            bool canWake = !isReserved && allowed && wakeEnabled && row["ISVIRTUAL"] == "0" && !physicalOnline &&
                 row["NOMEMBERLOGIN"] == "0" && (row["TERMINALSTATUS"] == "0" || row["TERMINALSTATUS"] == "1") &&
-                PanCafeConnectedTerminals.WakePacket(PanCafeConnectedTerminals.WakeAddress(database, row["NAME"], row["MAC"])) != null;
+                STech.PanCafeBackend.ControllerDatabase.IsUsableMac(row["MAC"]);
             row["WAKABLE"] = canWake ? "1" : "0";
             row["STARTSUPPORTED"] = !isReserved && allowed &&
                 (row["ISVIRTUAL"] == "1" || ((physicalOnline || canWake) && row["NOMEMBERLOGIN"] == "0")) ? "1" : "0";
@@ -93,7 +95,7 @@ public static class PanCafeBridge
             }
             if(request.HttpMethod=="GET" && route=="/health") {
                 VerifyDatabase();
-                Reply(response,200,new {connected=true,installationId=Setting("installationId"),name=Setting("displayName"),memberRegistration=Convert.ToBoolean(config["allowRegistration"]),balanceCredit=config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"]),transactionHistory=true,sessionHistory=true});return;
+                Reply(response,200,new {connected=true,installationId=Setting("installationId"),name=Setting("displayName"),memberRegistration=Convert.ToBoolean(config["allowRegistration"]),balanceCredit=config.ContainsKey("allowBalanceCredit") && Convert.ToBoolean(config["allowBalanceCredit"]),transactionHistory=true,sessionHistory=true,nativeBackend="stech-native-v1"});return;
             }
             if(request.HttpMethod=="GET" && route=="/pc-availability") {
                 var computers = Computers();
@@ -109,7 +111,7 @@ public static class PanCafeBridge
                 var body=ReadBody(request);int terminalId,memberId;
                 if(!Int32.TryParse(Field(body,"terminalId"),out terminalId)||!Int32.TryParse(Field(body,"memberId"),out memberId)) {Reply(response,400,new {error="invalid_session"});return;}
                 string username = Field(body,"username"), operationId = Field(body,"operationId");
-                // Keep native UI work separate from bridge payments and reads.
+                // Native business calls run off the HTTP listener thread.
                 ThreadPool.QueueUserWorkItem(delegate {
                     try { Reply(response,200,PanCafeNativeSessions.Start(database,clientDirectory,folder,terminalId,memberId,username,operationId)); }
                     catch { try { Reply(response,503,new {error="pancafe_unavailable"}); } catch {} }
@@ -209,8 +211,8 @@ public static class PanCafeBridge
                 Reply(response,201,MemberByName(username,false));return;
             }
             if(request.HttpMethod=="GET" && route=="/credit/readiness") {
-                bool ready=Enabled("allowBalanceCredit") && PanCafeBalanceWriter.AutoMemberBonusDisabled(database,clientDirectory);
-                Reply(response,200,new[]{new Dictionary<string,string>{{"READY",ready?"true":"false"}}});return;
+                if(!Enabled("allowBalanceCredit"))Reply(response,200,new[]{new Dictionary<string,string>{{"READY","false"},{"MESSAGE","Bu şubede bakiye yükleme kapalı."}}});
+                else Reply(response,200,PanCafeNativeSessions.CreditReadiness(database,clientDirectory));return;
             }
             if(request.HttpMethod=="POST" && route=="/tickets/redeem") {
                 if(!Enabled("allowBalanceCredit")) {Reply(response,503,new {error="credit_disabled"});return;}
@@ -244,6 +246,13 @@ public static class PanCafeBridge
     static void Status(bool connected) {File.WriteAllText(Path.Combine(folder,"status.json"),Serializer().Serialize(new {connected=connected,updatedAt=DateTime.UtcNow.ToString("o")}),new UTF8Encoding(false));}
     [STAThread] public static int Main(string[] args) {
         try {
+            if(args.Length==4 && args[0]=="--native-check") {
+                STech.PanCafeBackend.NativeBridge.ProtocolSelfTest();
+                using(var backend=new STech.PanCafeBackend.NativeBridge(args[1],args[2])) {
+                    File.WriteAllText(args[3],Serializer().Serialize(new{success=true,nativeBackend="stech-native-v1",protocolRoundTrip=true,panCafeVersionVerified=true,databasePathVerified=true,noBusinessCommandSent=true}),new UTF8Encoding(false));
+                }
+                return 0;
+            }
             folder=Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
             config=Serializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(folder,"connection.json")));
             database=Setting("databasePath");clientDirectory=Setting("clientDirectory");apiKey=Setting("apiKey");
@@ -283,6 +292,10 @@ public static class PanCafeBridge
             var stop=new Button {Text="Bağlantıyı durdur",Left=24,Top=205,Width=180,Height=36};stop.Click+=delegate{form.Close();};form.Controls.Add(stop);
             Application.Run(form);listener.Close();Status(false);return 0;
         } catch(Exception error) {
+            if(args.Length==4 && args[0]=="--native-check") {
+                File.WriteAllText(args[3],Serializer().Serialize(new{success=false,error=error.Message,noBusinessCommandSent=true}),new UTF8Encoding(false));
+                return 1;
+            }
             try{if(folder!=null)Status(false);}catch{}
             MessageBox.Show("PanCafe bağlantısı kurulamadı.\n\n"+error.Message,"S TECH bağlantı kontrolü",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;
         }

@@ -6,6 +6,8 @@ S TECH marka kimliğine uygun iOS/Android uygulaması ve NestJS geliştirme API'
 
 Windows’ta proje ana klasöründeki **S-TECH-Baslat.cmd** dosyasını aç. **1** aynı bilgisayarda PanCafe ve kiosk, **2** A bilgisayarında sunucuyu başlatma, **3** B bilgisayarı için ilk kurulum paketini oluşturma. [Kurulum ve günlük kullanım](docs/CALISTIRMA.md).
 
+PanCafe bakiye, bilet ve oturum istekleri native arka plan köprüsünden çalışır. PanCafe ekranına tıklama/yazma ve 3 saniyelik fare/klavye bekleme kontrolü kaldırılmıştır. [Teknik akış, sürüm koşulları ve testler](docs/pancafe-native-sessions.md).
+
 ## Mobil geliştirme
 Node.js 22.13+ kullanın.
 

@@ -403,7 +403,7 @@ export class PanCafeSystemAdapter implements CafeSystemAdapter {
   async assertCreditReady() {
     const readiness = await this.client.request("/credit/readiness");
     if (readiness?.[0]?.READY !== "true")
-      throw new ServiceUnavailableException("POS ile yükleme için PanCafe otomatik üye bonusu kapatılmalı. Şube yetkilisine başvur.");
+      throw new ServiceUnavailableException(readiness?.[0]?.MESSAGE || "POS ile yükleme için PanCafe otomatik üye bonusu kapatılmalı. Şube yetkilisine başvur.");
   }
   async redeemTicket(userId: string, barcode: string) {
     const member = await this.row(userId);

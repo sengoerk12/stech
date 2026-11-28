@@ -142,7 +142,8 @@ function Start-Bridge($Config) {
     $health = Get-Health $url $headers
     $exe = Join-Path $bridgeHome 'PanCafeBridge.exe'
     $stamp = Join-Path $bridgeHome 'source.sha256'
-    $files = @(Get-ChildItem -LiteralPath $PSScriptRoot -File | Where-Object { $_.Name -like 'PanCafe*.cs' -or $_.Name -eq 'pancafe-bridge.manifest' } | Sort-Object Name)
+    $files = @(@(Get-ChildItem -LiteralPath $PSScriptRoot -File | Where-Object { $_.Name -like 'PanCafe*.cs' -or $_.Name -in @('pancafe-bridge.manifest','build-pancafe-bridge.ps1') }) +
+        @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'PanCafeBackend') -File | Where-Object { ($_.Extension -eq '.cs' -and $_.Name -notlike '*Tests.cs') -or $_.Extension -eq '.cjs' }) | Sort-Object FullName)
     $sourceVersion = (($files | Get-FileHash -Algorithm SHA256).Hash -join [Environment]::NewLine)
     $installedVersion = if (Test-Path -LiteralPath $stamp) { [IO.File]::ReadAllText($stamp) }
     if (!(Test-Path -LiteralPath $exe) -or $sourceVersion -ne $installedVersion) {

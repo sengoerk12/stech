@@ -13,6 +13,9 @@ public static class PanCafeBalanceWriter {
         else if(PanCafeReadOnly.Query(database,clientDirectory,
             "SELECT RDB$FIELD_NAME AS NAME FROM RDB$RELATION_FIELDS WHERE RDB$RELATION_NAME='STECH_LIVE_CREDIT_INTENTS' AND RDB$FIELD_NAME='CREDIT_TOTAL'").Count==0)
             PanCafeReadOnly.Write(database,clientDirectory,"ALTER TABLE STECH_LIVE_CREDIT_INTENTS ADD CREDIT_TOTAL BIGINT",null);
+        if(PanCafeReadOnly.Query(database,clientDirectory,
+            "SELECT RDB$FIELD_NAME AS NAME FROM RDB$RELATION_FIELDS WHERE RDB$RELATION_NAME='STECH_LIVE_CREDIT_INTENTS' AND RDB$FIELD_NAME='NATIVE_BACKEND'").Count==0)
+            PanCafeReadOnly.Write(database,clientDirectory,"ALTER TABLE STECH_LIVE_CREDIT_INTENTS ADD NATIVE_BACKEND SMALLINT DEFAULT 0 NOT NULL",null);
     }
     internal static bool AutoMemberBonusDisabled(string database, string clientDirectory) {
         var settings = PanCafeReadOnly.Query(database, clientDirectory,

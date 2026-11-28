@@ -33,5 +33,5 @@ Say "Guncellendi: $exe (onceki surum: PanCafeBridge.onceki.exe)" 'Green'
 
 # 3) Yeni kopruyu ac; Windows yonetici onayi istenir.
 Start-Process -FilePath $exe -WorkingDirectory $target
-Say 'Kopru acildi. Yonetici onayini ver; PanCafe''de Genel sekmesi acik olsun.' 'Green'
+Say 'Kopru acildi. Yonetici onayini ver; PanCafe acik kalmali. Sekme veya fare/klavye bekleme kosulu yok.' 'Green'
 Read-Host 'Kapatmak icin Enter'

@@ -1,6 +1,6 @@
 # PanCafe ve kiosk kurulumu
 
-Güncel akış [S TECH nasıl açılır?](CALISTIRMA.md) sayfasında. Aşağıdaki eski GitHub kurucularında A ve B adları ters kullanılır. Güncel akışta **A = PanCafe**, **B = kiosk**.
+Güncel akış [S TECH nasıl açılır?](CALISTIRMA.md) sayfasında. **28 Kasım 2026:** bakiye, bilet ve oturum yolları [native arka plan köprüsüne](pancafe-native-sessions.md) geçirildi. Aşağıdaki eski test/bonus ve kurulum notları tarihçedir; güncel yazma semantiği ve kontroller için native köprü belgesini kullan. Aşağıdaki eski GitHub kurucularında A ve B adları ters kullanılır. Güncel akışta **A = PanCafe**, **B = kiosk**.
 
 ## A ve B için Windows kurulumu
 
@@ -85,5 +85,5 @@ Kaynak para alanları DOUBLE'dır; SQL projeksiyonunda DECIMAL(18,2), backend'de
 - `pancafe-reader.test.ts`: para dönüşümü, üye numarası/adı birlikte kontrolü, hata durumunda demo/sıfır bakiye üretmeme.
 - `pancafe.test.ts`: PanCafe bilgileriyle giriş, aynı kullanıcı adı bağlantısı, canlı okumayı taklit eden değişen bakiye, farklı üyelerin ayrılması, aynı bilgilerle kayıt, ayrı bakiye/parola kaydı oluşturmama ve anahtar/parola sızıntısı koruması.
 - `TestPanCafeMemberWriter.cs`: yalnızca yeni oluşturduğu ayrı veritabanı kopyasında üye ekleme, şifre aktarımı, UTF8 ad, sıfır bakiye, mükerrer kayıt ve başarısız işlemin rollback testi. Canlı PanCafe'ye bu test tarafından üye eklenmedi.
-- `TestPanCafeBalanceWriter.cs`: veritabanı kopyasında 200+20 TL bakiye, bonus, tek geçmiş kaydı, tekrar çağrı, parametre çatışması, yanlış üye ve geçmiş yazımı başarısız olduğunda bakiye/makbuzun birlikte geri alınması geçti. Canlı üyeye bu test tarafından para eklenmedi.
+- Güncel kredi/bilet testleri `scripts/test-pancafe-native.ps1` içindedir; eski ayrı test programlarının yerini izole native fixture ve `BridgeIntegrationTests.cs` aldı. Canlı üyeye test parası yüklenmez.
 - Gerçek çalışmakta olan PanCafe ile elevated bağlantı ve 2 / kaan2 üyesinin canlı okunması doğrulandı. Gerçek kullanıcı bilgileriyle login, yeni üyenin PanCafe ekranında görünmesi ve gerçek client'ta giriş henüz doğrulanmadı.
