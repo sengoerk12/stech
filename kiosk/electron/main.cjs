@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, screen, session: electronSession } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
-const { pathToFileURL } = require('node:url');
+const { fileURLToPath } = require('node:url');
 const { scryptSync, timingSafeEqual } = require('node:crypto');
 const { DemoStore } = require('./core.cjs');
 const { ApiGateway } = require('./gateway.cjs');
@@ -65,12 +65,15 @@ async function boot() {
     if (!windowed && ['F5', 'F11', 'F12', 'BrowserBack'].includes(input.key)) event.preventDefault();
     if (!windowed && (input.control || input.meta) && ['r', 'l', 'n', 'w', '+', '-', '0'].includes(input.key.toLowerCase())) event.preventDefault();
   });
-  const expectedUrl = pathToFileURL(uiFile).href;
   const lobbyWeather = createLobbyWeather(path.join(app.getPath('userData'), 'nilufer-weather.json'), app.getVersion());
   ipcMain.handle('kiosk:call', async (event, action, payload) => {
-    if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== expectedUrl)
+    if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
       return { ok: false, error: 'İzin verilmeyen istek.' };
     try {
+      // Chromium and Node can serialize the same Windows filename differently (for example, ~ and %7E).
+      const senderUrl = URL.parse(event.senderFrame.url);
+      if (senderUrl?.protocol !== 'file:' || senderUrl.search || senderUrl.hash || fileURLToPath(senderUrl) !== uiFile)
+        return { ok: false, error: 'İzin verilmeyen istek.' };
       if (typeof action !== 'string' || JSON.stringify(payload ?? {}).length > 2048) throw new Error('Geçersiz istek.');
       if (action === 'info') return { ok: true, data: { mode: config.mode, station: config.station || 'S TECH · Merkez', reader: 'USB / klavye modu', pos: config.mode === 'demo' ? 'simulation' : 'unavailable' } };
       if (action === 'lobbyWeather') return { ok: true, data: await lobbyWeather() };

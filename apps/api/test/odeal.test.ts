@@ -1,6 +1,9 @@
 import "reflect-metadata";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "../src/app";
 import { openDatabase, type SqlExecutor } from "../src/database/database";
 import { OdealPaymentProvider, odealSettings } from "../src/payments/odeal";
@@ -121,6 +124,11 @@ test("Ödeal report recovers an unreported capture once and rejects mismatched r
 
 test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verified notification", async (t) => {
   const deviceKey = "test-kiosk-".repeat(5);
+  const secondKey = "test-second-kiosk-".repeat(5);
+  const directory = await mkdtemp(join(tmpdir(), "stech-second-kiosk-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const secondConfig = join(directory, "kiosk-2.json");
+  await writeFile(secondConfig, JSON.stringify({ deviceKey: secondKey, posDeviceCode: "KIOSK2" }));
   const requestKey = "test-notification-".repeat(3);
   const webhookBase = "https://stech.example/api/v1/webhooks/odeal";
   const realFetch = globalThis.fetch;
@@ -156,6 +164,7 @@ test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verifie
   });
   const app = await createApp({
     ENVIRONMENT: "test", DEMO_PASSWORD: "test-password", KIOSK_DEVICE_KEY: deviceKey,
+    KIOSK_SECOND_CONFIG: secondConfig,
     ODEAL_POS_ENV: "stage", ODEAL_MERCHANT_KEY: "test-merchant", ODEAL_SECRET_KEY: "test-secret",
     ODEAL_REQUEST_KEY: requestKey, ODEAL_DEVICE_CODE: "KIOSK1",
     ODEAL_CITY: "İstanbul", ODEAL_TOWN: "Kadıköy", ODEAL_BASKET_TYPE: "SIMPLE",
@@ -171,6 +180,10 @@ test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verifie
     assert.equal(await readLastSeen(), undefined);
     assert.equal((await post("/kiosk/heartbeat", {}, { "X-Kiosk-Key": deviceKey })).status, 201);
     assert.ok(Date.now() - Date.parse(await readLastSeen()) < 2000);
+    assert.equal((await post("/kiosk/heartbeat", {}, { "X-Kiosk-Key": secondKey })).status, 201);
+    const health = await (await realFetch(api + "/health")).json();
+    assert.deepEqual(health.kiosks.map((entry: { id: string; pos: boolean }) => [entry.id, entry.pos]),
+      [["kiosk-1", true], ["kiosk-2", true]]);
     const registration = await post("/auth/register", {
       username: "odeal_test", name: "Deneme Üyesi", password: "test-password", phone: "5555555555",
     });
@@ -256,7 +269,45 @@ test("Ödeal kiosk dispatch, isolation and exactly-once credit through a verifie
     assert.equal((await post("/webhooks/odeal/payment-failed", paymentFailed, { "X-ODEAL-REQUEST-KEY": requestKey })).status, 201);
     assert.deepEqual(deleted, [abandoned.id, declined.id]);
     assert.equal((await dashboard()).pendingPayments.length, 0);
-    assert.equal((await dashboard()).wallet.balance, initial + 20000 + first.bonus);
+    const beforeConcurrent = initial + 20000 + first.bonus;
+    assert.equal((await dashboard()).wallet.balance, beforeConcurrent);
+
+    const secondKiosk = { ...auth, "X-Kiosk-Key": secondKey };
+    const both = await Promise.all([
+      checkout("kiosk-one-concurrent", kiosk, 200),
+      checkout("kiosk-two-concurrent", secondKiosk, 300),
+    ]);
+    assert.deepEqual(both.map(r => r.status), [201, 201]);
+    const [order1, order2] = await Promise.all(both.map(r => r.json()));
+    assert.equal(baskets.find(b => b.referenceCode === order1.id)?.externalDeviceKey, "KIOSK1");
+    assert.equal(baskets.find(b => b.referenceCode === order2.id)?.externalDeviceKey, "KIOSK2");
+    const secondDashboard = async () => (await realFetch(api + "/kiosk/dashboard", { headers: secondKiosk })).json();
+    assert.deepEqual((await dashboard()).pendingPayments.map((p: { id: string }) => p.id), [order1.id]);
+    assert.deepEqual((await secondDashboard()).pendingPayments.map((p: { id: string }) => p.id), [order2.id]);
+    const orderPath = "/kiosk/pos-payments/" + order2.id;
+    assert.equal((await realFetch(api + orderPath, { headers: kiosk })).status, 404);
+    assert.equal((await post(orderPath + "/cancel", {}, kiosk)).status, 404);
+    assert.equal((await post(orderPath + "/retry", {}, kiosk)).status, 404);
+    const firstEvent = { ...payload, PaymentRefCode: "concurrent-one",
+      BasketDetail: { BasketRefCode: order1.id, ExternalDeviceKey: "KIOSK1" },
+      PaymentDetail: { ...payload.PaymentDetail, Amount: 2 } };
+    const secondEvent = { ...payload, PaymentRefCode: "concurrent-two",
+      BasketDetail: { BasketRefCode: order2.id, ExternalDeviceKey: "KIOSK2" },
+      PaymentDetail: { ...payload.PaymentDetail, Amount: 3 } };
+    assert.equal((await notify({ ...secondEvent, BasketDetail: { ...secondEvent.BasketDetail, ExternalDeviceKey: "KIOSK1" } })).status, 400);
+    const captures = await Promise.all([notify(firstEvent), notify(secondEvent), notify(secondEvent)]);
+    assert.deepEqual(captures.map(r => r.status), [201, 201, 201]);
+    for (let attempt = 0; attempt < 45; attempt++) {
+      if ((await dashboard()).pendingPayments.length + (await secondDashboard()).pendingPayments.length === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const firstFinal = await (await realFetch(api + "/kiosk/pos-payments/" + order1.id, { headers: kiosk })).json();
+    const secondFinal = await (await realFetch(api + orderPath, { headers: secondKiosk })).json();
+    assert.equal(firstFinal.status, "completed");
+    assert.equal(secondFinal.status, "completed");
+    const expected = beforeConcurrent + order1.amount + order1.bonus + order2.amount + order2.bonus;
+    assert.equal((await dashboard()).wallet.balance, expected);
+    assert.equal(Math.max(firstFinal.balanceAfter, secondFinal.balanceAfter), expected);
   } finally {
     await app.close();
   }

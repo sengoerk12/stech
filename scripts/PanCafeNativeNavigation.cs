@@ -32,6 +32,7 @@ public static partial class PanCafeNativeSessions {
         }
 
         public void OpenTerminalScreen(string terminal) {
+            CheckOperatorInput();
             var memberWindow = MemberWindow();
             if (memberWindow != IntPtr.Zero) {
                 PostMessage(memberWindow, 0x10, IntPtr.Zero, IntPtr.Zero);
@@ -45,6 +46,7 @@ public static partial class PanCafeNativeSessions {
                 if (WaitForRow(main, terminal, false, out list, out row)) return;
             }
             if (ClickNavigationIcon(0) && WaitForRow(main, terminal, false, out list, out row)) return;
+            CheckOperatorInput();
             throw new InvalidOperationException("PanCafe terminal ekranı veya seçilen bilgisayar bulunamadı.");
         }
 
@@ -77,6 +79,7 @@ public static partial class PanCafeNativeSessions {
             if (ClickNamed(members, MemberCreditActions)) return;
             if (ClickRenderedMemberCredit(members, memberList, username)) return;
 
+            CheckOperatorInput();
             if (!PostMessage(memberList, 0x7B, memberList, new IntPtr(-1)))
                 throw new InvalidOperationException("PanCafe üye menüsü açılamadı.");
             creditMenuOpened = true;
@@ -158,7 +161,9 @@ public static partial class PanCafeNativeSessions {
             if (grids.Count != 1) throw new InvalidOperationException("PanCafe üye sonuç tablosu doğrulanamadı.");
             var grid = grids[0];
             SelectUsernameCriterion(scope, field, grid);
-            TypeFocused(scope, search, username);
+            // A value provider is useful only if PanCafe also selects the verified user.
+            if (TrySetUiAutomationValue(search, username) && WaitForMemberCard(scope, grid, username)) return grid;
+            WriteControlText(scope, search, username, true);
             if (Text(search) != username)
                 throw new InvalidOperationException("PanCafe arama kutusuna kullanıcı adı yazılamadı.");
             // A data-bound search may already have selected the member. Never move that selection.
@@ -186,13 +191,12 @@ public static partial class PanCafeNativeSessions {
             IntPtr selector = selectors[0];
             if (IsUsernameCriterion(selector)) return;
             FocusControl(scope, selector);
-            PressKey(36); // Home.
+            PostControlKey(selector, 36, 0x147); // Home.
             for (int i = 0; i < 6; i++) {
                 Thread.Sleep(80);
                 if (IsUsernameCriterion(selector)) return;
                 if (i != 5) {
-                    CheckFocus(selector);
-                    PressKey(40); // Down.
+                    PostControlKey(selector, 40, 0x150); // Down.
                 }
             }
             throw new InvalidOperationException("PanCafe arama kriteri Kullanıcı Adı olarak seçilemedi.");
@@ -423,6 +427,7 @@ public static partial class PanCafeNativeSessions {
             var controls = Children(scope).FindAll(h => IsWindowEnabled(h) && IsActionControl(Class(h)) &&
                 (Matches(Caption(h), names) || Matches(Text(h), names)));
             if (controls.Count == 1) {
+                if (OperatorInputScope.IsActive && TryInvokeUiAutomation(controls[0])) return true;
                 var bounds = ClientBounds(controls[0]);
                 MenuClick(controls[0], bounds.Right / 2, bounds.Bottom / 2);
                 return true;
@@ -462,6 +467,7 @@ public static partial class PanCafeNativeSessions {
                     }
                 }
                 if (String.IsNullOrWhiteSpace(action.Owner.get_accDefaultAction(action.Child))) return false;
+                CheckOperatorInput();
                 action.Owner.accDoDefaultAction(action.Child);
                 return true;
             } catch (COMException) { return false; }

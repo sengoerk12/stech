@@ -332,6 +332,7 @@ test("Native destination credits PanCafe once and never replays old isolated sim
     const livePlay = await liveSCoin.playGame(member.id, playId);
     assert.equal(livePlay.testOnly, false);
     assert.deepEqual(await liveSCoin.playGame(member.id, playId), livePlay);
+    assert.ok("sector" in livePlay && typeof livePlay.sector === "number");
     const drawnAmount = [0, 500, 500, 1000, 500, 0, 1000, 500, 0, 2500][livePlay.sector];
     assert.equal(livePlay.prize?.amountKurus ?? 0, drawnAmount);
     const drawnAwards = [...documents].filter(([path]) => path.startsWith("wheel-awards/"));

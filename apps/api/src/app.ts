@@ -13,6 +13,7 @@ import {
   Headers,
   Module,
   BadRequestException,
+  NotFoundException,
   UnauthorizedException,
   HttpException,
   Catch,
@@ -170,6 +171,15 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   if ((hostedUrl && (hostedUrl.href !== "https://stechespor.com/wallet/admin/" || !/^[a-f0-9]{64}$/.test(hostedKey))) ||
       (hostedRelay && !hostedUrl)) throw new Error("Hosted admin configuration is invalid.");
   const odeal = odealSettings(hostedRelay ? { ...env, ODEAL_WEBHOOK_BASE_URL: new URL("odeal", hostedUrl!).href } : env);
+  const second = env.KIOSK_SECOND_CONFIG
+    ? (JSON.parse(await readFile(env.KIOSK_SECOND_CONFIG, "utf8")) as { deviceKey?: string; posDeviceCode?: string })
+    : null;
+  if (env.KIOSK_SECOND_CONFIG && (!second || !env.KIOSK_DEVICE_KEY || typeof second.deviceKey !== "string" ||
+      !/^[a-zA-Z0-9_-]{40,}$/.test(second.deviceKey) || second.deviceKey === env.KIOSK_DEVICE_KEY ||
+      (second.posDeviceCode != null && (!odeal || typeof second.posDeviceCode !== "string" ||
+        !/^[\w-]{1,100}$/.test(second.posDeviceCode) || second.posDeviceCode === odeal.deviceCode)))) {
+    throw new Error("Second kiosk credentials or POS device code are invalid.");
+  }
   if (hostedRelay && !odeal) throw new Error("Hosted Ödeal relay requires local Ödeal configuration.");
   if (odeal && !env.KIOSK_DEVICE_KEY)
     throw new Error("Ödeal requires kiosk device authentication.");
@@ -218,14 +228,35 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const payments = new PersistentPaymentService(db, paymentCafe, provider, nativeCredit ? "pancafe" : "mock", testSCoin);
   const posCafe = odeal?.mode === "stage" && panCafe
     ? new PanCafeSimulationAdapter(db, cafe, false) : cafe;
-  const odealProvider = odeal ? new OdealPaymentProvider(odeal, async id => {
+  const posCustomer = async (id: string) => {
     const member = await posCafe.getUser(id);
     return { ...member, address: (await cafe.getProfile?.(id))?.address };
-  }) : null;
-  const posPayments = odeal && odealProvider
-    ? new PersistentPaymentService(db, posCafe, odealProvider, odeal.mode === "live" ? "pancafe" : "mock", liveSCoin, odeal.deviceCode)
-    : null;
+  };
+  function createPos(settings: NonNullable<typeof odeal>) {
+    const provider = new OdealPaymentProvider(settings, posCustomer);
+    const payments = new PersistentPaymentService(db, posCafe, provider, settings.mode === "live" ? "pancafe" : "mock", liveSCoin, settings.deviceCode);
+    return { provider, payments };
+  }
+  const firstPos = odeal ? createPos(odeal) : null;
+  const secondPos = odeal && second?.posDeviceCode ? createPos({ ...odeal, deviceCode: second.posDeviceCode }) : null;
+  const posPayments = firstPos?.payments;
+  const posDevices = new Map<string, ReturnType<typeof createPos>>();
+  if (odeal && firstPos) posDevices.set(odeal.deviceCode, firstPos);
+  if (second?.posDeviceCode && secondPos) posDevices.set(second.posDeviceCode, secondPos);
+  async function posForOrder(id: string, reportedDevice?: unknown) {
+    if (typeof id !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id))
+      throw new BadRequestException("Geçersiz Ödeal sepet numarası.");
+    const { rows: [order] } = await db.query<{pos_device_code: string}>(
+      "SELECT pos_device_code FROM payment_orders WHERE id=$1 AND payment_provider='odeal'", [id],
+    );
+    const pos = order && posDevices.get(order.pos_device_code);
+    if (!pos) throw new NotFoundException("İşlem bulunamadı.");
+    if (reportedDevice != null && reportedDevice !== order.pos_device_code)
+      throw new BadRequestException("Ödeal cihaz kodu eşleşmedi.");
+    return pos;
+  }
   let kioskLastSeenAt: string | undefined;
+  const kiosksLastSeen = new Map<string, string>();
   const admin = new AdminService(db, bridge, payments, env, posPayments ?? undefined, () => ({
     kioskConfigured: Boolean(env.KIOSK_DEVICE_KEY),
     kioskLastSeenAt,
@@ -237,7 +268,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     },
   }));
   const hostedAdmin = hostedUrl ? new HostedAdminSync(hostedUrl, hostedKey, db, () => admin.overview(),
-    hostedRelay && odeal && posPayments && odealProvider ? { payments: posPayments, provider: odealProvider, device: odeal.deviceCode } : undefined) : null;
+    hostedRelay && firstPos ? posForOrder : undefined) : null;
   const AdminController = createAdminController(admin, liveSCoin);
  const kioskManagement = new KioskManagement(db); await kioskManagement.init();
  const KioskManagementController = createKioskManagementController(kioskManagement, admin);
@@ -246,8 +277,14 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   const kioskAuth = env.KIOSK_DEVICE_KEY
     ? new KioskCardAuth(env.KIOSK_DEVICE_KEY,
         env.KIOSK_CARD_MAP_FILE ? JSON.parse(await readFile(env.KIOSK_CARD_MAP_FILE, "utf8")) as KioskCardMap : { cards: [] },
-        cafe, auth)
+        cafe, auth, second?.deviceKey)
     : null;
+  function kioskPos(device: string | undefined) {
+    if (!kioskAuth) throw new ServiceUnavailableException("Kiosk bağlantısı hazır değil.");
+    const pos = kioskAuth.verifyDevice(device) === "kiosk-2" ? secondPos : firstPos;
+    if (!pos) throw new ServiceUnavailableException("Bu kioskun POS bağlantısı hazır değil.");
+    return pos;
+  }
   const campaignInstallation = env.WALLET_CAMPAIGN_INSTALLATION_ID ?? bridgeConfig?.installationId;
   const campaignPath = `pancafeInstallations/${campaignInstallation}`;
   const promotionSync = hostedWallet
@@ -279,8 +316,9 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     @Header("Cache-Control", "no-store")
     kioskHeartbeat(@Headers("x-kiosk-key") key: string | undefined) {
       if (!kioskAuth) throw new ServiceUnavailableException("Kiosk bağlantısı yapılandırılmadı.");
-      kioskAuth.verifyDevice(key);
+      const kioskId = kioskAuth.verifyDevice(key);
       kioskLastSeenAt = new Date().toISOString();
+      kiosksLastSeen.set(kioskId, kioskLastSeenAt);
       return { ok: true };
     }
     @Post("kiosk/session/keep-alive")
@@ -337,7 +375,9 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     @Get("kiosk/dashboard") async kioskDashboard(@Req() req: Request) {
       if (!(cafe instanceof PanCafeSystemAdapter) && !posPayments) return this.dashboard(req);
       const id = await user(req);
-      const pos = posPayments != null && kioskAuth?.isDevice(req.headers["x-kiosk-key"]) === true;
+      const kioskId = kioskAuth?.deviceId(req.headers["x-kiosk-key"]);
+      const devicePos = kioskId === "kiosk-2" ? secondPos : kioskId === "kiosk-1" ? firstPos : null;
+      const pos = devicePos !== null;
       const stage = pos && odeal?.mode === "stage";
       const account = stage
         ? { member: await posCafe.getUser(id), wallet: await posCafe.getBalance(id) }
@@ -346,7 +386,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         : { member: await cafe.getUser(id), wallet: await cafe.getBalance(id) };
       return {
         ...account, promotions: await activePromotions(db), transactions: [],
-        pendingPayments: pos ? await posPayments!.pending(id) : [],
+        pendingPayments: devicePos ? await devicePos.payments.pending(id) : [],
         features: { topup: pos && await admin.topupEnabled(), odealPos: pos, odealStage: stage },
       };
     }
@@ -354,17 +394,17 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
       @Req() req: Request, @Headers("x-kiosk-key") device: string | undefined,
       @Headers("idempotency-key") key: string | undefined, @Body() body: unknown,
     ) {
-      if (!kioskAuth || !posPayments || !odealProvider || !(await admin.topupEnabled()))
+      if (!(await admin.topupEnabled()))
         throw new ServiceUnavailableException("POS ile yükleme şu anda kapalı.");
-      kioskAuth.verifyDevice(device);
+      const { provider, payments } = kioskPos(device);
       const id = await user(req);
       if (!key || !/^[a-zA-Z0-9_-]{16,100}$/.test(key))
         throw new BadRequestException("Geçerli işlem anahtarı gerekli.");
       const dto = parse(KioskQuoteDto, body);
       const quote = calculateQuote(dto.amount, await activePromotions(db), Date.now(), dto.promotionId);
       if (odeal?.mode === "live" && cafe instanceof PanCafeSystemAdapter) await cafe.assertCreditReady();
-      await odealProvider.checkConfiguration();
-      return posPayments.create(id, dto.amount, "pos_" + key, quote);
+      await provider.checkConfiguration();
+      return payments.create(id, dto.amount, "pos_" + key, quote);
     }
     @Post("kiosk/tickets/redeem")
     @Header("Cache-Control", "no-store")
@@ -378,52 +418,49 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     }
     @Get("kiosk/pos-payments/:id") @Header("Cache-Control", "no-store")
     async kioskPosPayment(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
-      if (!kioskAuth || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
-      kioskAuth.verifyDevice(device);
-      return posPayments.get(await user(req), id);
+      return kioskPos(device).payments.get(await user(req), id);
     }
     @Post("kiosk/pos-payments/:id/retry")
     async retryKioskPosTransfer(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
-      if (!kioskAuth || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
-      kioskAuth.verifyDevice(device);
-      return posPayments.retryTransfer(await user(req), id);
+      return kioskPos(device).payments.retryTransfer(await user(req), id);
     }
     @Post("kiosk/pos-payments/:id/cancel")
     async kioskPosCancel(@Req() req: Request, @Headers("x-kiosk-key") device: string | undefined, @Param("id") id: string) {
-      if (!kioskAuth || !posPayments || !odealProvider) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
-      kioskAuth.verifyDevice(device);
+      const { provider, payments } = kioskPos(device);
       const userId = await user(req);
-      await posPayments.deleteOdealUnpaidBasket(id, ref => odealProvider.deleteUnpaidBasket(ref), { userId });
-      return posPayments.get(userId, id);
+      await payments.deleteOdealUnpaidBasket(id, ref => provider.deleteUnpaidBasket(ref), { userId });
+      return payments.get(userId, id);
     }
     @Post("webhooks/odeal/payment-succeeded")
     async odealSucceeded(@Req() req: RawBodyRequest<Request>, @Headers("x-odeal-request-key") key: string | undefined) {
-      if (!odealProvider || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
-      const event = odealProvider.verifyWebhook(req.rawBody ?? Buffer.alloc(0), key ?? "");
-      await posPayments.accept(event, true);
+      if (!firstPos) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
+      firstPos.provider.checkRequestKey(key);
+      const raw = req.rawBody ?? Buffer.alloc(0);
+      const basket = req.body?.BasketDetail;
+      const { provider, payments } = await posForOrder(basket?.BasketRefCode, basket?.ExternalDeviceKey);
+      await payments.accept(provider.verifyWebhook(raw, key ?? ""), true);
       return { received: true };
     }
     @Post(["webhooks/odeal/basket-cancelled", "webhooks/odeal/payment-cancelled", "webhooks/odeal/payment-failed"])
     async odealCancelled(@Req() req: Request, @Headers("x-odeal-request-key") key: string | undefined, @Body() body: any) {
-      if (!odealProvider || !posPayments) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
-      odealProvider.checkRequestKey(key);
+      if (!firstPos) throw new ServiceUnavailableException("POS bağlantısı hazır değil.");
+      firstPos.provider.checkRequestKey(key);
       const failed = req.path.endsWith("/payment-failed");
       const paid = req.path.endsWith("/payment-cancelled");
       const basket = paid || failed ? body?.BasketDetail : (body?.Basket ?? body);
       if (failed && !basket) return { received: true };
       const total = paid || failed ? body?.PaymentDetail?.Amount : basket?.GrossPrice;
-      if (basket?.ExternalDeviceKey != null && basket.ExternalDeviceKey !== odeal?.deviceCode)
-        throw new BadRequestException("Ödeal cihaz kodu eşleşmedi.");
       const cents = typeof total === "number" ? Math.round(total * 100) : NaN;
       if (typeof basket?.BasketRefCode !== "string" || !Number.isSafeInteger(cents) ||
           cents <= 0 || Math.abs(total * 100 - cents) > 0.000001)
         throw new BadRequestException("Geçersiz Ödeal iptal bildirimi.");
+      const { provider, payments } = await posForOrder(basket.BasketRefCode, basket.ExternalDeviceKey);
       if (failed) {
         if (body?.PaymentDetail?.AuthCode)
           throw new BadRequestException("Geçersiz Ödeal başarısız ödeme bildirimi.");
-        await posPayments.deleteOdealUnpaidBasket(basket.BasketRefCode, ref => odealProvider.deleteUnpaidBasket(ref), { amount: cents });
+        await payments.deleteOdealUnpaidBasket(basket.BasketRefCode, ref => provider.deleteUnpaidBasket(ref), { amount: cents });
       } else {
-        await posPayments.cancelOdealBasket(basket.BasketRefCode, cents, paid);
+        await payments.cancelOdealBasket(basket.BasketRefCode, cents, paid);
       }
       return { received: true };
     }
@@ -502,6 +539,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
         kioskTicketRedeem: true,
         kioskFriends: true,
         kioskSlots: true,
+        kioskMultiDevice: true,
+        kiosks: [...(kioskAuth ? ["kiosk-1"] : []), ...(second ? ["kiosk-2"] : [])].map(id => ({ id, pos: id === "kiosk-1" ? !!firstPos : !!secondPos, lastSeenAt: kiosksLastSeen.get(id) })),
         ...(walletMemberSync ? { walletSync: walletMemberSync.status, walletBalanceWrite } : {}),
         campaignSync: promotionSync?.status ?? "disabled",
         kioskLastSeenAt,
@@ -678,7 +717,8 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
   class RuntimeLifecycle {
     onModuleInit() {
       if (!panCafe || simulation) payments.startWorker();
-      posPayments?.startWorker(odealProvider?.findCapturedPayment.bind(odealProvider));
+      firstPos?.payments.startWorker(firstPos.provider.findCapturedPayment.bind(firstPos.provider));
+      secondPos?.payments.startWorker(secondPos.provider.findCapturedPayment.bind(secondPos.provider), false);
       walletMemberSync?.start();
       promotionSync?.start();
       testSCoin?.start();
@@ -688,6 +728,7 @@ export async function createApp(env: NodeJS.ProcessEnv = process.env) {
     async onModuleDestroy() {
       await hostedAdmin?.stop();
       await payments.stopWorker();
+      await secondPos?.payments.stopWorker();
       await posPayments?.stopWorker();
       await Promise.all([testSCoin?.stop(), liveSCoin?.stop()]);
       await promotionSync?.stop();

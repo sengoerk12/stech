@@ -15,7 +15,7 @@ export class HostedAdminSync {
     private key: string,
     private db: Database,
     private overview: () => Promise<unknown>,
-    private relay?: { payments: PersistentPaymentService; provider: OdealPaymentProvider; device: string },
+    private relay?: (id: string, reportedDevice?: unknown) => Promise<{ payments: PersistentPaymentService; provider: OdealPaymentProvider }>,
   ) {}
 
   private async request(op: string, body: unknown) {
@@ -31,9 +31,9 @@ export class HostedAdminSync {
   }
 
   private async deliver(event: Delivery) {
-    const relay = this.relay!;
     const amount = Number(event.amount_kurus);
-    if (event.device !== relay.device || !Number.isSafeInteger(amount) || amount < 1) throw new Error("Invalid hosted payment");
+    if (!Number.isSafeInteger(amount) || amount < 1) throw new Error("Invalid hosted payment");
+    const relay = await this.relay!(event.basket_ref, event.device);
     if (event.kind === "payment-succeeded") {
       await relay.payments.accept({ paymentId: event.basket_ref, eventId: event.provider_ref, amount, currency: "TRY", status: "succeeded" }, true);
     } else if (event.kind === "payment-failed") {

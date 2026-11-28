@@ -53,6 +53,9 @@ async function audit(tx: SqlExecutor, id: string, status: string) {
   );
 }
 
+// All POS services in one API process share the PanCafe transfer lane and its durable outbox.
+const transferLanes = new WeakMap<Database, Promise<void>>();
+
 export class PersistentPaymentService {
   private timer?: ReturnType<typeof setInterval>;
   private reportTimer?: ReturnType<typeof setInterval>;
@@ -140,8 +143,8 @@ export class PersistentPaymentService {
       await this.db.query<PaymentRow>(
         `SELECT p.*, (j.status='reconciliation') AS transfer_needs_review
          FROM payment_orders p LEFT JOIN transfer_jobs j ON j.payment_id=p.id
-         WHERE p.id=$1 AND p.user_id=$2 AND p.transfer_target=$3 AND p.payment_provider=$4`,
-        [id, userId, this.target, this.providerName],
+         WHERE p.id=$1 AND p.user_id=$2 AND p.transfer_target=$3 AND p.payment_provider=$4 AND p.pos_device_code IS NOT DISTINCT FROM $5`,
+        [id, userId, this.target, this.providerName, this.posDevice ?? null],
       )
     ).rows[0];
     if (!row) throw new NotFoundException("İşlem bulunamadı.");
@@ -151,10 +154,10 @@ export class PersistentPaymentService {
     const result = await this.db.query<PaymentRow>(
       `SELECT p.*, (j.status='reconciliation') AS transfer_needs_review
         FROM payment_orders p LEFT JOIN transfer_jobs j ON j.payment_id=p.id
-        WHERE p.user_id=$1 AND p.transfer_target=$2 AND p.payment_provider=$3
+        WHERE p.user_id=$1 AND p.transfer_target=$2 AND p.payment_provider=$3 AND p.pos_device_code IS NOT DISTINCT FROM $4
         AND (p.status='transferring' OR (p.status='pending' AND (p.payment_provider='odeal' OR p.created_at>now()-interval '24 hours')))
         ORDER BY p.created_at DESC LIMIT 5`,
-      [userId, this.target, this.providerName],
+      [userId, this.target, this.providerName, this.posDevice ?? null],
     );
     return result.rows.map(publicPayment);
   }
@@ -304,6 +307,13 @@ export class PersistentPaymentService {
     });
   }
   async processPayment(paymentId: string, retryForUser?: string): Promise<void> {
+    if (!this.posDevice) return this.runTransfer(paymentId, retryForUser);
+    const previous = transferLanes.get(this.db) ?? Promise.resolve();
+    const transfer = previous.then(() => this.runTransfer(paymentId, retryForUser));
+    transferLanes.set(this.db, transfer.catch(() => {}));
+    return transfer;
+  }
+  private async runTransfer(paymentId: string, retryForUser?: string): Promise<void> {
     const leaseToken = randomUUID();
     const claimed = await this.db.query<{ attempts: number }>(
       `UPDATE transfer_jobs SET status='processing',lease_token=$2,
@@ -393,7 +403,7 @@ export class PersistentPaymentService {
     if (this.draining) return this.draining;
     this.draining = (async () => {
       const jobs = await this.db.query<{ payment_id: string }>(
-        `SELECT j.payment_id FROM transfer_jobs j JOIN payment_orders p ON p.id=j.payment_id WHERE p.transfer_target=$1 AND p.payment_provider=$2 AND p.status='transferring' AND p.pos_cancelled_at IS NULL AND ((j.status IN ('queued','retry') AND j.next_attempt_at<=now()) OR (j.status='processing' AND j.lease_until<now())) ORDER BY j.next_attempt_at LIMIT 25`,
+        `SELECT j.payment_id FROM transfer_jobs j JOIN payment_orders p ON p.id=j.payment_id WHERE p.transfer_target=$1 AND p.payment_provider=$2 AND p.status='transferring' AND p.pos_cancelled_at IS NULL AND ((j.status IN ('queued','retry') AND j.next_attempt_at<=now()) OR (j.status='processing' AND j.lease_until<now())) ORDER BY j.next_attempt_at, p.created_at, p.id LIMIT 25`,
         [this.target, this.providerName],
       );
       for (const job of jobs.rows) await this.processPayment(job.payment_id);
@@ -419,13 +429,13 @@ export class PersistentPaymentService {
     })().finally(() => { this.reconciling = undefined; });
     return this.reconciling;
   }
-  startWorker(lookup?: OdealPaymentProvider["findCapturedPayment"]) {
-    this.timer = setInterval(() => {
+  startWorker(lookup?: OdealPaymentProvider["findCapturedPayment"], drainTransfers = true) {
+    if (drainTransfers) this.timer = setInterval(() => {
       void this.drain().catch(() =>
         console.error(JSON.stringify({ event: "transfer.worker_unavailable" })),
       );
     }, 2000);
-    this.timer.unref();
+    this.timer?.unref();
     if (lookup) {
       const check = () => void this.reconcileOdeal(lookup).catch(error =>
         console.warn(JSON.stringify({ event: "odeal.report_reconciliation_failed", reason: error instanceof Error ? error.name : "unknown" })),

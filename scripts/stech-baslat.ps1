@@ -11,6 +11,7 @@ $posHome = Join-Path $env:LOCALAPPDATA 'STech-OdealTunnel'
 $bridgeHome = Join-Path $serverHome 'Bridge'
 $bridgeConfig = Join-Path $bridgeHome 'connection.json'
 $pairingFile = Join-Path $serverHome 'pairing.json'
+$secondPairingFile = Join-Path $serverHome 'kiosk-2.json'
 $walletEnv = Join-Path $serverHome 'wallet-api.env'
 $hostedAdminEnv = Join-Path $serverHome 'hosted-admin.env'
 $activeKiosk = Join-Path $project 'kiosk\dist\current'
@@ -228,9 +229,11 @@ function Start-Api($Config, $Pairing) {
         $cwd = Join-Path $project 'apps\api'
         $oldAdminDir = $env:ADMIN_WEB_DIR
         $oldKioskDir = $env:KIOSK_UI_DIR
+        $oldSecondConfig = $env:KIOSK_SECOND_CONFIG
         try {
             $env:ADMIN_WEB_DIR = Join-Path $project 'apps\admin'
             $env:KIOSK_UI_DIR = Join-Path $project 'kiosk\ui'
+            $env:KIOSK_SECOND_CONFIG = if (Test-Path -LiteralPath $secondPairingFile -PathType Leaf) { $secondPairingFile }
             $arguments = @(('"' + "--env-file=$envFile" + '"'))
             if (Test-Path -LiteralPath $walletEnv -PathType Leaf) {
                 $arguments += ('"' + "--env-file=$walletEnv" + '"')
@@ -240,10 +243,11 @@ function Start-Api($Config, $Pairing) {
             }
             $arguments += ('"' + $entry + '"')
             $started = Start-Background $node $arguments $cwd (Join-Path $serverHome 'launcher-api') { Get-Health $healthUrl }
-            if (!$started.kioskTicketRedeem -or !$started.kioskFriends -or !$started.kioskSlots) { throw 'Baslatilan API gerekli kiosk ozelliklerini desteklemiyor.' }
+            if (!$started.kioskTicketRedeem -or !$started.kioskFriends -or !$started.kioskSlots -or !$started.kioskMultiDevice) { throw 'Baslatilan API gerekli kiosk ozelliklerini desteklemiyor.' }
         } finally {
             $env:ADMIN_WEB_DIR = $oldAdminDir
             $env:KIOSK_UI_DIR = $oldKioskDir
+            $env:KIOSK_SECOND_CONFIG = $oldSecondConfig
         }
     }
     $connected = Get-Health "http://127.0.0.1:$port/api/v1/kiosk/pc-availability" @{ 'X-Kiosk-Key' = $Pairing.deviceKey }
@@ -289,6 +293,18 @@ function Start-Lan($Pairing) {
         !$address -or $address -notin $localAddresses) {
         throw 'A veya B adresi eksik veya degismis. Menuden 3 ile eslestirmeyi yeniden olustur.'
     }
+    $allowed = @($address, $parsed.IPAddressToString)
+    if (Test-Path -LiteralPath $secondPairingFile -PathType Leaf) {
+        $extra = Get-Content -LiteralPath $secondPairingFile -Raw | ConvertFrom-Json
+        $secondIp = $null
+        if (![Net.IPAddress]::TryParse([string]$extra.ip, [ref]$secondIp) -or
+            $secondIp.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+            $secondIp.IPAddressToString -in $allowed) {
+            throw 'Ikinci kioskun IPv4 adresi gecersiz veya diger bir cihazla ayni.'
+        }
+        $allowed += $secondIp.IPAddressToString
+    }
+    $allowedIPs = $allowed -join ' '
     $caddyExe = (Get-Command caddy.exe -ErrorAction Stop).Source
     $site = "https://${address}:8443"
     $config = Join-Path $serverHome 'Caddyfile'
@@ -316,7 +332,7 @@ $site {
     bind $address
     tls internal
     @kiosk {
-        remote_ip $address $parsed
+        remote_ip $allowedIPs
         path /api/v1/health /api/v1/kiosk/* /api/v1/me/dashboard /api/v1/me/transactions /api/v1/me/session-history /api/v1/auth/logout
     }
     handle @kiosk {
@@ -441,6 +457,14 @@ try {
         if ($api.walletSync) { Write-Host ('Wallet MySQL: ' + $api.walletSync) }
         Write-Host ('Yerel kiosk: ' + $(if (Get-Process kiosk -ErrorAction SilentlyContinue) { 'acik' } else { 'kapali' }))
         if (!$api) { Write-Host 'B kiosku: backend kapali, durum alinamadi.' }
+        elseif (@($api.kiosks | Where-Object { $_.id }).Count -gt 0) {
+            foreach ($device in $api.kiosks) {
+                $online = $device.lastSeenAt -and ([DateTimeOffset]::Now - [DateTimeOffset]$device.lastSeenAt).TotalSeconds -le 90
+                $connection = if ($online) { 'bagli' } else { 'baglanti sinyali yok' }
+                $pos = if ($device.pos) { 'atanmis' } else { 'atanmamis' }
+                Write-Host ('{0}: {1} | POS: {2}' -f $device.id, $connection, $pos)
+            }
+        }
         elseif ($api.kioskLastSeenAt) {
             $lastSeen = [DateTimeOffset]$api.kioskLastSeenAt
             $connected = ([DateTimeOffset]::Now - $lastSeen).TotalSeconds -le 90

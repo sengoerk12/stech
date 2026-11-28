@@ -11,9 +11,11 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 // Starts member sessions through the operator's PanCafe UI, not by
-// editing TERMINALS. Input is sent as window messages first (no pointer or focus change). Only the verified Turkish v3.3.2 layout is supported.
+// editing TERMINALS. The guarded UI path sends messages to PanCafe's specific controls.
+// Only the verified Turkish v3.3.2 layout is supported.
 public static partial class PanCafeNativeSessions {
     const string WakingMessage = "Bilgisayarınız açılıyor. PanCafe bağlantısı bekleniyor…";
+    const string OperatorWaitMessage = "PanCafe hazır olduğunda işlem otomatik devam edecek…";
     const string PendingMessage = "PanCafe’de oturumunuz başlatılıyor…";
     const string InsufficientBalance = "Bakiyeniz yetersiz. En az 10 TL gerekli.";
     static readonly TimeSpan UnattendedWait = TimeSpan.FromMinutes(10);
@@ -25,7 +27,7 @@ public static partial class PanCafeNativeSessions {
         public string LastPollUtc, LastWakeUtc, TerminalMac;
         public int MemberId, TerminalId;
         public string InputMode;
-        public bool StartedWhileOffline;
+        public bool StartedWhileOffline, WaitingForOperator;
         public string Status = "pending", Message = "";
     }
 
@@ -97,6 +99,7 @@ public static partial class PanCafeNativeSessions {
             try { acquired = mutex.WaitOne(0); }
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired) return Result("pending", "");
+            OperatorInputScope input = null;
             try {
                 string directory = Path.Combine(folder, "session-operations");
                 Directory.CreateDirectory(directory);
@@ -113,7 +116,7 @@ public static partial class PanCafeNativeSessions {
                     if (!background) {
                         receipt.LastPollUtc = DateTime.UtcNow.ToString("o");
                         Save(path, receipt);
-                        return Result("waking", WakingMessage);
+                        return Waiting(receipt);
                     }
                 }
                 if (receipt == null) {
@@ -139,7 +142,7 @@ public static partial class PanCafeNativeSessions {
                     return Finish(path, receipt, "unsupported", "Bu bilgisayarda üye oturumu kapalı.");
                 bool needsWake = !IsOnline(database, terminal);
                 if (receipt != null && (terminal["NAME"] != receipt.TerminalName ||
-                    terminal["MAC"] != receipt.TerminalMac || terminal["ISVIRTUAL"] != "0"))
+                    terminal["MAC"] != receipt.TerminalMac || (!receipt.WaitingForOperator && terminal["ISVIRTUAL"] != "0")))
                     return Finish(path, receipt, "failed", "Bilgisayarın PanCafe ayarları değişti.");
                 if (terminal["TERMINALSTATUS"] != "1" &&
                     (!(needsWake || receipt != null) || terminal["TERMINALSTATUS"] != "0"))
@@ -162,9 +165,12 @@ public static partial class PanCafeNativeSessions {
 
                 NativeUi prepared;
                 try {
+                    input = new OperatorInputScope();
                     prepared=new NativeUi(database);
                     prepared.CheckIdle();
                     prepared.OpenTerminalScreen(terminal["NAME"]);
+                } catch (OperatorBusyException) {
+                    return WaitForOperator(path, receipt ?? NewWakeReceipt(operation, terminal, terminalId, memberId, username), terminal, needsWake);
                 } catch(Exception error) {
                     File.WriteAllText(Path.Combine(folder,"session-readiness-error.json"),serializer.Serialize(new {
                         operationId=operation.ToString(),stage="before-submit",message=error.Message,at=DateTime.UtcNow.ToString("o") }));
@@ -177,10 +183,11 @@ public static partial class PanCafeNativeSessions {
                         bool physical = terminal["ISVIRTUAL"] == "0";
                         if (physical) ui.Background = false;
                         try { ui.Prepare(terminal["NAME"], username, physical); }
+                        catch (OperatorBusyException) { throw; }
                         catch (InvalidOperationException) {
                             if (!ui.Background) throw;
-                            // PanCafe did not accept window messages. Nothing was submitted yet:
-                            // close whatever opened and retry once with real mouse/keyboard input.
+                            // Reopen the menu with the verified foreground layout.
+                            // The guarded attempt still sends messages to the selected controls.
                             ui.CancelPicker();
                             Thread.Sleep(600);
                             ui.Background = false;
@@ -199,17 +206,24 @@ public static partial class PanCafeNativeSessions {
                             balanceCheck == "insufficient_balance" ? InsufficientBalance : "Üyeliğini kontrol et.");
                         if (!MemberCanStart(database, client, memberId, username))
                             return Finish(path, receipt, "member", "Üyeliğini, bakiyeni ve açık oturumlarını kontrol et.");
-                        receipt = new Receipt { OperationId = operation.ToString(), MemberId = memberId,
+                        var submission = new Receipt { OperationId = operation.ToString(), MemberId = memberId,
                             TerminalId = terminalId, Username = username, TerminalName = current["NAME"],
                             BeforeDate = current["STARTDATE"], BeforeTime = current["STARTTIME"],
                             CreatedAtUtc = DateTime.UtcNow.ToString("o"),
                             InputMode = ui.Background ? "background" : "foreground",
                             StartedWhileOffline = !online };
-                        // Persist before accepting the picker. A lost response must never re-submit it.
-                        Save(path, receipt);
-                        ui.Accept(username, physical);
+                        // Persist after checking the target and before posting the confirmation.
+                        ui.Accept(username, physical, () => {
+                            Save(path, submission);
+                            receipt = submission;
+                        });
                         if (!online && !IsOnline(database, current)) PanCafeConnectedTerminals.Wake(current["MAC"]);
                         return Observe(database, client, path, receipt);
+                    } catch (OperatorBusyException) {
+                        // After recording a possible submission, observe PanCafe rather than dispatch twice.
+                        if (receipt != null && receipt.Status == "pending")
+                            return Result("pending", PendingMessage);
+                        return WaitForOperator(path, receipt ?? NewWakeReceipt(operation, terminal, terminalId, memberId, username), terminal, needsWake);
                     } catch (Exception error) {
                         File.WriteAllText(Path.Combine(folder,"session-readiness-error.json"),serializer.Serialize(new {
                             operationId=operation.ToString(),stage=receipt != null && receipt.Status == "pending" ? "submit" : "prepare",
@@ -222,7 +236,10 @@ public static partial class PanCafeNativeSessions {
                             error.Message : "PanCafe arayüzüne ulaşılamadı.");
                     } finally { ui.CancelPicker(); }
                 }
-            } finally { mutex.ReleaseMutex(); }
+            } finally {
+                if (input != null) input.Dispose();
+                mutex.ReleaseMutex();
+            }
         }
     }
 
@@ -267,6 +284,16 @@ public static partial class PanCafeNativeSessions {
             TerminalId = terminalId, Username = username, TerminalName = terminal["NAME"],
             TerminalMac = terminal["MAC"], Status = "waking", LastPollUtc = DateTime.UtcNow.ToString("o") };
     }
+    static List<Dictionary<string,string>> WaitForOperator(string path, Receipt receipt, Dictionary<string,string> terminal, bool needsWake) {
+        receipt.WaitingForOperator = true;
+        Save(path, receipt);
+        return WakeForSession(path, receipt, terminal, needsWake);
+    }
+    static List<Dictionary<string,string>> Waiting(Receipt receipt) {
+        return receipt.WaitingForOperator
+            ? Result("pending", OperatorWaitMessage)
+            : Result("waking", WakingMessage);
+    }
     static List<Dictionary<string,string>> WakeForSession(string path, Receipt receipt, Dictionary<string,string> terminal, bool needsWake) {
         if (needsWake && OlderThan(receipt.LastWakeUtc, TimeSpan.FromSeconds(20))) {
             if (PanCafeConnectedTerminals.WakePacket(terminal["MAC"]) == null)
@@ -275,7 +302,7 @@ public static partial class PanCafeNativeSessions {
             Save(path, receipt);
             PanCafeConnectedTerminals.Wake(terminal["MAC"]);
         }
-        return Result("waking", WakingMessage);
+        return Waiting(receipt);
     }
     static bool CanSubmit(Dictionary<string,string> current, Dictionary<string,string> original, bool allowOffline) {
         return (current["TERMINALSTATUS"] == "1" || (allowOffline && current["TERMINALSTATUS"] == "0")) && current["NAME"] == original["NAME"] &&
@@ -300,8 +327,11 @@ public static partial class PanCafeNativeSessions {
             || DateTime.UtcNow - timestamp.ToUniversalTime() >= age;
     }
     static List<Dictionary<string,string>> Observe(string db, string client, string path, Receipt receipt) {
-        if (receipt.Status == "waking")
-            return Result("waking", WakingMessage);
+        if (receipt.Status == "waking") {
+            if (receipt.WaitingForOperator && OlderThan(receipt.LastPollUtc, UnattendedWait))
+                return Finish(path, receipt, "failed", "PanCafe bekleme süresi doldu. Bilgisayarı yeniden seçebilirsin.");
+            return Waiting(receipt);
+        }
         if (receipt.Status != "pending") return Result(receipt.Status, receipt.Message);
 
         var terminal = FindTerminal(db, client, receipt.TerminalId);
@@ -344,18 +374,22 @@ public static partial class PanCafeNativeSessions {
             { "RESULT_CODE", code }, { "MESSAGE", message ?? "" } } };
     }
 
+    sealed class NativeWindowUnavailableException : InvalidOperationException {
+        public NativeWindowUnavailableException(string message) : base(message) { }
+    }
+
     sealed partial class NativeUi : IDisposable {
         readonly IntPtr main;
         IntPtr list;
         readonly uint processId;
         IntPtr picker;
-        // Background mode drives PanCafe with window messages only: the mouse pointer, keyboard
-        // focus and foreground window stay untouched. Real input remains as an automatic fallback;
-        // STECH_PANCAFE_FOREGROUND_INPUT=1 forces it.
+        bool sessionMenuOpened;
+        // Background mode uses a targeted click on the terminal list. The foreground
+        // fallback also checks that the control is unobstructed before posting its click.
         public bool Background = Environment.GetEnvironmentVariable("STECH_PANCAFE_FOREGROUND_INPUT") != "1";
         public NativeUi(string database) {
             string executable = Path.Combine(Directory.GetParent(Path.GetDirectoryName(database)).FullName, "pncserver.exe");
-            var candidates = Windows("TSrvMainFrm", 0, true);
+            var candidates = Windows("TSrvMainFrm", 0, false);
             var matches = new List<IntPtr>();
             foreach (var h in candidates) {
                 uint id; GetWindowThreadProcessId(h, out id);
@@ -366,18 +400,25 @@ public static partial class PanCafeNativeSessions {
             if (matches.Count != 1) throw new InvalidOperationException("PanCafe yönetim ekranını açıp tekrar dene.");
             main = matches[0];
             GetWindowThreadProcessId(main, out processId);
+            if (operatorInput != null) operatorInput.PanCafeProcess = processId;
             bool supported = false;
-            foreach (var h in Children(main)) if (Class(h) == "TspSkinStatusPanel" && Caption(h) == "v3.3.2") supported = true;
+            foreach (var h in Children(main, false)) if (Class(h) == "TspSkinStatusPanel" && Caption(h) == "v3.3.2") supported = true;
             if (!supported) throw new InvalidOperationException("Bu PanCafe sürümü için oturum açma bağlantısı doğrulanmamış.");
         }
         public void CheckIdle() {
+            RestoreWindow(main);
             var members = MemberWindow();
-            if ((GetLastActivePopup(main) != main && members == IntPtr.Zero) ||
-                Windows("TspSkinPopupWindow", processId, true).Count > 0)
+            var popup = GetLastActivePopup(main);
+            if ((popup != main && popup != members && IsWindowVisible(popup)) ||
+                (!IsWindowEnabled(main) && members == IntPtr.Zero) ||
+                Windows("TspSkinPopupWindow", processId, true).Count > 0) {
+                if (OperatorInputScope.IsActive) throw new OperatorBusyException();
                 throw new InvalidOperationException("PanCafe'deki açık pencereyi veya menüyü kapatıp tekrar dene.");
+            }
             Activate(members == IntPtr.Zero ? main : members);
         }
         public void Prepare(string terminal, string username, bool physical) {
+            CheckOperatorInput();
             using (var items = new RemoteList(list, processId)) {
                 int selected = items.Find(terminal);
                 items.Select(selected);
@@ -385,7 +426,10 @@ public static partial class PanCafeNativeSessions {
                 if (Background) MenuClick(list, (bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
                 else Click(main, list, (bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2);
             }
-            PostMessage(list, 0x7B, list, new IntPtr(-1));
+            CheckOperatorInput();
+            if (!PostMessage(list, 0x7B, list, new IntPtr(-1)))
+                throw new InvalidOperationException("PanCafe oturum menüsü açılamadı.");
+            sessionMenuOpened = true;
             var context = WaitWindow("TspSkinPopupWindow", IntPtr.Zero);
             Rect contextRect; GetClientRect(context, out contextRect);
             MenuClick(context, contextRect.Right / 2, 12);
@@ -404,16 +448,12 @@ public static partial class PanCafeNativeSessions {
             foreach (var h in Children(picker)) if (Class(h) == "TspSkinComboBox" && Caption(h) == "Kullanıcı Adı") usernameSearch = true;
             if (!usernameSearch) throw new InvalidOperationException("PanCafe arama kriterini Kullanıcı Adı olarak seç.");
             var edit = Child(picker, "TspSkinEdit", null);
-            if (Background) {
-                IntPtr ignored;
-                if (SendText(edit, 12, IntPtr.Zero, new StringBuilder(""), 2, 2000, out ignored) == IntPtr.Zero)
-                    throw new InvalidOperationException("PanCafe üye araması yapılamadı.");
-                foreach (char letter in username) { Message(edit, 0x102, letter, new IntPtr(1)); Thread.Sleep(40); }
-            } else TypeFocused(picker, edit, username);
+            WriteControlText(picker, edit, username, true);
             Thread.Sleep(400);
             if (Text(edit) != username) throw new InvalidOperationException("PanCafe üye araması doğrulanamadı.");
         }
-        public void Accept(string username, bool preferResult = false) {
+        public void Accept(string username, bool preferResult = false, Action recordSubmission = null) {
+            CheckOperatorInput();
             if (!IsWindowVisible(picker)) throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
             var edit = Child(picker, "TspSkinEdit", null);
             if (Text(edit) != username) throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
@@ -423,31 +463,24 @@ public static partial class PanCafeNativeSessions {
                 using (var items = new RemoteList(results, processId)) {
                     items.Select(row);
                     var bounds = items.Bounds(row);
-                    Click(picker, results, (bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2, true);
+                    Click(picker, results, (bounds.Left + bounds.Right) / 2, (bounds.Top + bounds.Bottom) / 2, true, recordSubmission);
                 }
                 return;
             }
-            if (Background) {
-                PostMessage(edit, 0x100, new IntPtr(13), new IntPtr(0x001C0001));
-                PostMessage(edit, 0x101, new IntPtr(13), new IntPtr(unchecked((int)0xC01C0001)));
-                for (int i = 0; i < 20; i++) { Thread.Sleep(100); if (!IsWindowVisible(picker)) return; }
-                // The posted Enter was ignored and the picker is still open: confirm it with real input.
-                if (!IsWindowVisible(picker)) return;
-                Background = false;
-                if (Text(edit) != username) throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
-            }
             FocusControl(picker, edit);
             if (Text(edit) != username) throw new InvalidOperationException("PanCafe üye seçimi değişmiş.");
-            PressKey(13);
-            for (int i = 0; i < 20 && IsWindowVisible(picker); i++) Thread.Sleep(100);
+            PostControlKey(edit, 13, 0x1C, recordSubmission);
         }
         public void CancelPicker() {
             if (picker != IntPtr.Zero && IsWindowVisible(picker)) PostMessage(picker, 0x10, IntPtr.Zero, IntPtr.Zero);
-            PostMessage(main, 0x1F, IntPtr.Zero, IntPtr.Zero);
+            if (sessionMenuOpened) PostMessage(main, 0x1F, IntPtr.Zero, IntPtr.Zero);
+            picker = IntPtr.Zero;
+            sessionMenuOpened = false;
         }
         public void Dispose() { }
         IntPtr WaitWindow(string kind, IntPtr excluded) {
             for (int i = 0; i < 20; i++) {
+                CheckOperatorInput();
                 var matches = Windows(kind, processId, true);
                 matches.Remove(excluded);
                 if (matches.Count == 1) return matches[0];
@@ -458,11 +491,97 @@ public static partial class PanCafeNativeSessions {
         }
     }
 
-    static void MenuClick(IntPtr h, int x, int y) {
+    [ThreadStatic] static OperatorInputScope operatorInput;
+
+    sealed class OperatorBusyException : InvalidOperationException {
+        public OperatorBusyException() : base(OperatorWaitMessage) { }
+    }
+
+    sealed class OperatorInputScope : IDisposable {
+        readonly uint inputTick;
+        bool hasPanCafeFocus;
+        public uint PanCafeProcess { private get; set; }
+        public static bool IsActive { get { return operatorInput != null; } }
+        public OperatorInputScope() {
+            inputTick = ReadLastInputTick();
+            operatorInput = this;
+        }
+        public void Check(IntPtr foreground, bool allowDesktop) {
+            if (ReadLastInputTick() != inputTick) throw new OperatorBusyException();
+
+            uint foregroundProcess;
+            GetWindowThreadProcessId(foreground, out foregroundProcess);
+            if (PanCafeProcess != 0 && foregroundProcess == PanCafeProcess) {
+                hasPanCafeFocus = true;
+                return;
+            }
+            // The desktop can hand focus to PanCafe at the start. Once PanCafe is
+            // active, any switch away yields to the cashier.
+            if (allowDesktop && !hasPanCafeFocus && IsDesktopForeground(foreground, foregroundProcess)) return;
+            throw new OperatorBusyException();
+        }
+        public void Dispose() { operatorInput = null; }
+    }
+
+    static bool IsDesktopForeground(IntPtr foreground, uint foregroundProcess) {
+        var shell = GetShellWindow();
+        if (shell == IntPtr.Zero || foreground == IntPtr.Zero) return false;
+        if (foreground == shell) return true;
+        uint shellProcess;
+        GetWindowThreadProcessId(shell, out shellProcess);
+        return foregroundProcess == shellProcess && Class(foreground) == "WorkerW";
+    }
+
+    static uint ReadLastInputTick() {
+        var input = new LastInputInfo { Size = (uint)Marshal.SizeOf(typeof(LastInputInfo)) };
+        if (!GetLastInputInfo(ref input)) throw new OperatorBusyException();
+        return input.Tick;
+    }
+
+    static void CheckOperatorInput() {
+        if (operatorInput != null) operatorInput.Check(GetForegroundWindow(), false);
+    }
+
+    static void WriteControlText(IntPtr root, IntPtr edit, string value, bool useCharacterInput) {
+        CheckOperatorInput();
+        if (!IsChild(root, edit) || !IsWindowVisible(edit) || !IsWindowEnabled(edit))
+            throw new InvalidOperationException("PanCafe giriş alanı doğrulanamadı.");
+        // Keep WM_CHAR for inputs whose PanCafe OnKeyPress handlers are necessary.
+        if (!useCharacterInput && OperatorInputScope.IsActive && TrySetUiAutomationValue(edit, value)) return;
+        IntPtr result;
+        var text = new StringBuilder(useCharacterInput ? "" : value);
+        if (SendText(edit, 12, IntPtr.Zero, text, 2, 2000, out result) == IntPtr.Zero)
+            throw new InvalidOperationException("PanCafe giriş alanına yazılamadı.");
+        if (useCharacterInput) {
+            foreach (char character in value) {
+                CheckOperatorInput();
+                Message(edit, 0x102, character, new IntPtr(1));
+            }
+        }
+        CheckOperatorInput();
+    }
+
+    static void PostControlKey(IntPtr target, int key, int keyFlags, Action recordSubmission = null) {
+        CheckOperatorInput();
+        int state = (keyFlags << 16) | 1;
+        if (recordSubmission != null) recordSubmission();
+        if (!PostMessage(target, 0x100, new IntPtr(key), new IntPtr(state)))
+            throw new InvalidOperationException("PanCafe kontrolüne tuş gönderilemedi.");
+        PostMessage(target, 0x101, new IntPtr(key), new IntPtr(unchecked((int)0xC0000000) | state));
+    }
+
+    static void MenuClick(IntPtr h, int x, int y, bool doubleClick = false, Action recordSubmission = null) {
+        CheckOperatorInput();
         var point = new IntPtr((y << 16) | (x & 65535));
+        if (recordSubmission != null) recordSubmission();
         PostMessage(h, 0x200, IntPtr.Zero, point);
-        PostMessage(h, 0x201, new IntPtr(1), point);
+        if (!PostMessage(h, 0x201, new IntPtr(1), point))
+            throw new InvalidOperationException("PanCafe kontrolüne tıklama gönderilemedi.");
         PostMessage(h, 0x202, IntPtr.Zero, point);
+        if (doubleClick) {
+            PostMessage(h, 0x203, new IntPtr(1), point);
+            PostMessage(h, 0x202, IntPtr.Zero, point);
+        }
         Thread.Sleep(250);
     }
     static void Key(ushort key,bool up) {
@@ -483,9 +602,12 @@ public static partial class PanCafeNativeSessions {
         uint owner;
         uint target = GetWindowThreadProcessId(control, out owner);
         uint current = GetCurrentThreadId();
+        CheckOperatorInput();
         bool attached = target != current && AttachThreadInput(current, target, true);
         try {
+            CheckOperatorInput();
             SetFocus(control);
+            CheckOperatorInput();
             CheckFocus(control);
         } finally {
             if (attached) AttachThreadInput(current, target, false);
@@ -506,35 +628,78 @@ public static partial class PanCafeNativeSessions {
         }
     }
     static void PressKey(ushort key) { Key(key, false); Key(key, true); }
+    static void RestoreWindow(IntPtr h) {
+        if (operatorInput != null) operatorInput.Check(GetForegroundWindow(), true);
+        if (IsWindowVisible(h) && !IsIconic(h)) return;
+        // PanCafe can hide its main form on minimize. Restore the verified form before
+        // inspecting dialogs or using screen coordinates.
+        const int restore = 9;
+        const int showWithoutActivation = 4;
+        ShowWindowAsync(h, OperatorInputScope.IsActive ? showWithoutActivation : restore);
+        var timeout = Stopwatch.StartNew();
+        while (!IsWindowVisible(h) || IsIconic(h)) {
+            if (operatorInput != null) operatorInput.Check(GetForegroundWindow(), true);
+            if (timeout.ElapsedMilliseconds >= 2000)
+                throw new NativeWindowUnavailableException("PanCafe yönetim penceresi açılamadı.");
+            Thread.Sleep(50);
+        }
+        Thread.Sleep(120);
+    }
     static void Activate(IntPtr h) {
-        if (GetForegroundWindow() == h) return;
+        RestoreWindow(h);
+        var foregroundWindow = GetForegroundWindow();
+        if (operatorInput != null) operatorInput.Check(foregroundWindow, true);
+        if (foregroundWindow == h) return;
         // The HTTP worker has no message loop. AttachThreadInput requires one.
         NativeMessage message; PeekMessage(out message,IntPtr.Zero,0,0,0);
         uint ignored;
-        uint foreground = GetWindowThreadProcessId(GetForegroundWindow(), out ignored);
+        uint foreground = GetWindowThreadProcessId(foregroundWindow, out ignored);
         uint target = GetWindowThreadProcessId(h,out ignored);
         uint current = GetCurrentThreadId();
         bool attached = foreground != 0 && foreground != current && AttachThreadInput(current, foreground, true);
         bool targetAttached=target!=0 && target!=current && target!=foreground && AttachThreadInput(current,target,true);
         try {
-            if (IsIconic(h)) ShowWindow(h, 9);
+            if (operatorInput != null) operatorInput.Check(GetForegroundWindow(), true);
             if (!SetForegroundWindow(h) && GetForegroundWindow() != h) {
+                if (operatorInput != null) operatorInput.Check(GetForegroundWindow(), true);
                 BringWindowToTop(h);
                 SetActiveWindow(h);
-                if (!SetForegroundWindow(h) && GetForegroundWindow() != h)
-                    throw new InvalidOperationException("PanCafe yönetim ekranını öne getirip tekrar dene.");
+                SetForegroundWindow(h);
             }
         } finally {
             if(targetAttached)AttachThreadInput(current,target,false);
             if (attached) AttachThreadInput(current, foreground, false);
         }
+        // Foreground changes to another GUI thread can finish asynchronously.
+        var timeout = Stopwatch.StartNew();
+        while (GetForegroundWindow() != h) {
+            if (operatorInput != null) operatorInput.Check(GetForegroundWindow(), true);
+            if (timeout.ElapsedMilliseconds >= 500) {
+                if (OperatorInputScope.IsActive) throw new OperatorBusyException();
+                throw new NativeWindowUnavailableException("PanCafe yönetim ekranı öne alınamadı.");
+            }
+            Thread.Sleep(30);
+        }
         Thread.Sleep(120);
     }
-    static void Click(IntPtr root, IntPtr target, int x, int y, bool doubleClick = false) {
+    static void Click(IntPtr root, IntPtr target, int x, int y, bool doubleClick = false, Action recordSubmission = null) {
         Activate(root);
         Point point = new Point { X = x, Y = y }, before;
         if (!IsWindowVisible(target) || !ClientToScreen(target, ref point) || !GetCursorPos(out before))
             throw new InvalidOperationException("PanCafe kontrolüne ulaşılamadı.");
+        if (OperatorInputScope.IsActive) {
+            if (GetForegroundWindow() != root) throw new OperatorBusyException();
+            var hit = WindowFromPoint(point);
+            if (hit != target) {
+                uint owner, hitOwner;
+                GetWindowThreadProcessId(root, out owner);
+                GetWindowThreadProcessId(hit, out hitOwner);
+                if (hitOwner != owner) throw new OperatorBusyException();
+                throw new InvalidOperationException("PanCafe ekranının önünde başka bir pencere var.");
+            }
+            MenuClick(target, x, y, doubleClick, recordSubmission);
+            return;
+        }
         if (!SetCursorPos(point.X, point.Y)) throw new InvalidOperationException("PanCafe kontrolü seçilemedi.");
         try {
             Thread.Sleep(60);
@@ -579,9 +744,9 @@ public static partial class PanCafeNativeSessions {
         }, IntPtr.Zero);
         return result;
     }
-    static List<IntPtr> Children(IntPtr parent) {
+    static List<IntPtr> Children(IntPtr parent, bool visible = true) {
         var result = new List<IntPtr>();
-        EnumChildWindows(parent, delegate(IntPtr h, IntPtr data) { if (IsWindowVisible(h)) result.Add(h); return true; }, IntPtr.Zero);
+        EnumChildWindows(parent, delegate(IntPtr h, IntPtr data) { if (!visible || IsWindowVisible(h)) result.Add(h); return true; }, IntPtr.Zero);
         return result;
     }
     static IntPtr Child(IntPtr parent, string kind, string caption) {
@@ -710,6 +875,9 @@ public static partial class PanCafeNativeSessions {
     [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] static extern bool EnumWindows(Callback callback, IntPtr data);
     [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, Callback callback, IntPtr data);
+    [StructLayout(LayoutKind.Sequential)]
+    struct LastInputInfo { public uint Size, Tick; }
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LastInputInfo info);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder value, int size);
@@ -726,8 +894,9 @@ public static partial class PanCafeNativeSessions {
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] static extern IntPtr SetActiveWindow(IntPtr h);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] static extern IntPtr GetLastActivePopup(IntPtr h);
-    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int command);
+    [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h, int command);
     [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint first, uint second, bool attach);

@@ -224,7 +224,7 @@ END";
                 throw new InvalidOperationException("PanCafe bilet satış penceresi öne getirilemedi.");
             ticketInput = ExactlyOne(Children(ticketDialog).FindAll(h =>
                 IsWindowVisible(h) && IsWindowEnabled(h) && Class(h).EndsWith("Edit", StringComparison.Ordinal)), "Bilet No/Barkod");
-            try { SetText(ticketInput, barcode); }
+            try { WriteControlText(ticketDialog, ticketInput, barcode, false); }
             catch (InvalidOperationException) { /* Some PanCafe input controls require typing. */ }
             if (Text(ticketInput) != barcode) TypeFocused(ticketDialog, ticketInput, barcode);
             if (Text(ticketInput) != barcode)

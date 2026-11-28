@@ -68,11 +68,16 @@ async function writeIfCurrent(doc: WalletSnapshot, data: WalletData) {
 }
 
 async function publish(doc: WalletSnapshot, member: MemberSnapshot, status: Status, timestamp: () => unknown) {
-  await writeIfCurrent(doc, {
+  const next = {
     ...member,
-    updatedAt: timestamp(),
     balanceSync: { balanceKurus: member.balanceKurus, bonusKurus: member.bonusKurus, status },
-  });
+  };
+  const before = doc.data() ?? {};
+  const patch: WalletData = {};
+  for (const [field, value] of Object.entries(next)) {
+    if (JSON.stringify(before[field]) !== JSON.stringify(value)) patch[field] = value;
+  }
+  await writeIfCurrent(doc, { ...patch, updatedAt: timestamp() });
 }
 
 function savePending(doc: WalletSnapshot, baseline: Baseline, edit: Edit) {

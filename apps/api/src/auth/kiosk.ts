@@ -8,25 +8,35 @@ export interface KioskCardMap { cards: { cardHash: string; userId: string }[] }
 /** Provisioned by an operator, never by a customer-facing endpoint. */
 export class KioskCardAuth {
   constructor(
-    private deviceKey: string,
+    deviceKey: string,
     private map: KioskCardMap,
     private cafe: CafeSystemAdapter,
     private auth: PersistentAuthService,
+    secondDeviceKey?: string,
   ) {
     if (deviceKey.length < 40 || !Array.isArray(map.cards) || map.cards.some(c =>
       !/^[a-f0-9]{64}$/.test(c.cardHash) || typeof c.userId !== "string" || !c.userId.length))
       throw new Error("Invalid kiosk card provisioning");
     if (new Set(map.cards.map(c => c.cardHash)).size !== map.cards.length)
       throw new Error("Duplicate kiosk card mapping");
+    this.devices = new Map([["kiosk-1", this.digest(deviceKey)]]);
+    if (secondDeviceKey) this.devices.set("kiosk-2", this.digest(secondDeviceKey));
+  }
+  private devices: Map<string, Buffer>;
+  private digest(key: string) { return createHash("sha256").update(key).digest(); }
+  deviceId(key: string | string[] | undefined) {
+    if (typeof key !== "string") return undefined;
+    const actual = this.digest(key);
+    for (const [id, expected] of this.devices) if (timingSafeEqual(actual, expected)) return id;
+    return undefined;
   }
   isDevice(key: string | string[] | undefined) {
-    if (typeof key !== "string") return false;
-    const actual = createHash("sha256").update(key).digest();
-    const expected = createHash("sha256").update(this.deviceKey).digest();
-    return timingSafeEqual(actual, expected);
+    return this.deviceId(key) !== undefined;
   }
   verifyDevice(key: string | undefined) {
-    if (!this.isDevice(key)) throw new UnauthorizedException("Kiosk cihazı doğrulanamadı.");
+    const id = this.deviceId(key);
+    if (!id) throw new UnauthorizedException("Kiosk cihazı doğrulanamadı.");
+    return id;
   }
 
   async loginWithPassword(key: string | undefined, username: string, password: string) {

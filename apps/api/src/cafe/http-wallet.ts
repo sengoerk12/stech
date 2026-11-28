@@ -7,10 +7,14 @@ type DocumentKey = { collection: string; id: string };
 type SavedDocument = { id: string; revision: string; data: WalletData };
 type Read = DocumentKey & { revision: string | null };
 type Write = DocumentKey & { kind: "replace" | "merge" | "create" | "update" | "delete"; data?: WalletData; revision?: string };
+type Cursor = { epoch: string; revision: string; id?: string; until?: string };
+type Changes = { documents: SavedDocument[]; deleted: string[]; cursor: Cursor; more: boolean; reset: boolean };
+type CollectionCache = { documents: Map<string, SavedDocument>; cursor?: Cursor; pending?: Promise<{ docs: WalletSnapshot[] }> };
 type Action =
   | { action: "status" }
   | (DocumentKey & { action: "get" })
   | { action: "list"; collection: string; due?: number; limit?: number }
+  | { action: "changes"; collection: string; cursor?: Cursor }
   | { action: "commit"; reads: Read[]; writes: Write[] }
   | { action: "import"; documents: WalletImport[] };
 
@@ -23,6 +27,8 @@ class WalletHttpError extends Error {
 }
 
 export class HttpWallet {
+  private collections = new Map<string, CollectionCache>();
+  private changeFeed = false;
   private constructor(private address: URL, private key: KeyObject) {}
 
   static async open(url: string, privateKey: string, forImport = false) {
@@ -33,9 +39,10 @@ export class HttpWallet {
     if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1")
       throw new Error("Wallet signing key must use P-256");
     const store = new HttpWallet(address, key);
-    const { imported } = await store.request<{ imported: boolean }>({ action: "status" });
+    const { imported, changeFeed } = await store.request<{ imported: boolean; changeFeed?: boolean }>({ action: "status" });
     if (typeof imported !== "boolean") throw new Error("Invalid wallet status");
     if (!forImport && !imported) throw new Error("Wallet data import has not been completed");
+    store.changeFeed = changeFeed === true;
     return store;
   }
 
@@ -75,8 +82,40 @@ export class HttpWallet {
   }
 
   private async list(collection: string, due?: number, limit?: number) {
+    if (due === undefined && this.changeFeed) {
+      let cache = this.collections.get(collection);
+      if (!cache) { cache = { documents: new Map() }; this.collections.set(collection, cache); }
+      if (cache.pending) return cache.pending;
+      const work = this.refreshCollection(collection, cache);
+      cache.pending = work;
+      try { return await work; }
+      finally { cache.pending = undefined; }
+    }
     const { documents } = await this.request<{ documents: SavedDocument[] }>({ action: "list", collection, due, limit });
     return { docs: documents.map(item => this.snapshot(collection, item.id, item)) };
+  }
+
+  private async refreshCollection(collection: string, cache: CollectionCache) {
+    let documents = new Map(cache.documents);
+    let cursor = cache.cursor;
+    for (;;) {
+      const page = await this.request<Changes>({ action: "changes", collection, cursor });
+      if (!Array.isArray(page.documents) || page.documents.length > 100 || !Array.isArray(page.deleted) ||
+          typeof page.more !== "boolean" || typeof page.reset !== "boolean" || !page.cursor ||
+          typeof page.cursor.epoch !== "string" || !/^\d+$/.test(page.cursor.revision))
+        throw new Error("Invalid wallet change page");
+      if (page.reset) documents = new Map();
+      for (const id of page.deleted) documents.delete(id);
+      for (const document of page.documents) documents.set(document.id, document);
+      if (page.more && JSON.stringify(page.cursor) === JSON.stringify(cursor)) throw new Error("Wallet change cursor did not advance");
+      cursor = page.cursor;
+      if (!page.more) break;
+    }
+    // Failed pages never advance the successful checkpoint or expose a partial collection.
+    cache.documents = documents;
+    cache.cursor = cursor;
+    return { docs: Array.from(documents.values()).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      .map(item => this.snapshot(collection, item.id, item)) };
   }
 
   private document(collection: string, id: string): WalletDocument {

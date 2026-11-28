@@ -1,4 +1,5 @@
 'use strict';
+const isKioskDesignPreview = /^\/(?:wallet\/admin\/)?kiosk-preview(?:\/|$)/.test(location.pathname);
 // This module never receives authentication, balance or payment secrets.
 window.kioskDesign = {
     config: null, version: null, originalNav: null,
@@ -172,7 +173,7 @@ window.kioskDesign = {
         }
     },
     async refresh() {
-        if (location.pathname.startsWith('/kiosk-preview'))
+        if (isKioskDesignPreview)
             return;
         try {
             const response = await window.stech.call('design');
@@ -199,7 +200,7 @@ try {
         window.kioskDesign.accept(cached);
 }
 catch { }
-if (location.pathname.startsWith('/kiosk-preview')) {
+if (isKioskDesignPreview) {
     // Isolated preview: no device key, no real account and no transactional requests.
     window.stech = { on: () => () => { }, call: async (action) => ({ ok: true, data: action === 'info' ? { mode: 'demo', station: 'TASLAK ÖNİZLEME' } : null }) };
     window.addEventListener('message', event => {

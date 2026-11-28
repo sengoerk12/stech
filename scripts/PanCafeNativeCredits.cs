@@ -40,13 +40,20 @@ public static partial class PanCafeNativeSessions {
                 var member = PanCafeReadOnly.Query(database, client,
                     "SELECT ID FROM MEMBERS WHERE ACCSTATUS=1 AND ID=" + arguments[1] + " AND USERNAME='" + username + "'");
                 if (member.Count != 1) throw new InvalidOperationException("Credit member mismatch");
+                OperatorInputScope input = null;
                 NativeUi ui = null;
                 try {
                     if (!PanCafeBalanceWriter.AutoMemberBonusDisabled(database, client))
                         throw new InvalidOperationException("PanCafe otomatik üye bonusu kapatılmalı.");
+                    input = new OperatorInputScope();
                     ui = new NativeUi(database);
                     ui.PrepareCredit(username, marker, total, pending.Count != 0);
+                } catch (OperatorBusyException) {
+                    if (ui != null) ui.CloseLiveCredit();
+                    if (input != null) input.Dispose();
+                    return Result("active", OperatorWaitMessage);
                 } catch (Exception error) {
+                    if (input != null) input.Dispose();
                     File.WriteAllText(Path.Combine(folder, "credit-readiness-error.json"),
                         new JavaScriptSerializer().Serialize(new { operationId=id, message=error.Message,
                             navigation=ui == null ? null : ui.CreditNavigation,
@@ -54,13 +61,19 @@ public static partial class PanCafeNativeSessions {
                             visibleWindows=ui == null ? null : ui.VisibleWindowTypes(),
                             controlTypes=ui == null ? null : ui.CreditControlTypes(), at=DateTime.UtcNow.ToString("o") }));
                     if (ui != null) ui.CloseLiveCredit();
+                    // No confirmation or credit intent was sent. The queue can retry safely.
+                    if (error is NativeWindowUnavailableException && !retryUnconfirmed)
+                        return Result("active", error.Message);
                     return Result("credit_ui_review", error is InvalidOperationException ? error.Message : "PanCafe yükleme ekranı hazır değil.");
                 }
 
                 bool submitted = false;
+                bool intentRecorded = pending.Count != 0;
                 try {
                     if (!PanCafeBalanceWriter.AutoMemberBonusDisabled(database, client))
                         return Result("credit_ui_review", "PanCafe otomatik üye bonusu kapatılmalı.");
+                    CheckOperatorInput();
+                    ui.VerifyLiveCredit(username, marker, total);
                     if (pending.Count != 0) {
                         // The cashier could have completed the previous attempt while the new dialog was opening.
                         if (!CanRetryUnconfirmedCredit(database, client, id, marker))
@@ -72,12 +85,21 @@ public static partial class PanCafeNativeSessions {
                         PanCafeReadOnly.Write(database, client,
                             "INSERT INTO STECH_LIVE_CREDIT_INTENTS(OPID,MEMBERID,USERNAME,AMOUNT,BONUS,CREDIT_TOTAL) VALUES(?,?,?,?,?,?)",
                             new[] { id, Invariant(memberId), username, Invariant(amount), Invariant(bonus), Invariant(total) });
+                        intentRecorded = true;
                     }
                     ui.VerifyLiveCredit(username, marker, total);
                     submitted = true;
                     ui.SubmitLiveCredit();
                     return ConfirmLiveCredit(database, client, arguments, marker, amount, total, false);
-                } finally { if (!submitted) ui.CloseLiveCredit(); }
+                } catch (OperatorBusyException) {
+                    submitted = false;
+                    // The operator may have confirmed the dialog manually. Keep the durable intent
+                    // once written so an uncertain confirmation cannot trigger a second credit.
+                    return Result(intentRecorded ? "credit_ui_review" : "active", OperatorWaitMessage);
+                } finally {
+                    if (!submitted) ui.CloseLiveCredit();
+                    input.Dispose();
+                }
             } finally { mutex.ReleaseMutex(); }
         }
     }
@@ -158,6 +180,7 @@ public static partial class PanCafeNativeSessions {
         bool creditForeground;
 
         public void PrepareCredit(string username, string marker, long amount, bool reusePrevious) {
+            RestoreWindow(main);
             var opened = FindNativeCreditWindow(username);
             if (!opened) {
                 CheckIdle();
@@ -225,14 +248,8 @@ public static partial class PanCafeNativeSessions {
                     throw new InvalidOperationException("PanCafe Ekle düğmesi doğrulanamadı.");
             }
             var amountText = (amount / 100m).ToString(amount % 100 == 0 ? "0" : "0.00", CultureInfo.GetCultureInfo("tr-TR"));
-            if (creditForeground) {
-                TypeFocused(creditDialog, creditAmount, amountText);
-                TypeFocused(creditDialog, creditNote, marker);
-            } else {
-                SetText(creditAmount, "");
-                foreach (var character in amountText) Message(creditAmount, 0x102, character, new IntPtr(1));
-                SetText(creditNote, marker);
-            }
+            WriteControlText(creditDialog, creditAmount, amountText, true);
+            WriteControlText(creditDialog, creditNote, marker, false);
             if (creditConfirm == IntPtr.Zero) {
                 var box = AsRectangle(BoundsOf(creditDialog));
                 int top = box.Top + box.Height * 3 / 4;
@@ -242,6 +259,7 @@ public static partial class PanCafeNativeSessions {
         }
 
         public void VerifyLiveCredit(string username, string marker, long amount) {
+            CheckOperatorInput();
             long visibleAmount;
             if (!CreditDialogIsCurrent() || !IsCreditDialog(creditDialog, username))
                 throw new InvalidOperationException("PanCafe yükleme penceresindeki üye değişti.");
@@ -259,6 +277,7 @@ public static partial class PanCafeNativeSessions {
         }
 
         public void SubmitLiveCredit() {
+            CheckOperatorInput();
             if (!CreditDialogIsCurrent())
                 throw new InvalidOperationException("PanCafe yükleme penceresi değişti.");
             if (creditConfirm == IntPtr.Zero) {
@@ -268,6 +287,7 @@ public static partial class PanCafeNativeSessions {
             }
             if (!IsWindowVisible(creditConfirm) || !IsWindowEnabled(creditConfirm))
                 throw new InvalidOperationException("PanCafe Tamam düğmesi değişti.");
+            if (TryInvokeUiAutomation(creditConfirm)) return;
             var button = ClientBounds(creditConfirm);
             if (creditForeground) Click(creditDialog, creditConfirm, button.Right / 2, button.Bottom / 2);
             else MenuClick(creditConfirm, button.Right / 2, button.Bottom / 2);
@@ -417,11 +437,6 @@ public static partial class PanCafeNativeSessions {
             return height > 0 && Math.Abs(field.Left - payment.Left) <= height / 3 &&
                 distance > 0 && distance < height * 2 &&
                 (above ? field.Right - field.Left < width * 3 / 2 : field.Right - field.Left > width * 3 / 2);
-        }
-        static void SetText(IntPtr control, string value) {
-            IntPtr ignored;
-            if (SendText(control, 12, IntPtr.Zero, new StringBuilder(value), 2, 2000, out ignored) == IntPtr.Zero)
-                throw new InvalidOperationException("PanCafe yükleme alanına metin yazılamadı.");
         }
     }
 
